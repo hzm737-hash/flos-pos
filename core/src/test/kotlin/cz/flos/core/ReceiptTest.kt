@@ -33,6 +33,17 @@ class ReceiptTest {
         assertTrue(text.contains("[QR] SPD*1.0*ACC:CZ6508000000192000145399*AM:163.50"))
     }
 
+    @Test fun eetBlockWrapsPok() {
+        val r = receipt.copy(eet = EetReceiptInfo(202, "POKL-1", "a1b2c3d4-0000-4abc-8def-0123456789ab-ff", test = true))
+        val blocks = ReceiptLayout(32).layout(business, r)
+        val text = ReceiptLayout.toPlainText(blocks, 32)
+        assertTrue(text.contains("POK: (TEST)"))
+        val bytes = String(EscPosEncoder(PaperWidth.MM58).encode(blocks), Charsets.ISO_8859_1)
+        assertTrue(bytes.contains("a1b2c3d4-0000-4abc-8def-0123456789ab-ff".take(32)))
+        val offline = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, receipt.copy(eet = EetReceiptInfo(202, "P1", null))), 32)
+        assertTrue(offline.contains("dodatečně"))
+    }
+
     @Test fun cashRoundingAndChange() {
         val r = receipt.copy(payment = PaymentMethod.CASH, qr = null, cashGiven = 20000)
         assertEquals(16350L, r.total)

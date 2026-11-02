@@ -41,16 +41,17 @@ import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
 import cz.flos.pos.print.PairedPrinter
+import cz.flos.pos.print.PrinterType
 
 @Composable
 fun SettingsScreen(vm: PosViewModel) {
     val s by vm.settings.collectAsState()
     var devices by remember { mutableStateOf<List<PairedPrinter>?>(null) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) devices = vm.printer.pairedDevices()
+        if (granted) devices = vm.printer.bluetooth.pairedDevices()
     }
     fun loadDevices() {
-        if (vm.printer.hasPermission()) devices = vm.printer.pairedDevices()
+        if (vm.printer.bluetooth.hasPermission()) devices = vm.printer.bluetooth.pairedDevices()
         else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) permission.launch(Manifest.permission.BLUETOOTH_CONNECT)
     }
 
@@ -92,25 +93,45 @@ fun SettingsScreen(vm: PosViewModel) {
             )
 
             Section("Tiskárna")
-            Text(
-                if (s.printerAddress.isBlank()) "Není vybrána žádná tiskárna." else "Vybraná tiskárna: ${s.printerName} (${s.printerAddress})",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "Tiskárnu nejdřív spárujte v nastavení Bluetooth v Androidu, potom ji zde vyberte.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Bluetooth, null); Text("  Vybrat spárovanou tiskárnu") }
-            devices?.let { list ->
-                if (list.isEmpty()) Text("Žádná spárovaná zařízení. Zapněte Bluetooth a spárujte tiskárnu.")
-                list.forEach { d ->
-                    FilterChip(
-                        selected = d.address == s.printerAddress,
-                        onClick = { vm.updateSettings { it.copy(printerAddress = d.address, printerName = d.name) } },
-                        label = { Text("${d.name}  ${d.address}") },
-                    )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PrinterType.entries.forEach { t ->
+                    FilterChip(selected = s.printerType == t, onClick = { vm.updateSettings { it.copy(printerType = t) } }, label = { Text(t.label) })
                 }
+            }
+            if (s.printerType == PrinterType.BLUETOOTH) {
+                Text(
+                    if (s.printerAddress.isBlank()) "Není vybrána žádná tiskárna." else "Vybraná tiskárna: ${s.printerName} (${s.printerAddress})",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Tiskárnu nejdřív spárujte v nastavení Bluetooth v Androidu, potom ji zde vyberte.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Bluetooth, null); Text("  Vybrat spárovanou tiskárnu") }
+                devices?.let { list ->
+                    if (list.isEmpty()) Text("Žádná spárovaná zařízení. Zapněte Bluetooth a spárujte tiskárnu.")
+                    list.forEach { d ->
+                        FilterChip(
+                            selected = d.address == s.printerAddress,
+                            onClick = { vm.updateSettings { it.copy(printerAddress = d.address, printerName = d.name) } },
+                            label = { Text("${d.name}  ${d.address}") },
+                        )
+                    }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Field("IP adresa tiskárny (např. 192.168.1.50)", s.printerHost, Modifier.weight(2f), KeyboardType.Uri) { v ->
+                        vm.updateSettings { it.copy(printerHost = v.trim()) }
+                    }
+                    NumberField("Port", s.printerPort, 1..65535, Modifier.weight(1f)) { p -> vm.updateSettings { it.copy(printerPort = p) } }
+                }
+                Text(
+                    "Tiskárna musí být ve stejné Wi-Fi síti jako telefon nebo tablet. IP adresu vytiskne většina tiskáren " +
+                        "na samotestu (podržte tlačítko FEED při zapnutí). Port bývá 9100.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Text("Šířka papíru", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -125,9 +146,11 @@ fun SettingsScreen(vm: PosViewModel) {
                 }
             }
             SwitchRow("Tisknout účtenku automaticky po platbě", s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
-            Button(onClick = { vm.testPrint() }, enabled = s.printerAddress.isNotBlank()) {
+            Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
                 Icon(Icons.Filled.Print, null); Text("  Zkušební tisk")
             }
+
+            EetSettings(vm, s)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Flos 0.1.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -135,12 +158,12 @@ fun SettingsScreen(vm: PosViewModel) {
 }
 
 @Composable
-private fun Section(title: String) {
+internal fun Section(title: String) {
     Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
 }
 
 @Composable
-private fun Field(
+internal fun Field(
     label: String,
     value: String,
     modifier: Modifier = Modifier.fillMaxWidth(),
@@ -154,7 +177,7 @@ private fun Field(
 }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f))
         Spacer(Modifier.padding(4.dp))

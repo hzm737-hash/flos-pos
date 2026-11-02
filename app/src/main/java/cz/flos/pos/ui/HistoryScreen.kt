@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cz.flos.core.Money
+import cz.flos.pos.data.EetRecordEntity
+import cz.flos.pos.data.EetStatus
 import cz.flos.pos.data.SaleWithItems
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -44,11 +47,15 @@ fun HistoryScreen(vm: PosViewModel) {
     var confirmCancel by remember { mutableStateOf<SaleWithItems?>(null) }
     val fmt = remember { SimpleDateFormat("d.M.yyyy HH:mm", Locale.forLanguageTag("cs-CZ")) }
 
+    val eetRecords by vm.eetRecent.collectAsState()
+    val eetBySale = eetRecords.groupBy { it.saleId }
+
     if (sales.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Zatím žádné účtenky") }
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
+        item { EetQueueBanner(vm) }
         items(sales, key = { it.sale.id }) { sw ->
             val s = sw.sale
             Row(
@@ -59,7 +66,9 @@ fun HistoryScreen(vm: PosViewModel) {
                     Text(s.number, fontWeight = FontWeight.Medium,
                         textDecoration = if (s.cancelled) TextDecoration.LineThrough else null)
                     Text(
-                        fmt.format(Date(s.createdAt)) + " · " + s.paymentMethod.label + if (s.cancelled) " · STORNO" else "",
+                        fmt.format(Date(s.createdAt)) + " · " + s.paymentMethod.label +
+                            (if (s.cancelled) " · STORNO ${s.stornoNumber ?: ""}" else "") +
+                            eetLabel(eetBySale[s.id].orEmpty()),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (s.cancelled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -75,8 +84,10 @@ fun HistoryScreen(vm: PosViewModel) {
             onDismissRequest = { open = null },
             title = { Text("Účtenka ${sw.sale.number}") },
             text = {
+                var preview by remember(sw) { mutableStateOf("") }
+                LaunchedEffect(sw) { preview = vm.receiptPreview(sw) }
                 Text(
-                    vm.receiptPreview(sw),
+                    preview,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     modifier = Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
@@ -99,5 +110,16 @@ fun HistoryScreen(vm: PosViewModel) {
             confirmButton = { Button(onClick = { vm.cancelSale(sw); confirmCancel = null }) { Text("Stornovat") } },
             dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text("Zpět") } },
         )
+    }
+}
+
+/** Short EET state for the receipt list. */
+private fun eetLabel(records: List<EetRecordEntity>): String {
+    val r = records.firstOrNull { !it.storno } ?: return ""
+    return when (r.status) {
+        EetStatus.CONFIRMED -> " · EET ✓"
+        EetStatus.PENDING -> " · EET čeká"
+        EetStatus.REJECTED -> " · EET odmítnuto"
+        EetStatus.VERIFIED -> " · EET ověřeno"
     }
 }

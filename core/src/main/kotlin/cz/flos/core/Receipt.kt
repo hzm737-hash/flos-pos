@@ -30,6 +30,10 @@ data class Receipt(
     /** Present when the customer pays by bank transfer; printed as a QR code. */
     val qr: QrPlatba? = null,
     val copy: Boolean = false,
+    /** EET 2.0 details; null when the business does not record sales in EET. */
+    val eet: EetReceiptInfo? = null,
+    /** Number of the original receipt when this document cancels it (storno). */
+    val stornoOf: String? = null,
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
@@ -37,6 +41,14 @@ data class Receipt(
     val rounding: Long get() = cashDue - total
     val change: Long? get() = cashGiven?.let { it - cashDue }
 }
+
+data class EetReceiptInfo(
+    val idJednotky: Int,
+    val idPokl: String,
+    /** Confirmation code from the tax administration; null while the sale waits to be sent. */
+    val pok: String?,
+    val test: Boolean = false,
+)
 
 enum class Align { LEFT, CENTER, RIGHT }
 
@@ -60,7 +72,11 @@ class ReceiptLayout(private val width: Int) {
         if (business.headerNote.isNotBlank()) add(ReceiptBlock.Line(business.headerNote, Align.CENTER))
         add(ReceiptBlock.Separator)
 
-        val title = if (business.vatPayer) "Zjednodušený daňový doklad" else "Účtenka"
+        val title = when {
+            r.stornoOf != null -> "STORNO účtenky ${r.stornoOf}"
+            business.vatPayer -> "Zjednodušený daňový doklad"
+            else -> "Účtenka"
+        }
         add(ReceiptBlock.Line(title + if (r.copy) " – KOPIE" else "", Align.CENTER, bold = true))
         add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
         if (r.cashier.isNotBlank()) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
@@ -80,7 +96,8 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Line(twoCol("Mezisoučet", Money.format(r.cart.subtotal))))
             add(ReceiptBlock.Line(twoCol("Sleva ${r.cart.discountPercent} %", Money.format(-r.cart.cartDiscount))))
         }
-        add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(r.total)), bold = true))
+        val sign = if (r.stornoOf != null) -1 else 1
+        add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(sign * r.total)), bold = true))
         if (r.rounding != 0L) {
             add(ReceiptBlock.Line(twoCol("Zaokrouhlení", Money.format(r.rounding))))
             add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(r.cashDue)), bold = true))
@@ -99,7 +116,19 @@ class ReceiptLayout(private val width: Int) {
             }
         }
 
-        r.qr?.let { qr ->
+        r.eet?.let { e ->
+            add(ReceiptBlock.Separator)
+            add(ReceiptBlock.Line(twoCol("Evidenční jednotka", e.idJednotky.toString())))
+            add(ReceiptBlock.Line(twoCol("Pokladna", e.idPokl)))
+            if (e.pok != null) {
+                add(ReceiptBlock.Line("POK:" + if (e.test) " (TEST)" else ""))
+                add(ReceiptBlock.Line(e.pok))
+            } else {
+                add(ReceiptBlock.Line("Tržba bude do EET odeslána dodatečně."))
+            }
+        }
+
+        if (r.stornoOf == null) r.qr?.let { qr ->
             add(ReceiptBlock.Separator)
             add(ReceiptBlock.Line("QR Platba", Align.CENTER, bold = true))
             add(ReceiptBlock.Qr(qr.toSpayd()))

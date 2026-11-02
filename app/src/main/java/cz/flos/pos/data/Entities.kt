@@ -48,6 +48,10 @@ data class SaleEntity(
     val discountPercent: Int = 0,
     val variableSymbol: String? = null,
     val cancelled: Boolean = false,
+    /** Number of the storno document when this sale was cancelled. */
+    val stornoNumber: String? = null,
+    /** Amount actually received (cash is rounded to whole crowns); this is what EET records. */
+    val received: Long = total,
 ) {
     val paymentMethod: PaymentMethod get() = PaymentMethod.valueOf(payment)
 }
@@ -77,5 +81,5 @@ data class SaleWithItems(
         discountPercent = sale.discountPercent,
     )
 
-    fun toSummary(): SaleSummary = SaleSummary(sale.total, sale.paymentMethod, toCart().vatBreakdown(), sale.cancelled)
+    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod, toCart().vatBreakdown(), sale.cancelled)
 }

@@ -4,7 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -14,6 +16,8 @@ import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -24,6 +28,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 enum class Screen(val label: String, val icon: ImageVector) {
@@ -76,7 +82,13 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
             }
         },
     ) { padding ->
-        Row(Modifier.fillMaxSize().padding(padding)) {
+        val busy by vm.busy.collectAsState()
+        Column(Modifier.fillMaxSize().padding(padding)) {
+        busy?.let { text ->
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+        }
+        Row(Modifier.fillMaxSize()) {
             if (wide) NavigationRail {
                 Screen.entries.forEach { s ->
                     NavigationRailItem(
@@ -94,6 +106,7 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
                 Screen.REPORT -> ReportScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm)
             }
+        }
         }
     }
 }

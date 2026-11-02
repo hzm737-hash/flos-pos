@@ -1,11 +1,15 @@
 package cz.flos.pos.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import cz.flos.core.Align
 import cz.flos.core.Cart
 import cz.flos.core.DailyReport
+import cz.flos.core.EetReceiptInfo
 import cz.flos.core.EscPosEncoder
+import cz.flos.core.Money
 import cz.flos.core.PaymentMethod
 import cz.flos.core.QrPlatba
 import cz.flos.core.Receipt
@@ -14,10 +18,14 @@ import cz.flos.core.ReceiptLayout
 import cz.flos.pos.FlosApp
 import cz.flos.pos.data.AppSettings
 import cz.flos.pos.data.CategoryEntity
+import cz.flos.pos.data.EetRecordEntity
+import cz.flos.pos.data.EetStatus
 import cz.flos.pos.data.ProductEntity
 import cz.flos.pos.data.SaleEntity
 import cz.flos.pos.data.SaleItemEntity
 import cz.flos.pos.data.SaleWithItems
+import cz.flos.pos.eet.EetRetryWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -36,18 +45,27 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
     private val flos = app as FlosApp
     private val catalog = flos.database.catalog()
     private val salesDao = flos.database.sales()
+    private val eetDao = flos.database.eet()
     val printer = flos.printer
+    val eet = flos.eet
 
     val settings: StateFlow<AppSettings> = flos.settings.state
     val categories = catalog.categories().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val products = catalog.products().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val recentSales = salesDao.recent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** EET records that are still waiting to be sent or were rejected. */
+    val eetOpen = eetDao.open().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val eetRecent = eetDao.recent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _cart = MutableStateFlow(Cart())
     val cart: StateFlow<Cart> = _cart.asStateFlow()
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages: SharedFlow<String> = _messages
+
+    private val _busy = MutableStateFlow<String?>(null)
+    /** Text of a running long operation (e.g. sending to EET), shown in the UI. */
+    val busy: StateFlow<String?> = _busy.asStateFlow()
 
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
@@ -60,13 +78,13 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
     fun setCartDiscount(percent: Int) = _cart.update { it.setDiscount(percent) }
     fun clearCart() = _cart.update { it.clear() }
 
-    /** The QR payment for the current cart, or null when no valid bank account is set. */
+    /** The QR payment for an amount, or null when no valid bank account is set. */
     fun qrFor(amount: Long, variableSymbol: String?, message: String): QrPlatba? {
         val iban = settings.value.iban ?: return null
         return QrPlatba(iban = iban, amount = amount, variableSymbol = variableSymbol, message = message)
     }
 
-    /** Variable symbol derived from the receipt number: "2025-000123" → "2025000123". */
+    /** Variable symbol derived from the receipt number: "2027-000123" → "2027000123". */
     private fun variableSymbolOf(number: String) = number.filter(Char::isDigit).takeLast(10)
 
     /**
@@ -85,56 +103,124 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val s = settings.value
             val now = LocalDateTime.now()
+            val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val number = flos.settings.nextReceiptNumber(now.year)
             val vs = variableSymbolOf(number)
             val qr = if (payment == PaymentMethod.QR_TRANSFER) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
+            val received = if (payment == PaymentMethod.CASH) Money.roundToCrowns(cart.total) else cart.total
             val sale = SaleEntity(
-                number = number,
-                createdAt = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                total = cart.total,
-                payment = payment.name,
-                cashGiven = cashGiven,
-                cashier = s.cashier,
-                discountPercent = cart.discountPercent,
-                variableSymbol = if (payment == PaymentMethod.QR_TRANSFER) vs else null,
+                number = number, createdAt = millis, total = cart.total, payment = payment.name, cashGiven = cashGiven,
+                cashier = s.cashier, discountPercent = cart.discountPercent,
+                variableSymbol = if (payment == PaymentMethod.QR_TRANSFER) vs else null, received = received,
             )
             val items = cart.items.map {
                 SaleItemEntity(saleId = 0, productId = it.productId, name = it.name, unitPrice = it.unitPrice,
                     vatPercent = it.vatRate.percent, quantity = it.quantity, discountPercent = it.discountPercent)
             }
-            salesDao.insert(sale, items)
+            // The sale and its EET record are stored before anything is sent or printed.
+            val saleId = salesDao.insert(sale, items)
+            val record = eet.createRecord(saleId, number, millis, received, storno = false)
             _cart.value = Cart()
             onDone()
-            val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr)
+
+            val sent = record?.let { sendToEet(it) }
+            val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo))
             if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), "Účtenka $number vytištěna")
             else _messages.tryEmit("Účtenka $number uložena")
         }
     }
 
-    fun receiptOf(sw: SaleWithItems, copy: Boolean = true): Receipt {
+    /** Sends one record now; on failure the background worker takes over. */
+    private suspend fun sendToEet(r: EetRecordEntity): EetRecordEntity {
+        _busy.value = "Odesílám tržbu do EET…"
+        val after = try { eet.send(r.id) ?: r } finally { _busy.value = null }
+        when (after.status) {
+            EetStatus.PENDING -> {
+                EetRetryWorker.scheduleSoon(getApplication())
+                _messages.tryEmit("EET neodpověděla včas, tržba se odešle automaticky později.")
+            }
+            EetStatus.REJECTED -> _messages.tryEmit("EET odmítla tržbu: ${after.lastError}")
+            else -> {}
+        }
+        return after
+    }
+
+    private fun eetInfo(r: EetRecordEntity) = EetReceiptInfo(r.idJednotky, r.idPokl, r.pok, r.test)
+
+    suspend fun receiptOf(sw: SaleWithItems, copy: Boolean = true): Receipt {
         val s = settings.value
         val created = LocalDateTime.ofInstant(Instant.ofEpochMilli(sw.sale.createdAt), ZoneId.systemDefault())
         val qr = if (sw.sale.paymentMethod == PaymentMethod.QR_TRANSFER) {
             qrFor(sw.sale.total, sw.sale.variableSymbol, "${s.businessName} uctenka ${sw.sale.number}")
         } else null
-        return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), sw.sale.paymentMethod, sw.sale.cashGiven, qr, copy)
+        val record = eetDao.forSale(sw.sale.id).firstOrNull { !it.storno }
+        return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), sw.sale.paymentMethod, sw.sale.cashGiven, qr, copy,
+            eet = record?.let(::eetInfo))
     }
 
-    fun receiptPreview(sw: SaleWithItems): String {
+    suspend fun receiptPreview(sw: SaleWithItems): String {
         val s = settings.value
         val blocks = ReceiptLayout(s.paperWidth.chars).layout(s.business, receiptOf(sw))
         return ReceiptLayout.toPlainText(blocks, s.paperWidth.chars)
     }
 
-    fun reprint(sw: SaleWithItems) {
+    suspend fun eetRecordsFor(sw: SaleWithItems): List<EetRecordEntity> = eetDao.forSale(sw.sale.id)
+
+    fun reprint(sw: SaleWithItems) = viewModelScope.launch {
         val s = settings.value
         printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receiptOf(sw)), "Kopie vytištěna")
     }
 
-    /** Cancels (storno) a sale. The record is kept and marked, so the receipt sequence stays complete. */
+    /**
+     * Cancels (storno) a sale. The original stays in history marked as cancelled; a storno
+     * document with its own number and a negative amount is recorded in EET and printed.
+     */
     fun cancelSale(sw: SaleWithItems) = viewModelScope.launch {
-        salesDao.update(sw.sale.copy(cancelled = true))
-        _messages.tryEmit("Účtenka ${sw.sale.number} stornována")
+        val s = settings.value
+        val now = LocalDateTime.now()
+        val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val stornoNumber = flos.settings.nextReceiptNumber(now.year)
+        salesDao.update(sw.sale.copy(cancelled = true, stornoNumber = stornoNumber))
+        val record = eet.createRecord(sw.sale.id, stornoNumber, millis, -sw.sale.received, storno = true)
+        val sent = record?.let { sendToEet(it) }
+        _messages.tryEmit("Účtenka ${sw.sale.number} stornována dokladem $stornoNumber")
+        if (s.autoPrint) {
+            val doc = Receipt(stornoNumber, now, s.cashier, sw.toCart(), sw.sale.paymentMethod, null, null,
+                eet = sent?.let(::eetInfo), stornoOf = sw.sale.number)
+            printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), "Storno doklad vytištěn")
+        }
+    }
+
+    // ---- EET ----
+    fun retryEetNow() = viewModelScope.launch {
+        _busy.value = "Odesílám čekající tržby do EET…"
+        val left = try { eet.sendPending() } finally { _busy.value = null }
+        _messages.tryEmit(if (left == 0) "Všechny tržby jsou odeslané" else "Stále čeká $left tržeb, zkusím to znovu automaticky")
+        if (left > 0) EetRetryWorker.scheduleSoon(getApplication())
+    }
+
+    fun requeueEet(r: EetRecordEntity) = viewModelScope.launch {
+        eet.requeue(r)
+        eet.send(r.id)
+    }
+
+    fun testEet() = viewModelScope.launch {
+        _busy.value = "Ověřuji spojení s EET…"
+        val text = try { eet.testConnection() } finally { _busy.value = null }
+        _messages.tryEmit(text)
+    }
+
+    fun importCertificate(uri: Uri, password: String) = viewModelScope.launch {
+        val result = runCatching {
+            val bytes = withContext(Dispatchers.IO) {
+                getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            } ?: error("Soubor nelze přečíst.")
+            eet.importCertificate(bytes, password)
+        }
+        result.onSuccess { cert ->
+            updateSettings { it.copy(eetCertPassword = password, eetEic = it.eetEic.ifBlank { cert.eic ?: "" }) }
+            _messages.tryEmit("Certifikát nahrán (${cert.eic}, platí do ${java.text.DateFormat.getDateInstance().format(cert.validUntil)})")
+        }.onFailure { _messages.tryEmit(it.message ?: "Certifikát se nepodařilo nahrát") }
     }
 
     // ---- Reports ----
@@ -153,8 +239,8 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
     fun testPrint() {
         val s = settings.value
         val blocks = buildList {
-            add(ReceiptBlock.Line(s.businessName, cz.flos.core.Align.CENTER, bold = true, large = true))
-            add(ReceiptBlock.Line("Zkušební tisk Flos", cz.flos.core.Align.CENTER))
+            add(ReceiptBlock.Line(s.businessName, Align.CENTER, bold = true, large = true))
+            add(ReceiptBlock.Line("Zkušební tisk Flos", Align.CENTER))
             add(ReceiptBlock.Line("Příliš žluťoučký kůň úpěl ďábelské ódy"))
             add(ReceiptBlock.Separator)
             qrFor(10000, "1", "Test Flos")?.let { add(ReceiptBlock.Qr(it.toSpayd())) }
@@ -167,7 +253,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         viewModelScope.launch {
             val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks)
-            runCatching { printer.print(s.printerAddress, bytes) }
+            runCatching { printer.print(s, bytes) }
                 .onSuccess { _messages.tryEmit(okMessage) }
                 .onFailure { _messages.tryEmit("Tisk se nezdařil: ${it.message}") }
         }
