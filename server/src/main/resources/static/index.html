@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flos – back office</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="card login-card">
+    <div class="brand"><span class="logo">✿</span> Flos</div>
+    <p class="muted">Back office pokladního systému</p>
+    <form id="login-form">
+      <label>E-mail<input name="email" type="email" required autocomplete="username"></label>
+      <label>Heslo<input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="primary" type="submit">Přihlásit</button>
+    </form>
+    <details id="register-box">
+      <summary>Nemáte účet? Založit firmu</summary>
+      <form id="register-form">
+        <label>Název firmy<input name="orgName" required></label>
+        <label>Vaše jméno<input name="name" required></label>
+        <label>E-mail<input name="email" type="email" required></label>
+        <label>Heslo (min. 8 znaků)<input name="password" type="password" minlength="8" required></label>
+        <button class="primary" type="submit">Založit účet</button>
+      </form>
+    </details>
+    <p id="login-error" class="error"></p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <button id="menu-toggle" class="icon" aria-label="Menu">☰</button>
+    <div class="brand"><span class="logo">✿</span> Flos</div>
+    <div class="spacer"></div>
+    <span id="org-name" class="muted"></span>
+    <button id="logout" class="ghost">Odhlásit</button>
+  </header>
+  <nav id="nav">
+    <a data-page="dashboard">Přehled</a>
+    <a data-page="sales">Účtenky</a>
+    <a data-page="products">Produkty</a>
+    <a data-page="stock">Sklad</a>
+    <a data-page="branches">Provozovny a pokladny</a>
+    <a data-page="staff">Zaměstnanci</a>
+    <a data-page="attendance">Docházka</a>
+    <a data-page="eet">EET</a>
+    <a data-page="exports">Exporty</a>
+    <a data-page="apikeys">API</a>
+    <a data-page="company">Firma</a>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

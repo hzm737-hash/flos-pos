@@ -1,0 +1,26 @@
+# Flos back office with PostgreSQL:  docker compose up -d   → http://localhost:8080
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: flos
+      POSTGRES_USER: flos
+      POSTGRES_PASSWORD: ${FLOS_DB_PASSWORD:-change-me}
+    volumes:
+      - flos-db:/var/lib/postgresql/data
+    restart: unless-stopped
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/flos
+      DATABASE_USER: flos
+      DATABASE_PASSWORD: ${FLOS_DB_PASSWORD:-change-me}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    restart: unless-stopped
+volumes:
+  flos-db:
