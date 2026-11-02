@@ -60,57 +60,64 @@ fun SettingsScreen(vm: PosViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Section("Provozovna")
-            Field("Název provozovny", s.businessName) { v -> vm.updateSettings { it.copy(businessName = v) } }
-            Field("Adresa – ulice", s.address1) { v -> vm.updateSettings { it.copy(address1 = v) } }
-            Field("Adresa – město a PSČ", s.address2) { v -> vm.updateSettings { it.copy(address2 = v) } }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Field("IČO", s.ico, Modifier.weight(1f), KeyboardType.Number) { v -> vm.updateSettings { it.copy(ico = v) } }
-                Field("DIČ", s.dic, Modifier.weight(1f)) { v -> vm.updateSettings { it.copy(dic = v) } }
+            Section("Jazyk / Language")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Language.entries.forEach { l ->
+                    FilterChip(selected = s.language == l, onClick = { vm.updateSettings { it.copy(language = l) } }, label = { Text(l.label) })
+                }
             }
-            SwitchRow("Plátce DPH", s.vatPayer) { v -> vm.updateSettings { it.copy(vatPayer = v) } }
-            Field("Patička účtenky", s.footer) { v -> vm.updateSettings { it.copy(footer = v) } }
-            Field("Jméno obsluhy", s.cashier) { v -> vm.updateSettings { it.copy(cashier = v) } }
 
-            Section("QR platba")
+            Section(tr("Provozovna"))
+            Field(tr("Název provozovny"), s.businessName) { v -> vm.updateSettings { it.copy(businessName = v) } }
+            Field(tr("Adresa – ulice"), s.address1) { v -> vm.updateSettings { it.copy(address1 = v) } }
+            Field(tr("Adresa – město a PSČ"), s.address2) { v -> vm.updateSettings { it.copy(address2 = v) } }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field(tr("IČO"), s.ico, Modifier.weight(1f), KeyboardType.Number) { v -> vm.updateSettings { it.copy(ico = v) } }
+                Field(tr("DIČ"), s.dic, Modifier.weight(1f)) { v -> vm.updateSettings { it.copy(dic = v) } }
+            }
+            SwitchRow(tr("Plátce DPH"), s.vatPayer) { v -> vm.updateSettings { it.copy(vatPayer = v) } }
+            Field(tr("Patička účtenky"), s.footer) { v -> vm.updateSettings { it.copy(footer = v) } }
+            Field(tr("Jméno obsluhy"), s.cashier) { v -> vm.updateSettings { it.copy(cashier = v) } }
+
+            Section(tr("QR platba"))
             val iban = s.iban
             OutlinedTextField(
                 value = s.bankAccount,
                 onValueChange = { v -> vm.updateSettings { it.copy(bankAccount = v) } },
-                label = { Text("Číslo účtu (např. 19-2000145399/0800) nebo IBAN") },
+                label = { Text(tr("Číslo účtu (např. 19-2000145399/0800) nebo IBAN")) },
                 singleLine = true,
                 isError = s.bankAccount.isNotBlank() && iban == null,
                 supportingText = {
                     Text(
                         when {
-                            s.bankAccount.isBlank() -> "Bez čísla účtu nelze tisknout QR platbu."
-                            iban == null -> "Neplatné číslo účtu."
-                            else -> "IBAN: " + CzechBankAccount.formatIban(iban)
+                            s.bankAccount.isBlank() -> tr("Bez čísla účtu nelze tisknout QR platbu.")
+                            iban == null -> tr("Neplatné číslo účtu.")
+                            else -> tr("IBAN: ") + CzechBankAccount.formatIban(iban)
                         }
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Section("Tiskárna")
+            Section(tr("Tiskárna"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PrinterType.entries.forEach { t ->
-                    FilterChip(selected = s.printerType == t, onClick = { vm.updateSettings { it.copy(printerType = t) } }, label = { Text(t.label) })
+                    FilterChip(selected = s.printerType == t, onClick = { vm.updateSettings { it.copy(printerType = t) } }, label = { Text(tr(t.label)) })
                 }
             }
             if (s.printerType == PrinterType.BLUETOOTH) {
                 Text(
-                    if (s.printerAddress.isBlank()) "Není vybrána žádná tiskárna." else "Vybraná tiskárna: ${s.printerName} (${s.printerAddress})",
+                    if (s.printerAddress.isBlank()) tr("Není vybrána žádná tiskárna.") else tr("Vybraná tiskárna: %s (%s)", s.printerName, s.printerAddress),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "Tiskárnu nejdřív spárujte v nastavení Bluetooth v Androidu, potom ji zde vyberte.",
+                    tr("Tiskárnu nejdřív spárujte v nastavení Bluetooth v Androidu, potom ji zde vyberte."),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Bluetooth, null); Text("  Vybrat spárovanou tiskárnu") }
+                OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Bluetooth, null); Text(tr("  Vybrat spárovanou tiskárnu")) }
                 devices?.let { list ->
-                    if (list.isEmpty()) Text("Žádná spárovaná zařízení. Zapněte Bluetooth a spárujte tiskárnu.")
+                    if (list.isEmpty()) Text(tr("Žádná spárovaná zařízení. Zapněte Bluetooth a spárujte tiskárnu."))
                     list.forEach { d ->
                         FilterChip(
                             selected = d.address == s.printerAddress,
@@ -121,38 +128,37 @@ fun SettingsScreen(vm: PosViewModel) {
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Field("IP adresa tiskárny (např. 192.168.1.50)", s.printerHost, Modifier.weight(2f), KeyboardType.Uri) { v ->
+                    Field(tr("IP adresa tiskárny (např. 192.168.1.50)"), s.printerHost, Modifier.weight(2f), KeyboardType.Uri) { v ->
                         vm.updateSettings { it.copy(printerHost = v.trim()) }
                     }
-                    NumberField("Port", s.printerPort, 1..65535, Modifier.weight(1f)) { p -> vm.updateSettings { it.copy(printerPort = p) } }
+                    NumberField(tr("Port"), s.printerPort, 1..65535, Modifier.weight(1f)) { p -> vm.updateSettings { it.copy(printerPort = p) } }
                 }
                 Text(
-                    "Tiskárna musí být ve stejné Wi-Fi síti jako telefon nebo tablet. IP adresu vytiskne většina tiskáren " +
-                        "na samotestu (podržte tlačítko FEED při zapnutí). Port bývá 9100.",
+                    tr("Tiskárna musí být ve stejné Wi-Fi síti jako telefon nebo tablet. IP adresu vytiskne většina tiskáren na samotestu (podržte tlačítko FEED při zapnutí). Port bývá 9100."),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text("Šířka papíru", style = MaterialTheme.typography.labelLarge)
+            Text(tr("Šířka papíru"), style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PaperWidth.entries.forEach { p ->
                     FilterChip(selected = s.paperWidth == p, onClick = { vm.updateSettings { it.copy(paperWidth = p) } }, label = { Text("${p.mm} mm") })
                 }
             }
-            Text("Znaková sada (diakritika)", style = MaterialTheme.typography.labelLarge)
+            Text(tr("Znaková sada (diakritika)"), style = MaterialTheme.typography.labelLarge)
             Column {
                 PrinterCharset.entries.forEach { c ->
-                    FilterChip(selected = s.charset == c, onClick = { vm.updateSettings { it.copy(charset = c) } }, label = { Text(c.label) })
+                    FilterChip(selected = s.charset == c, onClick = { vm.updateSettings { it.copy(charset = c) } }, label = { Text(tr(c.label)) })
                 }
             }
-            SwitchRow("Tisknout účtenku automaticky po platbě", s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
+            SwitchRow(tr("Tisknout účtenku automaticky po platbě"), s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
             Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
-                Icon(Icons.Filled.Print, null); Text("  Zkušební tisk")
+                Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))
             }
 
             EetSettings(vm, s)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Flos 0.1.0", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("Flos 0.1.0"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

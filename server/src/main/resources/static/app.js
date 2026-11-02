@@ -3,14 +3,16 @@
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const kc = (h) => (Number(h || 0) / 100).toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' Kč';
+const kc = (h) => (Number(h || 0) / 100).toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (LANG === 'en' ? ' CZK' : ' Kč');
 const toHaler = (s) => Math.round(parseFloat(String(s).replace(/\s/g, '').replace(',', '.')) * 100) || 0;
 const fromHaler = (h) => (Number(h || 0) / 100).toFixed(2).replace('.', ',');
-const dt = (ms) => ms ? new Date(ms).toLocaleString('cs-CZ') : '–';
+const dt = (ms) => ms ? new Date(ms).toLocaleString(LOCALE) : '–';
 const today = () => new Date().toLocaleDateString('sv-SE');
 const PAYMENT = { CASH: 'Hotově', CARD: 'Kartou', QR_TRANSFER: 'QR převod' };
 const ROLE = { OWNER: 'Majitel', MANAGER: 'Vedoucí', CASHIER: 'Pokladní' };
 const KIND = { RECEIPT: 'Naskladnění', WASTE: 'Odpis', ADJUST: 'Oprava', INVENTORY: 'Inventura', TRANSFER_IN: 'Převod – příjem', TRANSFER_OUT: 'Převod – výdej', SALE: 'Prodej', SALE_RETURN: 'Storno prodeje' };
+
+[PAYMENT, ROLE, KIND].forEach((m) => Object.keys(m).forEach((k) => { m[k] = t(m[k]); }));
 
 let token = null;
 try { token = localStorage.getItem('flos_token'); } catch (e) { /* storage blocked */ }
@@ -159,10 +161,10 @@ pages.products = async (main) => {
   main.innerHTML = `<h1>Produkty</h1>
     <div class="toolbar"><button class="primary" id="new">Nový produkt</button><button id="newcat">Nová kategorie</button>
     <input id="filter" placeholder="Hledat…" style="max-width:240px"></div>
-    <p class="muted">Kategorie: ${categories.map((c) => `<a href="#" data-cat="${c.id}">${esc(c.name)}</a>`).join(', ') || '–'}</p>
+    <p class="muted">${t('Kategorie:')} ${categories.map((c) => `<a href="#" data-cat="${c.id}">${esc(c.name)}</a>`).join(', ') || '–'}</p>
     <table id="tbl"><tr><th>Název</th><th>Kategorie</th><th>Kód / EAN</th><th class="num">Cena</th><th class="num">DPH</th><th>Sklad</th><th>Receptura</th></tr>
     ${products.map((p) => `<tr class="clickable" data-id="${p.id}" data-name="${esc(p.name.toLowerCase())}"><td>${esc(p.name)}${p.sellable ? '' : ' <span class="badge">surovina</span>'}</td><td>${esc(catName[p.categoryId] || '')}</td>
-      <td>${esc(p.sku)} ${esc(p.barcode)}</td><td class="num">${kc(p.price)}</td><td class="num">${p.vatPercent} %</td><td>${p.trackStock ? 'ano (' + esc(p.unit) + ')' : ''}</td><td>${p.recipe.length ? p.recipe.length + ' surovin' : ''}</td></tr>`).join('')}</table>
+      <td>${esc(p.sku)} ${esc(p.barcode)}</td><td class="num">${kc(p.price)}</td><td class="num">${p.vatPercent} %</td><td>${p.trackStock ? t('ano') + ' (' + esc(p.unit) + ')' : ''}</td><td>${p.recipe.length ? p.recipe.length + ' ' + t(p.recipe.length === 1 ? 'surovina' : p.recipe.length < 5 ? 'suroviny' : 'surovin') : ''}</td></tr>`).join('')}</table>
     <dialog id="dlg"></dialog>`;
   $('#filter').addEventListener('input', (e) => document.querySelectorAll('#tbl tr[data-name]').forEach((tr) => tr.classList.toggle('hidden', !tr.dataset.name.includes(e.target.value.toLowerCase()))));
   $('#new').addEventListener('click', () => productDialog(null, products, categories));
@@ -195,7 +197,7 @@ function productDialog(p, products, categories) {
   $('#addrow', d).onclick = () => { $('#recipe', d).insertAdjacentHTML('beforeend', recipeRow()); bindRm(); };
   bindRm();
   $('#cancel', d).onclick = () => d.close();
-  if (!isNew) $('#del', d).onclick = async () => { if (confirm('Smazat produkt?')) { await api('/products/' + p.id, { method: 'DELETE' }); d.close(); route(); } };
+  if (!isNew) $('#del', d).onclick = async () => { if (confirm(t('Smazat produkt?'))) { await api('/products/' + p.id, { method: 'DELETE' }); d.close(); route(); } };
   form.onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(form);
     const ings = f.getAll('ing'); const qtys = f.getAll('ingqty');
@@ -243,10 +245,10 @@ pages.stock = async (main) => {
     const total = levels.reduce((s, l) => s + l.value, 0);
     $('#levels').innerHTML = `<p class="muted">Hodnota zásob: <b>${kc(total)}</b> · Pod minimem: <b>${levels.filter((l) => l.low).length}</b></p>
       <table><tr><th>Produkt</th><th class="num">Zásoba</th><th class="num">Minimum</th><th class="num">Hodnota</th></tr>
-      ${levels.map((l) => `<tr><td>${esc(l.productName)} ${l.low ? '<span class="badge bad">dochází</span>' : ''}</td><td class="num">${l.qty.toLocaleString('cs-CZ')} ${esc(l.unit)}</td><td class="num">${l.minStock.toLocaleString('cs-CZ')}</td><td class="num">${kc(l.value)}</td></tr>`).join('')}</table>
+      ${levels.map((l) => `<tr><td>${esc(l.productName)} ${l.low ? '<span class="badge bad">dochází</span>' : ''}</td><td class="num">${l.qty.toLocaleString(LOCALE)} ${esc(l.unit)}</td><td class="num">${l.minStock.toLocaleString(LOCALE)}</td><td class="num">${kc(l.value)}</td></tr>`).join('')}</table>
       ${stocked.length ? '' : '<p class="muted">Žádný produkt nemá zapnuté sledování zásob. Zapněte ho u produktu.</p>'}`;
     $('#moves').innerHTML = `<table><tr><th>Čas</th><th>Druh</th><th>Produkt</th><th class="num">Množství</th><th>Poznámka</th></tr>
-      ${moves.map((m) => `<tr><td>${dt(m.createdAt)}</td><td>${KIND[m.kind] || m.kind}</td><td>${esc(m.productName)}</td><td class="num">${m.qty.toLocaleString('cs-CZ')}</td><td>${esc(m.note || m.ref)}</td></tr>`).join('')}</table>`;
+      ${moves.map((m) => `<tr><td>${dt(m.createdAt)}</td><td>${KIND[m.kind] || m.kind}</td><td>${esc(m.productName)}</td><td class="num">${m.qty.toLocaleString(LOCALE)}</td><td>${esc(m.note || m.ref)}</td></tr>`).join('')}</table>`;
   };
   $('#sel').branchId.addEventListener('change', load);
   document.querySelectorAll('[data-kind]').forEach((btn) => btn.addEventListener('click', () => stockDialog(btn.dataset.kind, +$('#sel').branchId.value, bl, stocked, load)));

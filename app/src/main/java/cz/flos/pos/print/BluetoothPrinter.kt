@@ -1,5 +1,6 @@
 package cz.flos.pos.print
 
+import cz.flos.pos.ui.tr
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
@@ -43,10 +44,10 @@ class BluetoothPrinter(private val context: Context) {
     @SuppressLint("MissingPermission")
     suspend fun print(address: String, data: ByteArray) = mutex.withLock {
         withContext(Dispatchers.IO) {
-            if (address.isBlank()) throw IOException("Není vybrána tiskárna. Vyberte ji v Nastavení.")
-            if (!hasPermission()) throw IOException("Aplikace nemá oprávnění k Bluetooth.")
-            val bt = adapter ?: throw IOException("Zařízení nemá Bluetooth.")
-            if (!bt.isEnabled) throw IOException("Bluetooth je vypnutý.")
+            if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
+            if (!hasPermission()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
+            val bt = adapter ?: throw IOException(tr("Zařízení nemá Bluetooth."))
+            if (!bt.isEnabled) throw IOException(tr("Bluetooth je vypnutý."))
             val device = bt.getRemoteDevice(address)
             bt.cancelDiscovery()
             val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)

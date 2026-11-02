@@ -9,11 +9,14 @@ import cz.flos.core.PrinterCharset
 import cz.flos.core.eet.EetEnvironment
 import cz.flos.pos.print.NetworkPrinter
 import cz.flos.pos.print.PrinterType
+import cz.flos.pos.ui.Language
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class AppSettings(
+    /** Language of the till screens. Receipts always print in Czech. */
+    val language: Language = Language.CS,
     val businessName: String = "Moje provozovna",
     val address1: String = "",
     val address2: String = "",
@@ -71,6 +74,7 @@ class SettingsStore(context: Context) {
     private fun load(): AppSettings {
         val d = AppSettings()
         return AppSettings(
+            language = Language.entries.firstOrNull { it.code == prefs.getString("language", d.language.code) } ?: d.language,
             businessName = prefs.getString("businessName", d.businessName)!!,
             address1 = prefs.getString("address1", d.address1)!!,
             address2 = prefs.getString("address2", d.address2)!!,
@@ -102,6 +106,7 @@ class SettingsStore(context: Context) {
     fun update(transform: (AppSettings) -> AppSettings) {
         val s = transform(_state.value)
         prefs.edit {
+            putString("language", s.language.code)
             putString("businessName", s.businessName)
             putString("address1", s.address1)
             putString("address2", s.address2)

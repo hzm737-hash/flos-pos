@@ -17,6 +17,8 @@ class FlosApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Background work (EET retries) produces messages too, so set the language before any UI exists.
+        cz.flos.pos.ui.I18n.language = settings.state.value.language
         EetRetryWorker.schedulePeriodic(this)
     }
 }

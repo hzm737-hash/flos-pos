@@ -47,23 +47,23 @@ fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: (
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Platba ${Money.format(if (method == PaymentMethod.CASH) cashDue else cart.total)}") },
+        title = { Text(tr("Platba %s", Money.format(if (method == PaymentMethod.CASH) cashDue else cart.total))) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = method == PaymentMethod.CASH, onClick = { method = PaymentMethod.CASH },
-                        label = { Text("Hotově") }, leadingIcon = { Icon(Icons.Filled.Payments, null) })
+                        label = { Text(tr("Hotově")) }, leadingIcon = { Icon(Icons.Filled.Payments, null) })
                     FilterChip(selected = method == PaymentMethod.CARD, onClick = { method = PaymentMethod.CARD },
-                        label = { Text("Kartou") }, leadingIcon = { Icon(Icons.Filled.CreditCard, null) })
+                        label = { Text(tr("Kartou")) }, leadingIcon = { Icon(Icons.Filled.CreditCard, null) })
                     FilterChip(selected = method == PaymentMethod.QR_TRANSFER, onClick = { method = PaymentMethod.QR_TRANSFER },
-                        label = { Text("QR") }, leadingIcon = { Icon(Icons.Filled.QrCode2, null) })
+                        label = { Text(tr("QR")) }, leadingIcon = { Icon(Icons.Filled.QrCode2, null) })
                 }
                 when (method) {
                     PaymentMethod.CASH -> {
                         OutlinedTextField(
                             value = given,
                             onValueChange = { given = it },
-                            label = { Text("Přijato od zákazníka (Kč)") },
+                            label = { Text(tr("Přijato od zákazníka (Kč)")) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -72,30 +72,30 @@ fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: (
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             quick.forEach { amount ->
                                 FilterChip(selected = givenHaler == amount, onClick = { given = Money.format(amount, "") },
-                                    label = { Text(if (amount == cashDue) "Přesně" else Money.format(amount, "").substringBefore(',')) })
+                                    label = { Text(if (amount == cashDue) tr("Přesně") else Money.format(amount, "").substringBefore(',')) })
                             }
                         }
                         if (change != null) {
                             Text(
-                                if (change >= 0) "Vrátit: ${Money.format(change)}" else "Chybí: ${Money.format(-change)}",
+                                if (change >= 0) tr("Vrátit: %s", Money.format(change)) else tr("Chybí: %s", Money.format(-change)),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (change >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             )
                         }
                     }
-                    PaymentMethod.CARD -> Text("Proveďte platbu na platebním terminálu a po schválení potvrďte.")
+                    PaymentMethod.CARD -> Text(tr("Proveďte platbu na platebním terminálu a po schválení potvrďte."))
                     PaymentMethod.QR_TRANSFER -> {
                         if (qr == null) {
                             Text(
-                                "Pro QR platbu zadejte číslo účtu v Nastavení.",
+                                tr("Pro QR platbu zadejte číslo účtu v Nastavení."),
                                 color = MaterialTheme.colorScheme.error,
                             )
                         } else {
                             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                                 QrImage(qr)
                                 Spacer(Modifier.height(8.dp))
-                                Text("Zákazník naskenuje kód v bankovní aplikaci.", style = MaterialTheme.typography.bodySmall)
+                                Text(tr("Zákazník naskenuje kód v bankovní aplikaci."), style = MaterialTheme.typography.bodySmall)
                                 qr.variableSymbol?.let { Text("VS: $it", style = MaterialTheme.typography.bodySmall) }
                             }
                         }
@@ -115,8 +115,8 @@ fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: (
                     vm.checkout(method, if (method == PaymentMethod.CASH) givenHaler else null, onPaid)
                 },
                 modifier = Modifier.padding(start = 8.dp),
-            ) { Text(if (method == PaymentMethod.QR_TRANSFER) "Vytisknout účtenku s QR" else "Dokončit") }
+            ) { Text(if (method == PaymentMethod.QR_TRANSFER) tr("Vytisknout účtenku s QR") else tr("Dokončit")) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Zpět") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zpět")) } },
     )
 }

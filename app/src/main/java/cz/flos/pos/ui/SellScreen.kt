@@ -72,8 +72,8 @@ fun SellScreen(vm: PosViewModel) {
         Column(Modifier.fillMaxSize()) {
             if (showCartOnPhone) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { showCartOnPhone = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zpět") }
-                    Text("Košík", style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = { showCartOnPhone = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, tr("Zpět")) }
+                    Text(tr("Košík"), style = MaterialTheme.typography.titleLarge)
                 }
                 CartPanel(vm, cart, onPay = { paying = true }, modifier = Modifier.weight(1f))
             } else {
@@ -93,7 +93,7 @@ fun SellScreen(vm: PosViewModel) {
                             onClick = { paying = true },
                             enabled = !cart.isEmpty(),
                             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = FlosGold, contentColor = FlosGreen),
-                        ) { Text("Zaplatit") }
+                        ) { Text(tr("Zaplatit")) }
                     }
                 }
             }
@@ -118,14 +118,14 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { FilterChip(selected = selected == null, onClick = { selected = null }, label = { Text("Vše") }) }
+            item { FilterChip(selected = selected == null, onClick = { selected = null }, label = { Text(tr("Vše")) }) }
             items(categories, key = { it.id }) { c ->
                 FilterChip(selected = selected == c.id, onClick = { selected = c.id }, label = { Text(c.name) })
             }
         }
         if (shown.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Žádné produkty. Přidejte je na kartě Produkty.")
+                Text(tr("Žádné produkty. Přidejte je na kartě Produkty."))
             }
         }
         LazyVerticalGrid(
@@ -162,7 +162,7 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, modifier:
     Column(modifier.fillMaxHeight().padding(12.dp)) {
         if (cart.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("Košík je prázdný", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("Košík je prázdný"), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(Modifier.weight(1f)) {
@@ -177,10 +177,10 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, modifier:
                             )
                         }
                         IconButton(onClick = { vm.setQuantity(i, item.quantity - 1) }) {
-                            Icon(if (item.quantity == 1) Icons.Filled.Delete else Icons.Filled.Remove, "Méně")
+                            Icon(if (item.quantity == 1) Icons.Filled.Delete else Icons.Filled.Remove, tr("Méně"))
                         }
                         Text("${item.quantity}", fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { vm.setQuantity(i, item.quantity + 1) }) { Icon(Icons.Filled.Add, "Více") }
+                        IconButton(onClick = { vm.setQuantity(i, item.quantity + 1) }) { Icon(Icons.Filled.Add, tr("Více")) }
                         Text(Money.format(item.total, ""), modifier = Modifier.width(72.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                     }
                     HorizontalDivider()
@@ -195,18 +195,18 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, modifier:
             }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Celkem", style = MaterialTheme.typography.titleLarge)
+            Text(tr("Celkem"), style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.weight(1f))
             Text(Money.format(cart.total), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { vm.clearCart() }, enabled = !cart.isEmpty()) { Text("Vymazat") }
+            TextButton(onClick = { vm.clearCart() }, enabled = !cart.isEmpty()) { Text(tr("Vymazat")) }
             TextButton(onClick = { discountDialog = true }, enabled = !cart.isEmpty()) {
-                Icon(Icons.Filled.Percent, null); Text(" Sleva")
+                Icon(Icons.Filled.Percent, null); Text(tr(" Sleva"))
             }
             Spacer(Modifier.weight(1f))
             Button(onClick = onPay, enabled = !cart.isEmpty(), modifier = Modifier.height(52.dp)) {
-                Text("Zaplatit", style = MaterialTheme.typography.titleMedium)
+                Text(tr("Zaplatit"), style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -221,18 +221,18 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, modifier:
 private fun DiscountDialog(current: Int, onDismiss: () -> Unit, onSet: (Int) -> Unit) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Sleva na celý nákup") },
+        title = { Text(tr("Sleva na celý nákup")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(0, 5, 10, 15, 20, 50).chunked(3).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { p ->
-                            FilterChip(selected = current == p, onClick = { onSet(p) }, label = { Text(if (p == 0) "Bez slevy" else "$p %") })
+                            FilterChip(selected = current == p, onClick = { onSet(p) }, label = { Text(if (p == 0) tr("Bez slevy") else "$p %") })
                         }
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Zavřít") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Zavřít")) } },
     )
 }

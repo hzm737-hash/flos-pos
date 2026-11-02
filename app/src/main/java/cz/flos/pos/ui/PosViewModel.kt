@@ -125,21 +125,21 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
 
             val sent = record?.let { sendToEet(it) }
             val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo))
-            if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), "Účtenka $number vytištěna")
-            else _messages.tryEmit("Účtenka $number uložena")
+            if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number))
+            else _messages.tryEmit(tr("Účtenka %s uložena", number))
         }
     }
 
     /** Sends one record now; on failure the background worker takes over. */
     private suspend fun sendToEet(r: EetRecordEntity): EetRecordEntity {
-        _busy.value = "Odesílám tržbu do EET…"
+        _busy.value = tr("Odesílám tržbu do EET…")
         val after = try { eet.send(r.id) ?: r } finally { _busy.value = null }
         when (after.status) {
             EetStatus.PENDING -> {
                 EetRetryWorker.scheduleSoon(getApplication())
-                _messages.tryEmit("EET neodpověděla včas, tržba se odešle automaticky později.")
+                _messages.tryEmit(tr("EET neodpověděla včas, tržba se odešle automaticky později."))
             }
-            EetStatus.REJECTED -> _messages.tryEmit("EET odmítla tržbu: ${after.lastError}")
+            EetStatus.REJECTED -> _messages.tryEmit(tr("EET odmítla tržbu: %s", after.lastError))
             else -> {}
         }
         return after
@@ -168,7 +168,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reprint(sw: SaleWithItems) = viewModelScope.launch {
         val s = settings.value
-        printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receiptOf(sw)), "Kopie vytištěna")
+        printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receiptOf(sw)), tr("Kopie vytištěna"))
     }
 
     /**
@@ -183,19 +183,19 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         salesDao.update(sw.sale.copy(cancelled = true, stornoNumber = stornoNumber))
         val record = eet.createRecord(sw.sale.id, stornoNumber, millis, -sw.sale.received, storno = true)
         val sent = record?.let { sendToEet(it) }
-        _messages.tryEmit("Účtenka ${sw.sale.number} stornována dokladem $stornoNumber")
+        _messages.tryEmit(tr("Účtenka %s stornována dokladem %s", sw.sale.number, stornoNumber))
         if (s.autoPrint) {
             val doc = Receipt(stornoNumber, now, s.cashier, sw.toCart(), sw.sale.paymentMethod, null, null,
                 eet = sent?.let(::eetInfo), stornoOf = sw.sale.number)
-            printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), "Storno doklad vytištěn")
+            printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), tr("Storno doklad vytištěn"))
         }
     }
 
     // ---- EET ----
     fun retryEetNow() = viewModelScope.launch {
-        _busy.value = "Odesílám čekající tržby do EET…"
+        _busy.value = tr("Odesílám čekající tržby do EET…")
         val left = try { eet.sendPending() } finally { _busy.value = null }
-        _messages.tryEmit(if (left == 0) "Všechny tržby jsou odeslané" else "Stále čeká $left tržeb, zkusím to znovu automaticky")
+        _messages.tryEmit(if (left == 0) tr("Všechny tržby jsou odeslané") else tr("Stále čeká %d tržeb, zkusím to znovu automaticky", left))
         if (left > 0) EetRetryWorker.scheduleSoon(getApplication())
     }
 
@@ -205,7 +205,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun testEet() = viewModelScope.launch {
-        _busy.value = "Ověřuji spojení s EET…"
+        _busy.value = tr("Ověřuji spojení s EET…")
         val text = try { eet.testConnection() } finally { _busy.value = null }
         _messages.tryEmit(text)
     }
@@ -214,13 +214,13 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         val result = runCatching {
             val bytes = withContext(Dispatchers.IO) {
                 getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            } ?: error("Soubor nelze přečíst.")
+            } ?: error(tr("Soubor nelze přečíst."))
             eet.importCertificate(bytes, password)
         }
         result.onSuccess { cert ->
             updateSettings { it.copy(eetCertPassword = password, eetEic = it.eetEic.ifBlank { cert.eic ?: "" }) }
-            _messages.tryEmit("Certifikát nahrán (${cert.eic}, platí do ${java.text.DateFormat.getDateInstance().format(cert.validUntil)})")
-        }.onFailure { _messages.tryEmit(it.message ?: "Certifikát se nepodařilo nahrát") }
+            _messages.tryEmit(tr("Certifikát nahrán (%s, platí do %s)", cert.eic, java.text.DateFormat.getDateInstance().format(cert.validUntil)))
+        }.onFailure { _messages.tryEmit(it.message ?: tr("Certifikát se nepodařilo nahrát")) }
     }
 
     // ---- Reports ----
@@ -233,20 +233,20 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
 
     fun printReport(report: DailyReport) {
         val s = settings.value
-        printBlocks(report.layout(s.business, s.paperWidth.chars), "Uzávěrka vytištěna")
+        printBlocks(report.layout(s.business, s.paperWidth.chars), tr("Uzávěrka vytištěna"))
     }
 
     fun testPrint() {
         val s = settings.value
         val blocks = buildList {
             add(ReceiptBlock.Line(s.businessName, Align.CENTER, bold = true, large = true))
-            add(ReceiptBlock.Line("Zkušební tisk Flos", Align.CENTER))
+            add(ReceiptBlock.Line(tr("Zkušební tisk Flos"), Align.CENTER))
             add(ReceiptBlock.Line("Příliš žluťoučký kůň úpěl ďábelské ódy"))
             add(ReceiptBlock.Separator)
-            qrFor(10000, "1", "Test Flos")?.let { add(ReceiptBlock.Qr(it.toSpayd())) }
+            qrFor(10000, "1", tr("Test Flos"))?.let { add(ReceiptBlock.Qr(it.toSpayd())) }
             add(ReceiptBlock.Feed(3))
         }
-        printBlocks(blocks, "Zkušební tisk odeslán")
+        printBlocks(blocks, tr("Zkušební tisk odeslán"))
     }
 
     private fun printBlocks(blocks: List<ReceiptBlock>, okMessage: String) {
@@ -255,7 +255,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
             val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks)
             runCatching { printer.print(s, bytes) }
                 .onSuccess { _messages.tryEmit(okMessage) }
-                .onFailure { _messages.tryEmit("Tisk se nezdařil: ${it.message}") }
+                .onFailure { _messages.tryEmit(tr("Tisk se nezdařil: %s", it.message)) }
         }
     }
 

@@ -1,5 +1,6 @@
 package cz.flos.pos.print
 
+import cz.flos.pos.ui.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,12 +18,12 @@ class NetworkPrinter {
 
     suspend fun print(host: String, port: Int, data: ByteArray) = mutex.withLock {
         withContext(Dispatchers.IO) {
-            if (host.isBlank()) throw IOException("Není zadána IP adresa tiskárny. Doplňte ji v Nastavení.")
+            if (host.isBlank()) throw IOException(tr("Není zadána IP adresa tiskárny. Doplňte ji v Nastavení."))
             Socket().use { socket ->
                 try {
                     socket.connect(InetSocketAddress(host.trim(), port), CONNECT_TIMEOUT_MS)
                 } catch (e: IOException) {
-                    throw IOException("Tiskárna $host:$port nereaguje. Je zapnutá a ve stejné Wi-Fi síti?", e)
+                    throw IOException(tr("Tiskárna %s:%d nereaguje. Je zapnutá a ve stejné Wi-Fi síti?", host, port), e)
                 }
                 socket.soTimeout = CONNECT_TIMEOUT_MS
                 socket.getOutputStream().apply {

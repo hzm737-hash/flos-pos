@@ -63,7 +63,7 @@ fun ProductsScreen(vm: PosViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Text("Kategorie", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, top = 12.dp))
+            Text(tr("Kategorie"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, top = 12.dp))
             LazyRow(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -78,7 +78,7 @@ fun ProductsScreen(vm: PosViewModel) {
                 }
                 item {
                     FilterChip(selected = false, onClick = { editingCategory = CategoryEntity(name = "", color = palette[categories.size % palette.size]) },
-                        label = { Text("Nová kategorie") }, leadingIcon = { Icon(Icons.Filled.Add, null) })
+                        label = { Text(tr("Nová kategorie")) }, leadingIcon = { Icon(Icons.Filled.Add, null) })
                 }
             }
             HorizontalDivider()
@@ -91,7 +91,7 @@ fun ProductsScreen(vm: PosViewModel) {
                         Column(Modifier.weight(1f)) {
                             Text(p.name, fontWeight = FontWeight.Medium)
                             Text(
-                                listOfNotNull(p.categoryId?.let { catName[it] }, if (settings.vatPayer) "DPH ${p.vatPercent} %" else null).joinToString(" · "),
+                                listOfNotNull(p.categoryId?.let { catName[it] }, if (settings.vatPayer) tr("DPH %s", "${p.vatPercent} %") else null).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -105,7 +105,7 @@ fun ProductsScreen(vm: PosViewModel) {
         ExtendedFloatingActionButton(
             onClick = { editing = ProductEntity(name = "", price = 0, vatPercent = if (settings.vatPayer) 21 else 0) },
             icon = { Icon(Icons.Filled.Add, null) },
-            text = { Text("Nový produkt") },
+            text = { Text(tr("Nový produkt")) },
             modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
         )
     }
@@ -142,29 +142,29 @@ private fun ProductDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial.id == 0L) "Nový produkt" else "Upravit produkt") },
+        title = { Text(if (initial.id == 0L) tr("Nový produkt") else tr("Upravit produkt")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Název") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(name, { name = it }, label = { Text(tr("Název")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
-                    price, { price = it }, label = { Text("Cena vč. DPH (Kč)") }, singleLine = true,
+                    price, { price = it }, label = { Text(tr("Cena vč. DPH (Kč)")) }, singleLine = true,
                     isError = price.isNotEmpty() && parsed == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                 )
                 if (vatPayer) {
-                    Text("Sazba DPH", style = MaterialTheme.typography.labelLarge)
+                    Text(tr("Sazba DPH"), style = MaterialTheme.typography.labelLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         VatRate.entries.forEach { r ->
                             FilterChip(selected = vat == r.percent, onClick = { vat = r.percent }, label = { Text(r.label) })
                         }
                     }
                 }
-                Text("Kategorie", style = MaterialTheme.typography.labelLarge)
+                Text(tr("Kategorie"), style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     (listOf<CategoryEntity?>(null) + categories).chunked(3).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { c ->
-                                FilterChip(selected = category == c?.id, onClick = { category = c?.id }, label = { Text(c?.name ?: "Bez kategorie") })
+                                FilterChip(selected = category == c?.id, onClick = { category = c?.id }, label = { Text(c?.name ?: tr("Bez kategorie")) })
                             }
                         }
                     }
@@ -174,13 +174,13 @@ private fun ProductDialog(
         confirmButton = {
             Button(enabled = valid, onClick = {
                 onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category))
-            }) { Text("Uložit") }
+            }) { Text(tr("Uložit")) }
         },
         dismissButton = {
             Row {
-                if (initial.id != 0L) IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Smazat") }
+                if (initial.id != 0L) IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, tr("Smazat")) }
                 Spacer(Modifier.size(4.dp))
-                TextButton(onClick = onDismiss) { Text("Zrušit") }
+                TextButton(onClick = onDismiss) { Text(tr("Zrušit")) }
             }
         },
     )
@@ -192,10 +192,10 @@ private fun CategoryDialog(initial: CategoryEntity, onDismiss: () -> Unit, onSav
     var color by remember { mutableStateOf(initial.color) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial.id == 0L) "Nová kategorie" else "Upravit kategorii") },
+        title = { Text(if (initial.id == 0L) tr("Nová kategorie") else tr("Upravit kategorii")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Název") }, singleLine = true)
+                OutlinedTextField(name, { name = it }, label = { Text(tr("Název")) }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     palette.forEach { c ->
                         Box(
@@ -205,11 +205,11 @@ private fun CategoryDialog(initial: CategoryEntity, onDismiss: () -> Unit, onSav
                 }
             }
         },
-        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(initial.copy(name = name.trim(), color = color)) }) { Text("Uložit") } },
+        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(initial.copy(name = name.trim(), color = color)) }) { Text(tr("Uložit")) } },
         dismissButton = {
             Row {
-                if (initial.id != 0L) IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Smazat") }
-                TextButton(onClick = onDismiss) { Text("Zrušit") }
+                if (initial.id != 0L) IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, tr("Smazat")) }
+                TextButton(onClick = onDismiss) { Text(tr("Zrušit")) }
             }
         },
     )

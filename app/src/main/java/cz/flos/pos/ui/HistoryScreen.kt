@@ -51,7 +51,7 @@ fun HistoryScreen(vm: PosViewModel) {
     val eetBySale = eetRecords.groupBy { it.saleId }
 
     if (sales.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Zatím žádné účtenky") }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(tr("Zatím žádné účtenky")) }
         return
     }
     LazyColumn(Modifier.fillMaxSize()) {
@@ -66,8 +66,8 @@ fun HistoryScreen(vm: PosViewModel) {
                     Text(s.number, fontWeight = FontWeight.Medium,
                         textDecoration = if (s.cancelled) TextDecoration.LineThrough else null)
                     Text(
-                        fmt.format(Date(s.createdAt)) + " · " + s.paymentMethod.label +
-                            (if (s.cancelled) " · STORNO ${s.stornoNumber ?: ""}" else "") +
+                        fmt.format(Date(s.createdAt)) + " · " + tr(s.paymentMethod.label) +
+                            (if (s.cancelled) " · " + tr("STORNO") + " " + (s.stornoNumber ?: "") else "") +
                             eetLabel(eetBySale[s.id].orEmpty()),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (s.cancelled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -82,7 +82,7 @@ fun HistoryScreen(vm: PosViewModel) {
     open?.let { sw ->
         AlertDialog(
             onDismissRequest = { open = null },
-            title = { Text("Účtenka ${sw.sale.number}") },
+            title = { Text(tr("Účtenka %s", sw.sale.number)) },
             text = {
                 var preview by remember(sw) { mutableStateOf("") }
                 LaunchedEffect(sw) { preview = vm.receiptPreview(sw) }
@@ -93,11 +93,11 @@ fun HistoryScreen(vm: PosViewModel) {
                     modifier = Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
                 )
             },
-            confirmButton = { Button(onClick = { vm.reprint(sw) }) { Text("Tisknout kopii") } },
+            confirmButton = { Button(onClick = { vm.reprint(sw) }) { Text(tr("Tisknout kopii")) } },
             dismissButton = {
                 Row {
-                    if (!sw.sale.cancelled) TextButton(onClick = { confirmCancel = sw; open = null }) { Text("Storno") }
-                    TextButton(onClick = { open = null }) { Text("Zavřít") }
+                    if (!sw.sale.cancelled) TextButton(onClick = { confirmCancel = sw; open = null }) { Text(tr("Storno")) }
+                    TextButton(onClick = { open = null }) { Text(tr("Zavřít")) }
                 }
             },
         )
@@ -105,10 +105,10 @@ fun HistoryScreen(vm: PosViewModel) {
     confirmCancel?.let { sw ->
         AlertDialog(
             onDismissRequest = { confirmCancel = null },
-            title = { Text("Stornovat účtenku ${sw.sale.number}?") },
-            text = { Text("Účtenka zůstane v historii označená jako storno a nezapočítá se do tržby.") },
-            confirmButton = { Button(onClick = { vm.cancelSale(sw); confirmCancel = null }) { Text("Stornovat") } },
-            dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text("Zpět") } },
+            title = { Text(tr("Stornovat účtenku %s?", sw.sale.number)) },
+            text = { Text(tr("Účtenka zůstane v historii označená jako storno a nezapočítá se do tržby.")) },
+            confirmButton = { Button(onClick = { vm.cancelSale(sw); confirmCancel = null }) { Text(tr("Stornovat")) } },
+            dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(tr("Zpět")) } },
         )
     }
 }
@@ -118,8 +118,8 @@ private fun eetLabel(records: List<EetRecordEntity>): String {
     val r = records.firstOrNull { !it.storno } ?: return ""
     return when (r.status) {
         EetStatus.CONFIRMED -> " · EET ✓"
-        EetStatus.PENDING -> " · EET čeká"
-        EetStatus.REJECTED -> " · EET odmítnuto"
-        EetStatus.VERIFIED -> " · EET ověřeno"
+        EetStatus.PENDING -> tr(" · EET čeká")
+        EetStatus.REJECTED -> tr(" · EET odmítnuto")
+        EetStatus.VERIFIED -> tr(" · EET ověřeno")
     }
 }

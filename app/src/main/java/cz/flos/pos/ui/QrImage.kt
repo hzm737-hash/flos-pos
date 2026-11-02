@@ -27,7 +27,7 @@ fun QrImage(qr: QrPlatba, size: Dp = 240.dp, modifier: Modifier = Modifier) {
     }
     Image(
         bitmap = bitmap,
-        contentDescription = "QR Platba",
+        contentDescription = tr("QR Platba"),
         filterQuality = FilterQuality.None,
         modifier = modifier.background(Color.White).padding(12.dp).size(size),
     )

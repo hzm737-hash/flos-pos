@@ -68,3 +68,5 @@ dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top
   .row { grid-template-columns: 1fr; }
   .bar { grid-template-columns: 80px 1fr 90px; }
 }
+.lang { font-size: 13px; }
+@media (max-width: 700px) { #org-name { display: none; } }

@@ -32,6 +32,13 @@ customer can pay by bank transfer.
 - **Daily report** (uzávěrka): takings by payment type and VAT rate, printable.
 - **Products and categories** management. Everything is stored on the device and works offline.
 
+## Languages
+
+Czech is the default everywhere; English can be chosen.
+
+- **Till app:** Settings → "Jazyk / Language". The switch is instant. Texts are written in Czech in the code and wrapped in `tr("…")`; English lives in `app/src/main/java/cz/flos/pos/ui/En.kt`. A missing English text falls back to Czech. Receipts and EET data always stay in Czech, as the law expects.
+- **Web back office:** the "English" / "Čeština" button in the header (and on the sign-in page), remembered per browser. The dictionary is in `server/src/main/resources/static/i18n.js`.
+
 ## Project layout
 
 | Module | What it is |

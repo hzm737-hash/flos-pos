@@ -50,10 +50,10 @@ fun ReportScreen(vm: PosViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { date = date.minusDays(1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Předchozí den") }
+            IconButton(onClick = { date = date.minusDays(1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, tr("Předchozí den")) }
             Text("${date.dayOfMonth}. ${date.monthValue}. ${date.year}", style = MaterialTheme.typography.titleLarge)
             IconButton(onClick = { date = date.plusDays(1) }, enabled = date < LocalDate.now()) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Další den")
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, tr("Další den"))
             }
         }
         report?.let { r -> ReportBody(r, settings.vatPayer) { vm.printReport(r) } }
@@ -65,22 +65,22 @@ private fun ReportBody(r: DailyReport, vatPayer: Boolean, onPrint: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Card(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(top = 12.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReportRow("Tržba celkem", Money.format(r.total), bold = true)
-                ReportRow("Počet účtenek", r.receiptCount.toString())
-                if (r.cancelledCount > 0) ReportRow("Stornováno", r.cancelledCount.toString())
+                ReportRow(tr("Tržba celkem"), Money.format(r.total), bold = true)
+                ReportRow(tr("Počet účtenek"), r.receiptCount.toString())
+                if (r.cancelledCount > 0) ReportRow(tr("Stornováno"), r.cancelledCount.toString())
                 HorizontalDivider()
-                PaymentMethod.entries.forEach { ReportRow(it.label, Money.format(r.byPayment[it] ?: 0)) }
+                PaymentMethod.entries.forEach { ReportRow(tr(it.label), Money.format(r.byPayment[it] ?: 0)) }
                 if (vatPayer && r.byVat.isNotEmpty()) {
                     HorizontalDivider()
                     r.byVat.forEach {
-                        ReportRow("Základ ${it.rate.label}", Money.format(it.base))
-                        ReportRow("DPH ${it.rate.label}", Money.format(it.vat))
+                        ReportRow(tr("Základ %s", it.rate.label), Money.format(it.base))
+                        ReportRow(tr("DPH %s", it.rate.label), Money.format(it.vat))
                     }
                 }
             }
         }
         Button(onClick = onPrint, modifier = Modifier.padding(top = 16.dp)) {
-            Icon(Icons.Filled.Print, null); Text("  Vytisknout uzávěrku")
+            Icon(Icons.Filled.Print, null); Text(tr("  Vytisknout uzávěrku"))
         }
     }
 }

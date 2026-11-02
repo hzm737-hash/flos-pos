@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -66,6 +67,10 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     val wide = isWide()
+    val settings by vm.settings.collectAsState()
+    // Set before anything below is composed, and re-key the tree so every tr() call re-runs on a switch.
+    I18n.language = settings.language
+    key(settings.language) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -76,7 +81,7 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
                         selected = screen == s,
                         onClick = { screen = s },
                         icon = { Icon(s.icon, contentDescription = null) },
-                        label = { Text(s.label) },
+                        label = { Text(tr(s.label)) },
                     )
                 }
             }
@@ -95,7 +100,7 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
                         selected = screen == s,
                         onClick = { screen = s },
                         icon = { Icon(s.icon, contentDescription = null) },
-                        label = { Text(s.label) },
+                        label = { Text(tr(s.label)) },
                     )
                 }
             }
@@ -109,4 +114,5 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
         }
         }
     }
+}
 }

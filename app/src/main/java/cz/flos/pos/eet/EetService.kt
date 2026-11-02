@@ -1,5 +1,6 @@
 package cz.flos.pos.eet
 
+import cz.flos.pos.ui.tr
 import android.content.Context
 import cz.flos.core.eet.EetCertificate
 import cz.flos.core.eet.EetClient
@@ -92,7 +93,7 @@ class EetService(
         val cert = certificate()
         val now = System.currentTimeMillis()
         if (cert == null) {
-            return@withContext r.copy(lastAttemptAt = now, lastError = "Chybí pokladní certifikát EET nebo heslo k němu.")
+            return@withContext r.copy(lastAttemptAt = now, lastError = tr("Chybí pokladní certifikát EET nebo heslo k němu."))
                 .also { dao.update(it) }
         }
         val sale = EetSale(
@@ -130,20 +131,20 @@ class EetService(
      */
     suspend fun testConnection(): String = withContext(Dispatchers.IO) {
         val s = settings()
-        val cert = certificate() ?: return@withContext "Nejdřív nahrajte pokladní certifikát a zadejte heslo."
+        val cert = certificate() ?: return@withContext tr("Nejdřív nahrajte pokladní certifikát a zadejte heslo.")
         val sale = EetSale(
             eicPopl = s.effectiveEic, idJednotky = s.eetIdJednotky.toIntOrNull() ?: 0, idPokl = s.eetIdPokl.trim(),
             poradCis = "TEST-" + (System.currentTimeMillis() / 1000), datTrzby = OffsetDateTime.now(EetFormat.PRAGUE), amount = 100,
         )
         when (val r = EetClient(s.eetEnvironment, cert, s.eetTimeoutMs.coerceAtLeast(2000)).send(sale, true, verification = true).result) {
-            is EetResult.VerifiedOk -> "Spojení s EET funguje, zpráva je v pořádku." + warningsText(r.warnings)
-            is EetResult.Confirmed -> "Spojení funguje, POK ${r.pok}" + warningsText(r.warnings)
-            is EetResult.Error -> "Chyba: " + (r.code?.let { "[$it] " } ?: "") + r.message + warningsText(r.warnings)
+            is EetResult.VerifiedOk -> tr("Spojení s EET funguje, zpráva je v pořádku.") + warningsText(r.warnings)
+            is EetResult.Confirmed -> tr("Spojení funguje, POK %s", r.pok) + warningsText(r.warnings)
+            is EetResult.Error -> tr("Chyba: ") + (r.code?.let { "[$it] " } ?: "") + r.message + warningsText(r.warnings)
         }
     }
 
     private fun warningsText(w: List<cz.flos.core.eet.EetWarning>) =
-        if (w.isEmpty()) "" else "\nVarování: " + w.joinToString("; ") { "${it.code} ${it.text}" }
+        if (w.isEmpty()) "" else tr("\nVarování: ") + w.joinToString("; ") { "${it.code} ${it.text}" }
 
     companion object {
         /** Warn the cashier when a sale has waited this long; the legal limit is 48 hours. */

@@ -53,22 +53,21 @@ fun EetQueueBanner(vm: PosViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (urgent) Icons.Filled.Warning else Icons.Filled.CloudUpload, null)
                 Spacer(Modifier.width(8.dp))
-                Text("EET", fontWeight = FontWeight.Bold)
+                Text(tr("EET"), fontWeight = FontWeight.Bold)
             }
             if (pending.isNotEmpty()) {
                 Text(
-                    "${pending.size} tržeb čeká na odeslání. Nejstarší čeká $oldestHours h " +
-                        "(zákonná lhůta ${EetFormat.OFFLINE_DEADLINE_HOURS} h)." +
-                        (pending.first().lastError?.let { "\nPoslední chyba: $it" } ?: ""),
+                    tr("%d tržeb čeká na odeslání. Nejstarší čeká %d h (zákonná lhůta %d h).", pending.size, oldestHours, EetFormat.OFFLINE_DEADLINE_HOURS) +
+                        (pending.first().lastError?.let { "\n" + tr("Poslední chyba: %s", it) } ?: ""),
                 )
             }
             rejected.take(5).forEach { r ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Odmítnuto ${r.poradCis}: ${r.lastError}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { vm.requeueEet(r) }) { Text("Odeslat znovu") }
+                    Text(tr("Odmítnuto %s: %s", r.poradCis, r.lastError), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { vm.requeueEet(r) }) { Text(tr("Odeslat znovu")) }
                 }
             }
-            if (pending.isNotEmpty()) TextButton(onClick = { vm.retryEetNow() }) { Text("Odeslat nyní") }
+            if (pending.isNotEmpty()) TextButton(onClick = { vm.retryEetNow() }) { Text(tr("Odeslat nyní")) }
         }
     }
 }
