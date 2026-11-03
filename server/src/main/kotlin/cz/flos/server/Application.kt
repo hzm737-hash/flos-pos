@@ -27,7 +27,12 @@ import java.time.LocalDate
 
 val FlosJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
 
-fun Application.flosModule(db: Db) {
+/**
+ * @param openSignup when false (the default for a live server), "Založit firmu" works only while the
+ *   database has no users yet: the first person to sign up becomes the owner, and after that new
+ *   people are added by the owner under Users. Set FLOS_OPEN_SIGNUP=true to allow anyone to sign up.
+ */
+fun Application.flosModule(db: Db, openSignup: Boolean = false) {
     install(ContentNegotiation) { json(FlosJson) }
     install(StatusPages) {
         exception<ApiError> { call, e -> call.respond(e.status, ErrorBody(e.message)) }
@@ -42,7 +47,7 @@ fun Application.flosModule(db: Db) {
         staticResources("/", "static", index = "index.html")
         get("/health") { call.respondText("ok") }
         route("/api/v1") {
-            authRoutes(db)
+            authRoutes(db, openSignup)
             orgRoutes(db)
             catalogRoutes(db)
             stockRoutes(db)
@@ -83,8 +88,13 @@ private fun Connection.newSession(userId: Long, orgId: Long): String {
 
 // ---------- auth ----------
 
-private fun Route.authRoutes(db: Db) {
+private suspend fun Db.signupAllowed(openSignup: Boolean): Boolean =
+    openSignup || tx { queryOne("SELECT COUNT(*) FROM users") { it.getLong(1) } ?: 0L } == 0L
+
+private fun Route.authRoutes(db: Db, openSignup: Boolean) {
+    get("/auth/signup") { call.respond(SignupStatus(db.signupAllowed(openSignup))) }
     post("/auth/register") {
+        if (!db.signupAllowed(openSignup)) throw ApiError(HttpStatusCode.Forbidden, "Registrace je uzavřena. Nového uživatele přidá majitel v sekci Uživatelé.")
         val r = call.receive<RegisterRequest>()
         if (r.orgName.isBlank() || r.name.isBlank() || !r.email.contains('@')) throw ApiError(HttpStatusCode.BadRequest, "Vyplňte firmu, jméno a e-mail")
         if (r.password.length < 8) throw ApiError(HttpStatusCode.BadRequest, "Heslo musí mít alespoň 8 znaků")

@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 
 // ---- Auth / org ----
 @Serializable data class RegisterRequest(val orgName: String, val name: String, val email: String, val password: String)
+@Serializable data class SignupStatus(val open: Boolean)
 @Serializable data class LoginRequest(val email: String, val password: String)
 @Serializable data class TokenResponse(val token: String, val user: UserDto)
 @Serializable data class OrgDto(val id: Long = 0, val name: String, val ico: String = "", val dic: String = "", val vatPayer: Boolean = false, val address: String = "")

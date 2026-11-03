@@ -95,6 +95,8 @@ $('#login-form').addEventListener('submit', async (e) => {
   try { const r = await api('/auth/login', { method: 'POST', body: { email: f.get('email'), password: f.get('password') } }); setToken(r.token); start(); }
   catch (err) { $('#login-error').textContent = err.message; }
 });
+// Sign-up is only offered while it is open (on a live server: until the first owner exists).
+api('/auth/signup').then(r => { if (!r.open) $('#register-box').hidden = true; }).catch(() => {});
 $('#register-form').addEventListener('submit', async (e) => {
   e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
   try { const r = await api('/auth/register', { method: 'POST', body: f }); setToken(r.token); start(); }
