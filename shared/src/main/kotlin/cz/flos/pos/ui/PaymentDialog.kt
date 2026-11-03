@@ -2,6 +2,8 @@ package cz.flos.pos.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,10 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -23,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,31 +31,41 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import cz.flos.core.Cart
+import cz.flos.core.CzechBankAccount
 import cz.flos.core.Money
 import cz.flos.core.PaymentMethod
 
+/**
+ * Takes the payment for [total]. [onConfirm] gets the payment type and, for cash, the amount
+ * handed over (or null).
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: () -> Unit) {
+fun PaymentDialog(
+    vm: PosViewModel,
+    total: Long,
+    title: String = tr("Platba"),
+    onDismiss: () -> Unit,
+    onConfirm: (PaymentMethod, Long?) -> Unit,
+) {
+    val s by vm.settings.collectAsState()
     var method by remember { mutableStateOf(PaymentMethod.CASH) }
     var given by remember { mutableStateOf("") }
-    val qr = remember(cart) { vm.preparePaymentQr() }
-    val cashDue = Money.roundToCrowns(cart.total)
+    val qr = remember(total) { vm.preparePaymentQr(total) }
+    val cashDue = Money.roundToCrowns(total)
     val givenHaler = Money.parse(given)
     val change = givenHaler?.let { it - cashDue }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(tr("Platba %s", Money.format(if (method == PaymentMethod.CASH) cashDue else cart.total))) },
+        title = { Text(title + " " + Money.format(if (method == PaymentMethod.CASH) cashDue else total)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = method == PaymentMethod.CASH, onClick = { method = PaymentMethod.CASH },
-                        label = { Text(tr("Hotově")) }, leadingIcon = { Icon(Icons.Filled.Payments, null) })
-                    FilterChip(selected = method == PaymentMethod.CARD, onClick = { method = PaymentMethod.CARD },
-                        label = { Text(tr("Kartou")) }, leadingIcon = { Icon(Icons.Filled.CreditCard, null) })
-                    FilterChip(selected = method == PaymentMethod.QR_TRANSFER, onClick = { method = PaymentMethod.QR_TRANSFER },
-                        label = { Text(tr("QR")) }, leadingIcon = { Icon(Icons.Filled.QrCode2, null) })
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PaymentMethod.entries.forEach { m ->
+                        FilterChip(selected = method == m, onClick = { method = m },
+                            label = { Text(tr(m.label)) }, leadingIcon = { Icon(m.icon, null) })
+                    }
                 }
                 when (method) {
                     PaymentMethod.CASH -> {
@@ -84,13 +93,21 @@ fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: (
                             )
                         }
                     }
-                    PaymentMethod.CARD -> Text(tr("Proveďte platbu na platebním terminálu a po schválení potvrďte."))
+                    PaymentMethod.CARD -> Hint(tr("Proveďte platbu na platebním terminálu a po schválení potvrďte."))
+                    PaymentMethod.MEAL_VOUCHER -> Hint(tr("Přijměte stravenky v hodnotě nákupu. Tržba se eviduje v EET jako ostatní platby."))
+                    PaymentMethod.INVOICE -> Hint(tr("Zákazník zaplatí na fakturu. Fakturu vystavte v účetním programu. Tržba placená fakturou se v EET neeviduje."))
+                    PaymentMethod.BANK_TRANSFER -> {
+                        val iban = s.iban
+                        if (iban == null) Hint(tr("Pro platbu převodem zadejte číslo účtu v Nastavení."), error = true)
+                        else {
+                            Text(CzechBankAccount.fromIban(iban)?.toString() ?: CzechBankAccount.formatIban(iban), style = MaterialTheme.typography.titleMedium)
+                            qr?.variableSymbol?.let { Text("VS: $it") }
+                            Hint(tr("Potvrďte, až zákazník převod odešle ze své banky."))
+                        }
+                    }
                     PaymentMethod.QR_TRANSFER -> {
                         if (qr == null) {
-                            Text(
-                                tr("Pro QR platbu zadejte číslo účtu v Nastavení."),
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                            Hint(tr("Pro QR platbu zadejte číslo účtu v Nastavení."), error = true)
                         } else {
                             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                                 QrImage(qr)
@@ -106,17 +123,20 @@ fun PaymentDialog(vm: PosViewModel, cart: Cart, onDismiss: () -> Unit, onPaid: (
         confirmButton = {
             val enabled = when (method) {
                 PaymentMethod.CASH -> change == null || change >= 0
-                PaymentMethod.CARD -> true
-                PaymentMethod.QR_TRANSFER -> qr != null
+                PaymentMethod.QR_TRANSFER, PaymentMethod.BANK_TRANSFER -> s.iban != null
+                else -> true
             }
             Button(
                 enabled = enabled,
-                onClick = {
-                    vm.checkout(method, if (method == PaymentMethod.CASH) givenHaler else null, onPaid)
-                },
+                onClick = { onConfirm(method, if (method == PaymentMethod.CASH) givenHaler else null) },
                 modifier = Modifier.padding(start = 8.dp),
             ) { Text(if (method == PaymentMethod.QR_TRANSFER) tr("Vytisknout účtenku s QR") else tr("Dokončit")) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zpět")) } },
     )
+}
+
+@Composable
+private fun Hint(text: String, error: Boolean = false) {
+    Text(text, color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }

@@ -33,6 +33,28 @@ class ReceiptTest {
         assertTrue(text.contains("[QR] SPD*1.0*ACC:CZ6508000000192000145399*AM:163.50"))
     }
 
+    @Test fun preBillIsMarkedAsNotATaxDocument() {
+        val r = receipt.copy(kind = DocumentKind.PRE_BILL, note = "Stůl 4", eet = EetReceiptInfo(202, "POKL-1", null))
+        val text = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, r), 32)
+        assertTrue(text.contains("PŘEDBĚŽNÝ ÚČET"))
+        assertTrue(text.contains("Není daňový doklad"))
+        assertTrue(text.contains("Stůl 4"))
+        // No receipt number, payment, QR or EET data on a check print.
+        assertTrue(!text.contains("Číslo:") && !text.contains("Platba") && !text.contains("[QR]") && !text.contains("Evidenční"))
+    }
+
+    @Test fun orderTicketShowsNumberAndUnpaid() {
+        val r = receipt.copy(number = "12", kind = DocumentKind.ORDER, note = "Novákova 5, Brno")
+        val text = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, r), 32)
+        assertTrue(text.contains("OBJEDNÁVKA č. 12"))
+        assertTrue(text.contains("NEZAPLACENO"))
+        assertTrue(text.contains("Novákova 5, Brno"))
+    }
+
+    @Test fun invoicePaymentIsNotRecordedInEet() {
+        assertTrue(PaymentMethod.entries.filter { !it.eet } == listOf(PaymentMethod.INVOICE))
+    }
+
     @Test fun eetBlockWrapsPok() {
         val r = receipt.copy(eet = EetReceiptInfo(202, "POKL-1", "a1b2c3d4-0000-4abc-8def-0123456789ab-ff", test = true))
         val blocks = ReceiptLayout(32).layout(business, r)

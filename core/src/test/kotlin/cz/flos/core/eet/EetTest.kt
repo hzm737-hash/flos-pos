@@ -131,4 +131,11 @@ class EetTest {
         assertTrue(client.send(sale, true).result is EetResult.Confirmed)
         assertEquals("https://trzbyeet.gov.cz/eet/services/EETServiceSOAP/v4", seenUrl)
     }
+
+    @Test fun unitIdWarningFollowsInterfaceRules() {
+        val base = EetSale("CZ00000019", 141, "POKL1", "1", java.time.OffsetDateTime.now(), 10000)
+        org.junit.Assert.assertTrue(base.warnings().isEmpty())
+        org.junit.Assert.assertEquals(1, base.copy(idJednotky = 5).warnings().size)
+        org.junit.Assert.assertEquals(1, base.copy(idJednotky = 147).warnings().size)
+    }
 }

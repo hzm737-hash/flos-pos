@@ -58,9 +58,30 @@ interface SalesDao {
     @Query("SELECT * FROM sales ORDER BY createdAt DESC LIMIT :limit")
     fun recent(limit: Int = 300): Flow<List<SaleWithItems>>
 
+    /** Paid (and stornoed) sales of a period, for reports. Open and cancelled orders are left out. */
     @Transaction
-    @Query("SELECT * FROM sales WHERE createdAt >= :from AND createdAt < :to ORDER BY createdAt")
+    @Query("SELECT * FROM sales WHERE status = 'PAID' AND createdAt >= :from AND createdAt < :to ORDER BY createdAt")
     suspend fun between(from: Long, to: Long): List<SaleWithItems>
+
+    /** Everything in a period, newest first, for the history screen. Open orders are always included. */
+    @Transaction
+    @Query("SELECT * FROM sales WHERE (createdAt >= :from AND createdAt < :to) OR status = 'OPEN' ORDER BY createdAt DESC")
+    fun history(from: Long, to: Long): Flow<List<SaleWithItems>>
+
+    @Transaction
+    @Query("SELECT * FROM sales WHERE status = 'OPEN' ORDER BY createdAt")
+    fun openOrders(): Flow<List<SaleWithItems>>
+
+    @Query("DELETE FROM sale_items WHERE saleId = :saleId")
+    suspend fun deleteItems(saleId: Long)
+
+    /** Replaces the items of an open order after it was changed in the cart. */
+    @Transaction
+    suspend fun replace(sale: SaleEntity, items: List<SaleItemEntity>) {
+        update(sale)
+        deleteItems(sale.id)
+        insertItems(items.map { it.copy(id = 0, saleId = sale.id) })
+    }
 
     @Transaction
     @Query("SELECT * FROM sales WHERE id = :id")

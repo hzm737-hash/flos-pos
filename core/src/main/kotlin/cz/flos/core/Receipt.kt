@@ -44,12 +44,25 @@ data class Receipt(
     val eet: EetReceiptInfo? = null,
     /** Number of the original receipt when this document cancels it (storno). */
     val stornoOf: String? = null,
+    /** A receipt, or a non-fiscal check print / order ticket printed before payment. */
+    val kind: DocumentKind = DocumentKind.RECEIPT,
+    /** Order note: delivery address, customer, table. */
+    val note: String = "",
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
     val cashDue: Long get() = if (payment == PaymentMethod.CASH) Money.roundToCrowns(total) else total
     val rounding: Long get() = cashDue - total
     val change: Long? get() = cashGiven?.let { it - cashDue }
+}
+
+enum class DocumentKind {
+    /** The sales receipt (zjednodušený daňový doklad for VAT payers). */
+    RECEIPT,
+    /** Check print before payment, so the seller and customer can review the items. Not a tax document. */
+    PRE_BILL,
+    /** Ticket for an open order (delivery, takeaway) that has not been paid yet. Not a tax document. */
+    ORDER,
 }
 
 data class EetReceiptInfo(
@@ -82,14 +95,20 @@ class ReceiptLayout(private val width: Int) {
         if (business.headerNote.isNotBlank()) add(ReceiptBlock.Line(business.headerNote, Align.CENTER))
         add(ReceiptBlock.Separator)
 
+        val fiscal = r.kind == DocumentKind.RECEIPT
         val title = when {
+            r.kind == DocumentKind.PRE_BILL -> "PŘEDBĚŽNÝ ÚČET"
+            r.kind == DocumentKind.ORDER -> "OBJEDNÁVKA č. ${r.number}"
             r.stornoOf != null -> "STORNO účtenky ${r.stornoOf}"
             business.vatPayer -> "Zjednodušený daňový doklad"
             else -> "Účtenka"
         }
         add(ReceiptBlock.Line(title + if (r.copy) " – KOPIE" else "", Align.CENTER, bold = true))
-        add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
+        if (!fiscal) add(ReceiptBlock.Line("Není daňový doklad", Align.CENTER))
+        if (fiscal) add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
+        else add(ReceiptBlock.Line(r.createdAt.format(dateFmt), Align.CENTER))
         if (r.cashier.isNotBlank()) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
+        if (r.note.isNotBlank()) wrap(r.note, width).forEach { add(ReceiptBlock.Line(it, bold = !fiscal)) }
         add(ReceiptBlock.Separator)
 
         for (item in r.cart.items) {
@@ -111,6 +130,13 @@ class ReceiptLayout(private val width: Int) {
         if (r.rounding != 0L) {
             add(ReceiptBlock.Line(twoCol("Zaokrouhlení", Money.format(r.rounding))))
             add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(r.cashDue)), bold = true))
+        }
+        if (!fiscal) {
+            add(ReceiptBlock.Separator)
+            add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+            add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
+            add(ReceiptBlock.Feed(3))
+            return@buildList
         }
         add(ReceiptBlock.Line(twoCol("Platba", r.payment.label)))
         if (r.payment == PaymentMethod.CASH && r.cashGiven != null) {

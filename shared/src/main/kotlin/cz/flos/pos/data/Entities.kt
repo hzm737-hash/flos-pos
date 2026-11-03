@@ -19,6 +19,8 @@ data class CategoryEntity(
     /** ARGB colour used for the product tiles. */
     val color: Long = 0xFF2E7D6BL,
     val sortOrder: Int = 0,
+    /** Key from ProductIcons, shown on the category's product tiles when a product has no icon of its own. */
+    val icon: String? = null,
 )
 
 @Entity(tableName = "products", indices = [Index("categoryId")])
@@ -31,6 +33,8 @@ data class ProductEntity(
     val categoryId: Long? = null,
     val active: Boolean = true,
     val sortOrder: Int = 0,
+    /** Key from ProductIcons; null uses the category icon. */
+    val icon: String? = null,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }
@@ -52,9 +56,27 @@ data class SaleEntity(
     val stornoNumber: String? = null,
     /** Amount actually received (cash is rounded to whole crowns); this is what EET records. */
     val received: Long = total,
+    /** PAID, OPEN (an order waiting for payment, e.g. a delivery) or VOID (an open order cancelled before payment). */
+    val status: String = SaleStatus.PAID.name,
+    /** Number of the open order ("Objednávka č. 12"); kept after payment. */
+    val orderNumber: Int? = null,
+    /** Free note: delivery address, customer, table. */
+    val note: String = "",
+    /** When the order was opened; [createdAt] is the moment of payment for paid sales. */
+    val openedAt: Long? = null,
 ) {
-    val paymentMethod: PaymentMethod get() = PaymentMethod.valueOf(payment)
+    val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
+    val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID
+    val isPaid: Boolean get() = saleStatus == SaleStatus.PAID
+    val isOpen: Boolean get() = saleStatus == SaleStatus.OPEN
 }
+
+/**
+ * State of a sale. Only PAID sales get a receipt number, are recorded in EET and count in
+ * reports. An OPEN order can still be changed, paid by any method or cancelled (VOID) without
+ * anything being sent to the tax administration.
+ */
+enum class SaleStatus { PAID, OPEN, VOID }
 
 @Entity(
     tableName = "sale_items",
@@ -81,5 +103,5 @@ data class SaleWithItems(
         discountPercent = sale.discountPercent,
     )
 
-    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod, toCart().vatBreakdown(), sale.cancelled)
+    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled)
 }
