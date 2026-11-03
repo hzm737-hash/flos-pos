@@ -56,6 +56,31 @@ class ServerTest {
         assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/products").status)
     }
 
+    @Test fun oneLoginManagesSeveralCompanies() = run { client ->
+        val token = client.register()
+        client.postJson("/api/v1/products", ProductDto(name = "Espresso", price = 5900, vatPercent = 12), token)
+        val second = client.postJson("/api/v1/companies", NewCompanyRequest("Bistro Flos s.r.o.", ico = "12345678", dic = "cz12345678", vatPayer = true), token)
+        assertEquals(HttpStatusCode.Created, second.status)
+        val org = second.body<OrgDto>()
+        assertEquals("CZ12345678", org.dic)
+
+        val companies = client.get("/api/v1/companies") { bearerAuth(token) }.body<List<CompanyDto>>()
+        assertEquals(2, companies.size)
+        assertTrue(companies.single { it.current }.id != org.id)
+
+        val me = client.postJson("/api/v1/companies/${org.id}/switch", mapOf<String, String>(), token).body<MeResponse>()
+        assertEquals(org.id, me.org.id)
+        assertEquals("OWNER", me.user.role)
+        // The second company has its own catalogue and its own sale point.
+        assertTrue(client.get("/api/v1/products") { bearerAuth(token) }.body<List<ProductDto>>().isEmpty())
+        assertEquals(1, client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().size)
+
+        // Another user's company cannot be opened.
+        val other = client.register("jiny@firma.cz")
+        val otherOrg = client.get("/api/v1/me") { bearerAuth(other) }.body<MeResponse>().org.id
+        assertEquals(HttpStatusCode.NotFound, client.postJson("/api/v1/companies/$otherOrg/switch", mapOf<String, String>(), token).status)
+    }
+
     @Test fun tillSyncStockRecipesReportsAndExports() = run { client ->
         val token = client.register()
         val branch = client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()

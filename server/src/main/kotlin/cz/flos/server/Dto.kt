@@ -79,3 +79,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class MeResponse(val user: UserDto, val org: OrgDto)
 @Serializable data class DeviceStock(val productId: Long, val qty: Double)
+
+/** A company the signed-in user can work in. */
+@Serializable data class CompanyDto(val id: Long, val name: String, val ico: String, val dic: String, val role: String, val current: Boolean)
+@Serializable data class NewCompanyRequest(val name: String, val ico: String = "", val dic: String = "", val vatPayer: Boolean = false, val address: String = "")

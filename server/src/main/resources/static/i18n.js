@@ -10,6 +10,19 @@ const LOCALE = LANG === 'en' ? 'en-GB' : 'cs-CZ';
 document.documentElement.lang = LANG;
 
 const EN = {
+  '+ Přidat další firmu…': '+ Add another company…',
+  '+ Přidat další firmu': '+ Add another company',
+  'Přepnuto na': 'Switched to',
+  'Nová firma': 'New company',
+  'Každá firma má vlastní IČO a DIČ, produkty, provozovny, pokladny a tržby. Přepínáte mezi nimi nahoře v liště.': 'Each company has its own company ID and VAT number, products, branches, tills and sales. Switch between them in the top bar.',
+  'Založit firmu': 'Create company',
+  'Všechny firmy': 'All companies',
+  'Jeden účet může spravovat více firem s různými DIČ. Každá firma může mít více provozoven a pokladen.': 'One account can manage several companies with different VAT numbers. Each company can have several branches and tills.',
+  'aktuální': 'current',
+  'Přepnout': 'Switch',
+  'Bankovní převod': 'Bank transfer',
+  'Stravenky': 'Meal vouchers',
+  'Na fakturu': 'On invoice',
   // shell, login
   'Flos – back office': 'Flos – back office',
   'Back office pokladního systému': 'Till system back office',

@@ -17,3 +17,4 @@ rootProject.name = "flos"
 include(":core")
 include(":app")
 include(":server")
+include(":desktop")

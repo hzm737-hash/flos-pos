@@ -29,9 +29,14 @@ class EscPosEncoder(
 ) {
     private val out = ByteArrayOutputStream()
 
-    fun encode(blocks: List<ReceiptBlock>, cut: Boolean = true): ByteArray {
+    /**
+     * Encodes [blocks] for the printer. [openDrawer] sends a pulse to the cash drawer connected
+     * to the printer's RJ11 port (ESC p 0), used for cash payments.
+     */
+    fun encode(blocks: List<ReceiptBlock>, cut: Boolean = true, openDrawer: Boolean = false): ByteArray {
         out.reset()
         cmd(ESC, '@'.code) // initialise
+        if (openDrawer) cmd(ESC, 'p'.code, 0, 25, 250)
         charset.escPosTable?.let { cmd(ESC, 't'.code, it) }
         for (b in blocks) when (b) {
             is ReceiptBlock.Line -> line(b)

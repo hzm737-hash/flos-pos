@@ -1,20 +1,19 @@
 package cz.flos.pos.ui
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.Inventory
-import androidx.compose.material.icons.filled.PointOfSale
-import androidx.compose.material.icons.filled.Receipt
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.rounded.DeliveryDining
+import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.Inventory2
+import androidx.compose.material.icons.rounded.PointOfSale
+import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -37,37 +36,55 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import cz.flos.pos.LocalPlatform
 
 enum class Screen(val label: String, val icon: ImageVector) {
-    SELL("Prodej", Icons.Filled.PointOfSale),
-    PRODUCTS("Produkty", Icons.Filled.Inventory),
-    HISTORY("Účtenky", Icons.Filled.Receipt),
-    REPORT("Uzávěrka", Icons.Filled.Assessment),
-    SETTINGS("Nastavení", Icons.Filled.Settings),
+    SELL("Prodej", Icons.Rounded.PointOfSale),
+    ORDERS("Objednávky", Icons.Rounded.DeliveryDining),
+    HISTORY("Účtenky", Icons.Rounded.ReceiptLong),
+    PRODUCTS("Produkty", Icons.Rounded.Inventory2),
+    REPORT("Uzávěrka", Icons.Rounded.Insights),
+    SETTINGS("Nastavení", Icons.Rounded.Settings),
 }
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent { FlosTheme { FlosRoot() } }
+/** Navigation icon with the number of unpaid orders on the Orders tab. */
+@Composable
+private fun NavIcon(s: Screen, openOrders: Int) {
+    if (s == Screen.ORDERS && openOrders > 0) {
+        BadgedBox(badge = { Badge { Text("$openOrders") } }) { Icon(s.icon, contentDescription = null) }
+    } else {
+        Icon(s.icon, contentDescription = null)
     }
 }
 
-/** True on tablets and on phones in landscape: the layout then shows panels side by side. */
+private val LocalWide = compositionLocalOf { false }
+
+/** True on tablets, desktop windows and phones in landscape: the layout then shows panels side by side. */
 @Composable
-fun isWide(): Boolean = LocalConfiguration.current.screenWidthDp >= 600
+fun isWide(): Boolean = LocalWide.current
+
+/** Entry point shared by Android and Windows. */
+@Composable
+fun FlosScreen(vm: PosViewModel) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalPlatform provides vm.platform, LocalWide provides (maxWidth >= 600.dp)) {
+            FlosTheme { FlosRoot(vm) }
+        }
+    }
+}
 
 @Composable
-fun FlosRoot(vm: PosViewModel = viewModel()) {
+private fun FlosRoot(vm: PosViewModel) {
     var screen by rememberSaveable { mutableStateOf(Screen.SELL) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     val wide = isWide()
     val settings by vm.settings.collectAsState()
+    val openOrders by vm.openOrders.collectAsState()
     // Set before anything below is composed, and re-key the tree so every tr() call re-runs on a switch.
     I18n.language = settings.language
     key(settings.language) {
@@ -80,7 +97,7 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
                     NavigationBarItem(
                         selected = screen == s,
                         onClick = { screen = s },
-                        icon = { Icon(s.icon, contentDescription = null) },
+                        icon = { NavIcon(s, openOrders.size) },
                         label = { Text(tr(s.label)) },
                     )
                 }
@@ -99,15 +116,16 @@ fun FlosRoot(vm: PosViewModel = viewModel()) {
                     NavigationRailItem(
                         selected = screen == s,
                         onClick = { screen = s },
-                        icon = { Icon(s.icon, contentDescription = null) },
+                        icon = { NavIcon(s, openOrders.size) },
                         label = { Text(tr(s.label)) },
                     )
                 }
             }
             when (screen) {
                 Screen.SELL -> SellScreen(vm)
+                Screen.ORDERS -> OrdersScreen(vm, onEdit = { screen = Screen.SELL })
                 Screen.PRODUCTS -> ProductsScreen(vm)
-                Screen.HISTORY -> HistoryScreen(vm)
+                Screen.HISTORY -> HistoryScreen(vm, onEditOrder = { screen = Screen.SELL })
                 Screen.REPORT -> ReportScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm)
             }

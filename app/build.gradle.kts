@@ -36,6 +36,8 @@ android {
     buildFeatures {
         compose = true
     }
+    // The till screens, database and logic are shared with the Windows app (desktop/).
+    sourceSets["main"].java.srcDir("../shared/src/main/kotlin")
 }
 
 ksp {
@@ -62,5 +64,6 @@ dependencies {
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.sqlite.framework)
     ksp(libs.androidx.room.compiler)
 }

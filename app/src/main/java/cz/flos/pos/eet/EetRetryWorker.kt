@@ -17,9 +17,9 @@ import java.util.concurrent.TimeUnit
 /** Resends sales that are still waiting for EET confirmation, whenever the device is online. */
 class EetRetryWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val app = applicationContext as FlosApp
-        if (!app.settings.state.value.eetEnabled) return Result.success()
-        val left = app.eet.sendPending()
+        val c = (applicationContext as FlosApp).container
+        if (!c.settings.state.value.eetEnabled) return Result.success()
+        val left = c.eet.sendPending()
         return if (left > 0) Result.retry() else Result.success()
     }
 

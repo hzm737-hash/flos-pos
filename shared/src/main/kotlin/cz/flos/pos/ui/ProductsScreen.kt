@@ -50,7 +50,30 @@ import cz.flos.core.VatRate
 import cz.flos.pos.data.CategoryEntity
 import cz.flos.pos.data.ProductEntity
 
-private val palette = listOf(0xFF2E7D6BL, 0xFFC2603AL, 0xFF3A6EA5L, 0xFF8E5BA8L, 0xFFB8892EL, 0xFF5B6B73L, 0xFFB03A5BL)
+private val palette = TilePalette
+
+/** Grid of icons to choose from; null means "no icon" (or the category icon for a product). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun IconPicker(selected: String?, noneLabel: String, onSelect: (String?) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text(noneLabel) })
+        ProductIcons.all.forEach { (key, icon) ->
+            val on = key == selected
+            Box(
+                Modifier.size(40.dp)
+                    .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .clickable { onSelect(key) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, key, tint = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
 
 @Composable
 fun ProductsScreen(vm: PosViewModel) {
@@ -137,6 +160,8 @@ private fun ProductDialog(
     var price by remember { mutableStateOf(if (initial.price == 0L) "" else Money.format(initial.price, "")) }
     var vat by remember { mutableStateOf(initial.vatPercent) }
     var category by remember { mutableStateOf(initial.categoryId) }
+    var icon by remember { mutableStateOf(initial.icon) }
+    var barcode by remember { mutableStateOf(initial.barcode.orEmpty()) }
     val parsed = Money.parse(price)
     val valid = name.isNotBlank() && parsed != null && parsed >= 0
 
@@ -146,6 +171,7 @@ private fun ProductDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text(tr("Název")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(barcode, { barcode = it }, label = { Text(tr("Čárový kód (EAN)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
                     price, { price = it }, label = { Text(tr("Cena vč. DPH (Kč)")) }, singleLine = true,
                     isError = price.isNotEmpty() && parsed == null,
@@ -169,11 +195,14 @@ private fun ProductDialog(
                         }
                     }
                 }
+                Text(tr("Ikona"), style = MaterialTheme.typography.labelLarge)
+                IconPicker(icon, tr("Podle kategorie")) { icon = it }
             }
         },
         confirmButton = {
             Button(enabled = valid, onClick = {
-                onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category))
+                onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon,
+                    barcode = barcode.trim().ifEmpty { null }))
             }) { Text(tr("Uložit")) }
         },
         dismissButton = {
@@ -186,26 +215,31 @@ private fun ProductDialog(
     )
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CategoryDialog(initial: CategoryEntity, onDismiss: () -> Unit, onSave: (CategoryEntity) -> Unit, onDelete: () -> Unit) {
     var name by remember { mutableStateOf(initial.name) }
     var color by remember { mutableStateOf(initial.color) }
+    var icon by remember { mutableStateOf(initial.icon) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial.id == 0L) tr("Nová kategorie") else tr("Upravit kategorii")) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text(tr("Název")) }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr("Barva"), style = MaterialTheme.typography.labelLarge)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     palette.forEach { c ->
                         Box(
-                            Modifier.size(if (c == color) 36.dp else 28.dp).background(Color(c), CircleShape).clickable { color = c },
+                            Modifier.size(if (c == color) 38.dp else 30.dp).background(Color(c), CircleShape).clickable { color = c },
                         )
                     }
                 }
+                Text(tr("Ikona"), style = MaterialTheme.typography.labelLarge)
+                IconPicker(icon, tr("Bez ikony")) { icon = it }
             }
         },
-        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(initial.copy(name = name.trim(), color = color)) }) { Text(tr("Uložit")) } },
+        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onSave(initial.copy(name = name.trim(), color = color, icon = icon)) }) { Text(tr("Uložit")) } },
         dismissButton = {
             Row {
                 if (initial.id != 0L) IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, tr("Smazat")) }

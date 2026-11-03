@@ -73,7 +73,8 @@ suspend fun ApplicationCall.caller(db: Db): Caller {
     return db.tx {
         when {
             token.startsWith("u_") -> queryOne(
-                "SELECT s.user_id, s.org_id, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ? AND u.active",
+                "SELECT s.user_id, s.org_id, m.role FROM sessions s JOIN users u ON u.id = s.user_id " +
+                    "JOIN memberships m ON m.user_id = s.user_id AND m.org_id = s.org_id WHERE s.token_hash = ? AND s.expires_at > ? AND u.active",
                 hash, now,
             ) { Caller.User(it.getLong(1), it.getLong(2), Role.valueOf(it.getString(3))) }
             token.startsWith("d_") -> queryOne(
