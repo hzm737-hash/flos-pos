@@ -51,3 +51,36 @@ jobs:
         with:
           name: flos-windows-portable
           path: desktop/build/compose/binaries/main/app/
+
+  # Puts the newest app on the "Download" release page, so it can be installed on a phone with one tap:
+  # https://github.com/<owner>/flos-pos/releases/latest/download/flos.apk
+  release:
+    name: Publish download
+    needs: [ build, windows ]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Collect files
+        run: |
+          mkdir out
+          cp dist/flos-apk/debug/*.apk out/flos.apk
+          cp dist/flos-windows-installer/*.msi out/flos-windows.msi
+          (cd dist/flos-windows-portable && zip -qr ../../out/flos-windows-portable.zip .)
+          ls -la out
+      - name: Replace the "latest" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest out/* --target "$GITHUB_SHA" --latest \
+            --title "Flos – nejnovější verze / latest build" \
+            --notes "Android: stáhněte **flos.apk** v telefonu a otevřete ho (povolte instalaci z neznámých zdrojů). Windows: **flos-windows.msi**.
+          Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
+
+          Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
