@@ -15,6 +15,7 @@ class FlosContainer(
 ) {
     val settings = SettingsStore(store)
     val printer = PrinterRouter(platform, NetworkPrinter())
+    val bank = cz.flos.pos.bank.BankSync(settings, database.bank(), database.sales())
     val eet = EetService(platform.dataDir, database.eet()) { settings.state.value }
 
     init {

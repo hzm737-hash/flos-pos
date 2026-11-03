@@ -68,7 +68,18 @@ data class SaleEntity(
     val openedAt: Long? = null,
     /** When the receipt was voided (storno); used for the cash count of the shift. */
     val cancelledAt: Long? = null,
+    /** Voluntary tip on top of [received]; never part of the VAT base. */
+    val tip: Long = 0,
+    /** For QR / bank transfer receipts: WAITING, UNDERPAID or CONFIRMED once the money is on the account. */
+    val bankStatus: String? = null,
+    /** What has arrived on the bank account for this receipt so far. */
+    val bankPaid: Long = 0,
+    val bankConfirmedAt: Long? = null,
 ) {
+    val transferStatus: TransferStatus? get() = TransferStatus.entries.firstOrNull { it.name == bankStatus }
+    /** Still waiting for (part of) the money on the bank account. */
+    val awaitsTransfer: Boolean get() = isPaid && !cancelled && (transferStatus == TransferStatus.WAITING || transferStatus == TransferStatus.UNDERPAID)
+    val transferMissing: Long get() = if (awaitsTransfer) (received - bankPaid).coerceAtLeast(0) else 0
     val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
     val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID
     val isPaid: Boolean get() = saleStatus == SaleStatus.PAID
@@ -81,6 +92,13 @@ data class SaleEntity(
  * anything being sent to the tax administration.
  */
 enum class SaleStatus { PAID, OPEN, VOID }
+
+/** Whether the money for a QR / bank transfer receipt has reached the bank account. */
+enum class TransferStatus(val label: String) {
+    WAITING("Čeká na platbu"),
+    UNDERPAID("Nedoplaceno"),
+    CONFIRMED("Platba přišla"),
+}
 
 @Entity(
     tableName = "sale_items",
@@ -107,5 +125,5 @@ data class SaleWithItems(
         discountPercent = sale.discountPercent,
     )
 
-    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled)
+    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled, sale.tip)
 }

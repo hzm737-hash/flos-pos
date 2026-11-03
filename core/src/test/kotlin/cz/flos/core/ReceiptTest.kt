@@ -95,13 +95,18 @@ class ReceiptTest {
     @Test fun dailyReport() {
         val sales = listOf(
             SaleSummary(10000, PaymentMethod.CASH, listOf(Vat.split(10000, VatRate.REDUCED))),
-            SaleSummary(12100, PaymentMethod.CARD, listOf(Vat.split(12100, VatRate.STANDARD))),
-            SaleSummary(5000, PaymentMethod.CASH, listOf(Vat.split(5000, VatRate.REDUCED)), cancelled = true),
+            SaleSummary(12100, PaymentMethod.CARD, listOf(Vat.split(12100, VatRate.STANDARD)), tip = 900),
+            SaleSummary(5000, PaymentMethod.CASH, listOf(Vat.split(5000, VatRate.REDUCED)), cancelled = true, tip = 500),
         )
         val r = DailyReport.of(java.time.LocalDate.of(2025, 3, 1), sales)
         assertEquals(2, r.receiptCount)
         assertEquals(1, r.cancelledCount)
         assertEquals(22100L, r.total)
         assertEquals(10000L, r.byPayment[PaymentMethod.CASH])
+        // Tips are reported on their own line and never enter the VAT base.
+        assertEquals(900L, r.tips)
+        assertEquals(22100L, r.byVat.sumOf { it.gross })
+        val text = ReceiptLayout.toPlainText(r.layout(BusinessInfo("Flos", ico = "1", vatPayer = true), 32), 32)
+        assertTrue(text, text.contains("Spropitné (mimo DPH)"))
     }
 }

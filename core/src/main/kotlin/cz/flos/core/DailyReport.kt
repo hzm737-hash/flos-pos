@@ -8,6 +8,8 @@ data class SaleSummary(
     val payment: PaymentMethod,
     val vat: List<VatLine>,
     val cancelled: Boolean = false,
+    /** Voluntary tip, outside the VAT base. */
+    val tip: Long = 0,
 )
 
 data class DailyReport(
@@ -17,6 +19,8 @@ data class DailyReport(
     val total: Long,
     val byPayment: Map<PaymentMethod, Long>,
     val byVat: List<VatLine>,
+    /** Tips received with these sales; not part of [total] or the VAT base. */
+    val tips: Long = 0,
 ) {
     fun layout(business: BusinessInfo, width: Int): List<ReceiptBlock> {
         val l = ReceiptLayout(width)
@@ -29,6 +33,10 @@ data class DailyReport(
             if (cancelledCount > 0) add(ReceiptBlock.Line(l.twoCol("Stornováno", cancelledCount.toString())))
             PaymentMethod.entries.forEach { add(ReceiptBlock.Line(l.twoCol(it.label, Money.format(byPayment[it] ?: 0)))) }
             add(ReceiptBlock.Line(l.twoCol("TRŽBA CELKEM", Money.format(total)), bold = true))
+            if (tips != 0L) {
+                add(ReceiptBlock.Line(l.twoCol("Spropitné (mimo DPH)", Money.format(tips))))
+                add(ReceiptBlock.Line(l.twoCol("Přijato celkem", Money.format(total + tips))))
+            }
             if (business.vatPayer && byVat.isNotEmpty()) {
                 add(ReceiptBlock.Separator)
                 byVat.forEach {
@@ -53,6 +61,7 @@ data class DailyReport(
                 total = valid.sumOf { it.total },
                 byPayment = valid.groupBy { it.payment }.mapValues { (_, s) -> s.sumOf { it.total } },
                 byVat = vat,
+                tips = valid.sumOf { it.tip },
             )
         }
     }
