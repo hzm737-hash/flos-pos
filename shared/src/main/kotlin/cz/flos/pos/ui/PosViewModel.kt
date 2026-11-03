@@ -42,6 +42,12 @@ import cz.flos.pos.data.CashDao
 import cz.flos.pos.data.CashKind
 import cz.flos.pos.data.CashMovementEntity
 import cz.flos.pos.data.CashState
+import cz.flos.pos.data.BankPaymentEntity
+import cz.flos.pos.data.BankSource
+import cz.flos.pos.data.TipsOwner
+import cz.flos.pos.data.TransferStatus
+import cz.flos.pos.bank.BankCheck
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -57,6 +63,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val salesDao = flos.database.sales()
     private val eetDao = flos.database.eet()
     private val cashDao: CashDao = flos.database.cash()
+    private val bankDao = flos.database.bank()
     val printer = flos.printer
     val eet = flos.eet
 
@@ -105,8 +112,146 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Text of a running long operation (e.g. sending to EET), shown in the UI. */
     val busy: StateFlow<String?> = _busy.asStateFlow()
 
+    // ---- Bank payments ----
+    val unmatchedPayments = bankDao.unmatched().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val waitingTransfers = bankDao.waitingSalesFlow().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val bankPayments = bankDao.recent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Result of the last bank check, shown in settings and on the bank dialog. */
+    private val _bankState = MutableStateFlow<String?>(null)
+    val bankState: StateFlow<String?> = _bankState.asStateFlow()
+
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
+        // Checks the bank every minute while the till is open.
+        viewModelScope.launch {
+            while (true) {
+                if (settings.value.bankSource != BankSource.OFF) checkBank(silent = true)
+                delay(60_000)
+            }
+        }
+    }
+
+    // ---- Payers from abroad (SEPA QR code in euro) ----
+    private val _foreignTransfer = MutableStateFlow(false)
+    /** Set by the payment dialog: the next QR payment gets a SEPA QR code in euro. */
+    val foreignTransfer: StateFlow<Boolean> = _foreignTransfer.asStateFlow()
+    fun setForeignTransfer(on: Boolean) { _foreignTransfer.value = on }
+
+    private var cnbRate: Pair<LocalDate, Double>? = null
+
+    /** CZK per EUR: the owner's own rate when set, otherwise the ČNB rate, fetched once a day. */
+    suspend fun eurRate(): Double? {
+        settings.value.eurRateOverride?.let { return it }
+        cnbRate?.takeIf { it.first == LocalDate.now() }?.let { return it.second }
+        val fresh = runCatching { withContext(Dispatchers.IO) { cz.flos.core.CnbRates.fetch() }.of("EUR") }.getOrNull()
+        if (fresh != null) cnbRate = LocalDate.now() to fresh
+        return fresh ?: cnbRate?.second
+    }
+
+    /** SEPA QR code for [amount] in crowns, or null when there is no account or no exchange rate. */
+    suspend fun prepareForeignQr(amount: Long = _cart.value.total): Pair<cz.flos.core.EpcQr, Double>? {
+        val s = settings.value
+        val iban = s.eurIban ?: return null
+        val rate = eurRate() ?: return null
+        val number = flos.settings.peekReceiptNumber(LocalDate.now().year)
+        return epcFor(s, iban, amount, rate, variableSymbolOf(number), number) to rate
+    }
+
+    private fun epcFor(s: AppSettings, iban: String, amount: Long, rate: Double, vs: String, number: String) = cz.flos.core.EpcQr(
+        name = s.businessName, iban = iban, amount = cz.flos.core.EpcQr.eurFor(amount, rate),
+        // Czech banks read "/VS/…" in a foreign payment's message into the variable symbol.
+        text = "/VS/$vs Uctenka $number", bic = cz.flos.core.EpcQr.bicForIban(iban),
+    )
+
+    fun checkBankNow() = viewModelScope.launch { checkBank(silent = false) }
+
+    /** A statement file (GPC/ABO or CAMT.053) downloaded from any bank's internet banking. */
+    fun importStatement(bytes: ByteArray) = viewModelScope.launch {
+        _busy.value = tr("Načítám výpis…")
+        try {
+            runCatching { flos.bank.importStatement(bytes) }
+                .onSuccess { r ->
+                    _bankState.value = tr("Výpis načten: %d nových příchozích plateb", r.newPayments)
+                    _messages.tryEmit(_bankState.value!!)
+                    report(r, silent = true)
+                }
+                .onFailure { _messages.tryEmit(tr("Výpis nelze načíst: %s", it.message ?: it.javaClass.simpleName)) }
+        } finally { _busy.value = null }
+    }
+
+    private suspend fun checkBank(silent: Boolean) {
+        val time = java.time.LocalTime.now().withNano(0).withSecond(0)
+        runCatching { flos.bank.check() }
+            .onSuccess { r ->
+                _bankState.value = tr("Naposledy zkontrolováno %s: %d nových plateb", time.toString(), r.newPayments)
+                report(r, silent)
+            }
+            .onFailure {
+                _bankState.value = tr("Kontrola banky selhala (%s): %s", time.toString(), it.message ?: it.javaClass.simpleName)
+                if (!silent) _messages.tryEmit(_bankState.value!!)
+            }
+    }
+
+    private suspend fun report(r: BankCheck, silent: Boolean) {
+        r.tips.forEach { (sale, tip) -> recordTipInEet(sale, tip) }
+        r.confirmed.forEach { sale ->
+            _messages.tryEmit(if (sale.tip > 0) tr("Platba za účtenku %s přišla, spropitné %s", sale.number, Money.format(sale.tip))
+                else tr("Platba za účtenku %s přišla", sale.number))
+        }
+        r.underpaid.forEach { _messages.tryEmit(tr("Účtenka %s: přišlo jen %s, chybí %s", it.number, Money.format(it.bankPaid), Money.format(it.transferMissing))) }
+        if (r.unmatched > 0) _messages.tryEmit(tr("%d plateb nelze přiřadit, zkontrolujte je v Historii → Platby z banky", r.unmatched))
+        else if (!silent && r.newPayments == 0) _messages.tryEmit(tr("Žádné nové platby"))
+    }
+
+    /**
+     * When the business keeps the tips they are its takings and go to EET (outside the VAT base).
+     * Tips that belong to the staff are not recorded in EET.
+     */
+    private suspend fun recordTipInEet(sale: SaleEntity, tip: Long) {
+        if (tip <= 0 || settings.value.tipsOwner != TipsOwner.BUSINESS || sale.paymentMethod?.eet != true) return
+        val now = LocalDateTime.now()
+        val number = flos.settings.nextReceiptNumber(now.year)
+        eet.createRecord(sale.id, number, nowMillis(now), tip, storno = false)?.let { sendToEet(it) }
+    }
+
+    fun assignPayment(p: BankPaymentEntity, sale: SaleEntity) = viewModelScope.launch {
+        val (updated, tip) = flos.bank.assign(p, sale)
+        recordTipInEet(updated, tip)
+        _messages.tryEmit(if (updated.transferStatus == TransferStatus.CONFIRMED) tr("Platba přiřazena k účtence %s", updated.number)
+            else tr("Účtenka %s: přišlo jen %s, chybí %s", updated.number, Money.format(updated.bankPaid), Money.format(updated.transferMissing)))
+    }
+
+    fun ignorePayment(p: BankPaymentEntity) = viewModelScope.launch { flos.bank.ignore(p) }
+
+    /** The money is seen in internet banking: confirm by hand; [amount] above the total is the tip. */
+    fun confirmTransfer(sale: SaleEntity, amount: Long) = viewModelScope.launch {
+        val (updated, tip) = flos.bank.confirmManually(sale, amount)
+        recordTipInEet(updated, tip)
+        _messages.tryEmit(tr("Platba za účtenku %s potvrzena", updated.number))
+    }
+
+    /** Sets the tip of a paid sale (e.g. a card or cash tip given after the receipt was printed). */
+    fun setTip(sale: SaleEntity, tip: Long) = viewModelScope.launch {
+        if (tip < 0 || !sale.isPaid || sale.cancelled) return@launch
+        salesDao.update(sale.copy(tip = tip))
+        recordTipInEet(sale, tip - sale.tip)
+        _messages.tryEmit(tr("Spropitné uloženo: %s", Money.format(tip)))
+    }
+
+    fun testBank(s: AppSettings) = viewModelScope.launch {
+        _busy.value = tr("Ověřuji spojení s bankou…")
+        val text = try { runCatching { flos.bank.test(s) }.getOrElse { tr("Chyba: %s", it.message ?: it.javaClass.simpleName) } } finally { _busy.value = null }
+        _bankState.value = text
+        _messages.tryEmit(text)
+    }
+
+    /** Tips and revenue of the current month, for the tax-free tips limit (7 % of monthly catering revenue). */
+    suspend fun monthTips(month: java.time.YearMonth = java.time.YearMonth.now()): Pair<Long, Long> {
+        val zone = ZoneId.systemDefault()
+        val from = month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val to = month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return bankDao.tipsBetween(from, to) to bankDao.revenueBetween(from, to)
     }
 
     // ---- Cart ----
@@ -150,15 +295,19 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cart = _cart.value
         if (cart.isEmpty()) return
         val order = _editingOrder.value
+        val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
+        _foreignTransfer.value = false
         _cart.value = Cart()
         _editingOrder.value = null
         onDone()
-        viewModelScope.launch { pay(order, cart, payment, cashGiven) }
+        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign) }
     }
 
     /** Pays an open order straight from the order list. */
-    fun payOrder(sw: SaleWithItems, payment: PaymentMethod, cashGiven: Long?) = viewModelScope.launch {
-        pay(sw.sale, sw.toCart(), payment, cashGiven)
+    fun payOrder(sw: SaleWithItems, payment: PaymentMethod, cashGiven: Long?) {
+        val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
+        _foreignTransfer.value = false
+        viewModelScope.launch { pay(sw.sale, sw.toCart(), payment, cashGiven, foreign) }
     }
 
     /**
@@ -166,26 +315,32 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * when the payment type is covered by EET, its EET record. Nothing is sent to the tax
      * administration for an order that is never paid.
      */
-    private suspend fun pay(order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?) {
+    private suspend fun pay(order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?, foreign: Boolean = false) {
         val s = settings.value
+        val rate = if (foreign) eurRate() else null
         val now = LocalDateTime.now()
         val millis = nowMillis(now)
         val number = flos.settings.nextReceiptNumber(now.year)
         val vs = variableSymbolOf(number)
-        val qr = if (payment == PaymentMethod.QR_TRANSFER) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
+        val epc = if (foreign && rate != null) s.eurIban?.let { epcFor(s, it, cart.total, rate, vs, number) } else null
+        if (foreign && epc == null) _messages.tryEmit(tr("Kurz EUR není k dispozici, tisknu českou QR platbu"))
+        val qr = if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
         val received = if (payment == PaymentMethod.CASH) Money.roundToCrowns(cart.total) else cart.total
         val sale = (order ?: SaleEntity(number = number, createdAt = millis, total = cart.total, payment = payment.name)).copy(
             number = number, createdAt = millis, total = cart.total, payment = payment.name, cashGiven = cashGiven,
             cashier = s.cashier, discountPercent = cart.discountPercent,
             variableSymbol = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) vs else null,
             received = received, status = SaleStatus.PAID.name,
+            bankStatus = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) TransferStatus.WAITING.name else null,
+            payCurrency = epc?.let { "EUR" }, payAmount = epc?.amount, eurRate = epc?.let { rate },
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
         val record = if (payment.eet && received != 0L) eet.createRecord(saleId, number, millis, received, storno = false) else null
 
         val sent = record?.let { sendToEet(it) }
-        val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = sale.note)
+        val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = sale.note,
+            epc = epc, eurRate = epc?.let { rate })
         val drawer = s.openDrawer && payment == PaymentMethod.CASH
         if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number), drawer)
         else {
@@ -281,8 +436,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val s = settings.value
         val created = LocalDateTime.ofInstant(Instant.ofEpochMilli(sw.sale.createdAt), ZoneId.systemDefault())
         val payment = sw.sale.paymentMethod ?: PaymentMethod.CASH
-        val qr = if (payment == PaymentMethod.QR_TRANSFER) {
+        val foreign = sw.sale.isForeign && payment == PaymentMethod.QR_TRANSFER
+        val qr = if (payment == PaymentMethod.QR_TRANSFER && !foreign) {
             qrFor(sw.sale.total, sw.sale.variableSymbol, "${s.businessName} uctenka ${sw.sale.number}")
+        } else null
+        val epc = if (foreign) s.eurIban?.let { iban ->
+            cz.flos.core.EpcQr(s.businessName, iban, sw.sale.payAmount!!, "/VS/${sw.sale.variableSymbol} Uctenka ${sw.sale.number}", cz.flos.core.EpcQr.bicForIban(iban))
         } else null
         val record = eetDao.forSale(sw.sale.id).firstOrNull { !it.storno }
         if (!sw.sale.isPaid) {
@@ -290,7 +449,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 note = sw.sale.note, kind = DocumentKind.ORDER)
         }
         return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), payment, sw.sale.cashGiven, qr, copy,
-            eet = record?.let(::eetInfo), note = sw.sale.note)
+            eet = record?.let(::eetInfo), note = sw.sale.note, epc = epc, eurRate = epc?.let { sw.sale.eurRate })
     }
 
     suspend fun receiptPreview(sw: SaleWithItems): String {
@@ -317,8 +476,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val stornoNumber = flos.settings.nextReceiptNumber(now.year)
         salesDao.update(sw.sale.copy(cancelled = true, stornoNumber = stornoNumber, cancelledAt = millis))
         // A storno is recorded in EET only when the original sale was (not for invoices or sales before EET was switched on).
-        val recorded = eetDao.forSale(sw.sale.id).any { !it.storno }
-        val record = if (recorded) eet.createRecord(sw.sale.id, stornoNumber, millis, -sw.sale.received, storno = true) else null
+        // The storno reverses everything recorded for the sale, including a tip the business kept.
+        val recorded = eetDao.forSale(sw.sale.id).filterNot { it.storno }
+        val record = if (recorded.isNotEmpty()) eet.createRecord(sw.sale.id, stornoNumber, millis, -recorded.sumOf { it.amount }, storno = true) else null
         val sent = record?.let { sendToEet(it) }
         _messages.tryEmit(tr("Účtenka %s stornována dokladem %s", sw.sale.number, stornoNumber))
         if (s.autoPrint) {
@@ -360,7 +520,24 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val zone = ZoneId.systemDefault()
         val from = date.atStartOfDay(zone).toInstant().toEpochMilli()
         val to = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
-        return DailyReport.of(date, salesDao.between(from, to).map { it.toSummary() })
+        val day = salesDao.between(from, to)
+        val transfers = day.map { it.sale }.filter { it.transferStatus != null && !it.cancelled }
+        val waitingAll = bankDao.waitingSales()
+        val dueBefore = System.currentTimeMillis() - settings.value.transferDueDays * 86_400_000L
+        val late = bankDao.confirmedBetween(from, to).filter { it.createdAt < from }
+        val summary = cz.flos.core.TransferSummary(
+            confirmedCount = transfers.count { it.transferStatus == TransferStatus.CONFIRMED },
+            confirmed = transfers.filter { it.transferStatus == TransferStatus.CONFIRMED }.sumOf { it.received },
+            waitingCount = transfers.count { it.awaitsTransfer },
+            waiting = transfers.sumOf { it.transferMissing },
+            lateCount = late.size,
+            late = late.sumOf { it.received },
+            openCount = waitingAll.size,
+            open = waitingAll.sumOf { it.transferMissing },
+            overdueCount = waitingAll.count { it.createdAt < dueBefore },
+            overdue = waitingAll.filter { it.createdAt < dueBefore }.sumOf { it.transferMissing },
+        )
+        return DailyReport.of(date, day.map { it.toSummary() }).copy(transfers = summary.takeIf { it.isNotEmpty })
     }
 
     fun printReport(report: DailyReport) {

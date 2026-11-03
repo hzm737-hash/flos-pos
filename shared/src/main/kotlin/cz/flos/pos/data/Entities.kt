@@ -68,7 +68,32 @@ data class SaleEntity(
     val openedAt: Long? = null,
     /** When the receipt was voided (storno); used for the cash count of the shift. */
     val cancelledAt: Long? = null,
+    /** Voluntary tip on top of [received]; never part of the VAT base. */
+    val tip: Long = 0,
+    /** For QR / bank transfer receipts: WAITING, UNDERPAID or CONFIRMED once the money is on the account. */
+    val bankStatus: String? = null,
+    /** What has arrived on the bank account for this receipt so far. */
+    val bankPaid: Long = 0,
+    val bankConfirmedAt: Long? = null,
+    /** "EUR" when a payer from abroad got a SEPA QR code; [bankPaid] is then in euro cents too. */
+    val payCurrency: String? = null,
+    /** Amount asked in [payCurrency] (euro cents). */
+    val payAmount: Long? = null,
+    /** CZK per 1 EUR used for [payAmount]. */
+    val eurRate: Double? = null,
 ) {
+    val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
+    /** Converts an amount in [payCurrency] to haléře. */
+    fun toCzk(amount: Long): Long = if (isForeign) Math.round(amount * eurRate!!) else amount
+    val transferStatus: TransferStatus? get() = TransferStatus.entries.firstOrNull { it.name == bankStatus }
+    /** Still waiting for (part of) the money on the bank account. */
+    val awaitsTransfer: Boolean get() = isPaid && !cancelled && (transferStatus == TransferStatus.WAITING || transferStatus == TransferStatus.UNDERPAID)
+    /** What is still missing, in haléře. */
+    val transferMissing: Long get() = when {
+        !awaitsTransfer -> 0
+        isForeign -> toCzk((payAmount!! - bankPaid).coerceAtLeast(0))
+        else -> (received - bankPaid).coerceAtLeast(0)
+    }
     val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
     val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID
     val isPaid: Boolean get() = saleStatus == SaleStatus.PAID
@@ -81,6 +106,13 @@ data class SaleEntity(
  * anything being sent to the tax administration.
  */
 enum class SaleStatus { PAID, OPEN, VOID }
+
+/** Whether the money for a QR / bank transfer receipt has reached the bank account. */
+enum class TransferStatus(val label: String) {
+    WAITING("Čeká na platbu"),
+    UNDERPAID("Nedoplaceno"),
+    CONFIRMED("Platba přišla"),
+}
 
 @Entity(
     tableName = "sale_items",
@@ -107,5 +139,5 @@ data class SaleWithItems(
         discountPercent = sale.discountPercent,
     )
 
-    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled)
+    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled, sale.tip)
 }

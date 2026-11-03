@@ -50,7 +50,27 @@ data class AppSettings(
     /** Response time limit; the law requires at least 2 seconds. */
     val eetTimeoutMs: Int = 3000,
     val eetCertPassword: String = "",
+
+    // ---- Bank payment confirmation and tips ----
+    val bankSource: BankSource = BankSource.OFF,
+    val imapHost: String = "",
+    val imapPort: Int = 993,
+    val imapUser: String = "",
+    val imapPassword: String = "",
+    val imapFolder: String = "INBOX",
+    val fioToken: String = "",
+    /** Who keeps the tips: staff (outside EET, tax-free up to 7 % of monthly catering revenue) or the business (recorded in EET). */
+    val tipsOwner: TipsOwner = TipsOwner.STAFF,
+    /** Account for SEPA payments from abroad (a Fio EUR account is best); empty = the main account. */
+    val eurAccount: String = "",
+    /** Own CZK per EUR rate, e.g. "24,50"; empty = today's ČNB rate. */
+    val eurRateManual: String = "",
+    /** After how many days an unpaid transfer is shown as overdue. */
+    val transferDueDays: Int = 3,
 ) {
+    /** IBAN for the SEPA QR code: the EUR account when set, otherwise the main account. */
+    val eurIban: String? get() = eurAccount.takeIf { it.isNotBlank() }?.let { CzechBankAccount.toIban(it) } ?: iban
+    val eurRateOverride: Double? get() = eurRateManual.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }
     val effectiveEic: String get() = eetEic.ifBlank { dic }.replace(" ", "").uppercase()
 
     val iban: String? get() = bankAccount.takeIf { it.isNotBlank() }?.let { CzechBankAccount.toIban(it) }
@@ -64,6 +84,17 @@ data class AppSettings(
             vatPayer = vatPayer,
             footer = footer,
         )
+}
+
+enum class BankSource(val label: String) {
+    OFF("Vypnuto"),
+    EMAIL("E-mail od banky (jakákoli banka)"),
+    FIO("Fio banka API"),
+}
+
+enum class TipsOwner(val label: String) {
+    STAFF("Zaměstnancům"),
+    BUSINESS("Provozovně"),
 }
 
 /** Settings live in a [KeyValueStore] and are exposed as a StateFlow for the UI. */
@@ -107,6 +138,17 @@ class SettingsStore(private val prefs: KeyValueStore) {
             eetIdPokl = str("eetIdPokl", d.eetIdPokl),
             eetTimeoutMs = int("eetTimeoutMs", d.eetTimeoutMs),
             eetCertPassword = str("eetCertPassword", d.eetCertPassword),
+            bankSource = enum("bankSource", d.bankSource),
+            imapHost = str("imapHost", d.imapHost),
+            imapPort = int("imapPort", d.imapPort),
+            imapUser = str("imapUser", d.imapUser),
+            imapPassword = str("imapPassword", d.imapPassword),
+            imapFolder = str("imapFolder", d.imapFolder),
+            fioToken = str("fioToken", d.fioToken),
+            tipsOwner = enum("tipsOwner", d.tipsOwner),
+            eurAccount = str("eurAccount", d.eurAccount),
+            eurRateManual = str("eurRateManual", d.eurRateManual),
+            transferDueDays = int("transferDueDays", d.transferDueDays),
         )
     }
 
@@ -141,10 +183,28 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "eetIdPokl" to s.eetIdPokl,
                 "eetTimeoutMs" to s.eetTimeoutMs.toString(),
                 "eetCertPassword" to s.eetCertPassword,
+                "bankSource" to s.bankSource.name,
+                "imapHost" to s.imapHost,
+                "imapPort" to s.imapPort.toString(),
+                "imapUser" to s.imapUser,
+                "imapPassword" to s.imapPassword,
+                "imapFolder" to s.imapFolder,
+                "fioToken" to s.fioToken,
+                "tipsOwner" to s.tipsOwner.name,
+                "eurAccount" to s.eurAccount,
+                "eurRateManual" to s.eurRateManual,
+                "transferDueDays" to s.transferDueDays.toString(),
             ),
         )
         _state.value = s
     }
+
+    /** Where reading the mailbox stopped: UIDVALIDITY and the last UID read. */
+    fun imapPosition(account: String): Pair<Long, Long> =
+        (prefs.get("imapValidity_$account")?.toLongOrNull() ?: 0L) to (prefs.get("imapUid_$account")?.toLongOrNull() ?: 0L)
+
+    fun saveImapPosition(account: String, validity: Long, uid: Long) =
+        prefs.put(mapOf("imapValidity_$account" to validity.toString(), "imapUid_$account" to uid.toString()))
 
     private fun nextIn(key: String): Int = int(key, 0) + 1
 

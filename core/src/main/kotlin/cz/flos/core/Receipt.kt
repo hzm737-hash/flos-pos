@@ -48,6 +48,10 @@ data class Receipt(
     val kind: DocumentKind = DocumentKind.RECEIPT,
     /** Order note: delivery address, customer, table. */
     val note: String = "",
+    /** For a payer from abroad: a SEPA (EPC) QR code with the amount in euro. */
+    val epc: EpcQr? = null,
+    /** CZK per 1 EUR used for [epc]. */
+    val eurRate: Double? = null,
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
@@ -170,6 +174,17 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Qr(qr.toSpayd()))
             add(ReceiptBlock.Line(CzechBankAccount.fromIban(qr.iban)?.toString() ?: CzechBankAccount.formatIban(qr.iban), Align.CENTER))
             qr.variableSymbol?.let { add(ReceiptBlock.Line("VS: $it", Align.CENTER)) }
+        }
+
+        if (r.stornoOf == null) r.epc?.let { epc ->
+            add(ReceiptBlock.Separator)
+            add(ReceiptBlock.Line("Platba ze zahraničí (SEPA)", Align.CENTER, bold = true))
+            add(ReceiptBlock.Line("K úhradě: " + Money.format(epc.amount, "EUR"), Align.CENTER, bold = true))
+            r.eurRate?.let { add(ReceiptBlock.Line("Kurz: 1 EUR = " + "%.3f".format(java.util.Locale.ROOT, it).replace('.', ',') + " Kč", Align.CENTER)) }
+            add(ReceiptBlock.Qr(epc.toPayload()))
+            add(ReceiptBlock.Line("IBAN: " + CzechBankAccount.formatIban(epc.iban), Align.CENTER))
+            epc.bic?.let { add(ReceiptBlock.Line("BIC: $it", Align.CENTER)) }
+            wrap("Zpráva: " + epc.text, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         }
 
         if (business.footer.isNotBlank()) {

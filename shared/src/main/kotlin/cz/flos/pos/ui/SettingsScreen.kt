@@ -156,6 +156,7 @@ fun SettingsScreen(vm: PosViewModel) {
             }
 
             EetSettings(vm, s)
+            BankSettings(vm, s)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text(tr("Flos 0.1.0"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

@@ -11,8 +11,8 @@ import androidx.sqlite.execSQL
  * (see FlosApp and desktop Main), using [FlosDatabase.MIGRATIONS].
  */
 @Database(
-    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class],
-    version = 2,
+    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -20,6 +20,7 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun sales(): SalesDao
     abstract fun eet(): EetDao
     abstract fun cash(): CashDao
+    abstract fun bank(): BankDao
 
     companion object {
         const val FILE_NAME = "flos.db"
@@ -42,6 +43,26 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        /** 2 → 3: tips and bank transfer confirmation on sales; payments read from the bank. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE sales ADD COLUMN tip INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN bankStatus TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN bankPaid INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN bankConfirmedAt INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN payCurrency TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN payAmount INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN eurRate REAL")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `bank_payments` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sourceId` TEXT NOT NULL, " +
+                        "`readAt` INTEGER NOT NULL, `bookedAt` INTEGER, `amount` INTEGER NOT NULL, `currency` TEXT NOT NULL, `variableSymbol` TEXT, `counterAccount` TEXT, " +
+                        "`counterName` TEXT, `message` TEXT, `saleId` INTEGER, `status` TEXT NOT NULL)",
+                )
+                connection.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_bank_payments_sourceId` ON `bank_payments` (`sourceId`)")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_bank_payments_saleId` ON `bank_payments` (`saleId`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
     }
 }

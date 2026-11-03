@@ -45,6 +45,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.input.KeyboardType
 import cz.flos.pos.data.CashKind
+import cz.flos.pos.data.TipsOwner
 import cz.flos.pos.data.CashState
 import cz.flos.core.DailyReport
 import cz.flos.core.Money
@@ -72,6 +73,7 @@ fun ReportScreen(vm: PosViewModel) {
         }
         val cash by vm.cashState.collectAsState()
         CashCard(vm, cash)
+        TransfersCard(vm)
         report?.let { r -> ReportBody(r, settings.vatPayer) { vm.printReport(r) } }
     }
 }
@@ -152,6 +154,21 @@ private fun ReportBody(r: DailyReport, vatPayer: Boolean, onPrint: () -> Unit) {
                 if (r.cancelledCount > 0) ReportRow(tr("Stornováno"), r.cancelledCount.toString())
                 HorizontalDivider()
                 PaymentMethod.entries.forEach { ReportRow(tr(it.label), Money.format(r.byPayment[it] ?: 0)) }
+                if (r.tips != 0L) {
+                    HorizontalDivider()
+                    ReportRow(tr("Spropitné (mimo DPH)"), Money.format(r.tips), bold = true)
+                    ReportRow(tr("Přijato celkem"), Money.format(r.total + r.tips))
+                }
+                r.transfers?.let { t ->
+                    HorizontalDivider()
+                    Text(tr("Převody a QR platby"), fontWeight = FontWeight.Bold)
+                    ReportRow(tr("Přišlo (%d)", t.confirmedCount), Money.format(t.confirmed))
+                    ReportRow(tr("Čeká na platbu (%d)", t.waitingCount), Money.format(t.waiting))
+                    if (t.lateCount > 0) ReportRow(tr("Doplaceno za dřívější dny (%d)", t.lateCount), Money.format(t.late))
+                    if (t.openCount > 0) ReportRow(tr("Neuhrazeno celkem (%d)", t.openCount), Money.format(t.open))
+                    if (t.overdueCount > 0) Text(tr("Po splatnosti: %d účtenek za %s. Ověřte je v internetovém bankovnictví; když peníze nepřijdou, kontaktujte zákazníka nebo účtenku stornujte.",
+                        t.overdueCount, Money.format(t.overdue)), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
                 if (vatPayer && r.byVat.isNotEmpty()) {
                     HorizontalDivider()
                     r.byVat.forEach {
@@ -173,5 +190,37 @@ private fun ReportRow(label: String, value: String, bold: Boolean = false) {
         Text(label, fontWeight = if (bold) FontWeight.Bold else null)
         Spacer(Modifier.weight(1f))
         Text(value, fontWeight = if (bold) FontWeight.Bold else null)
+    }
+}
+
+/** Transfers still waiting for their money and the monthly tax-free tips limit (7 % of revenue). */
+@Composable
+private fun TransfersCard(vm: PosViewModel) {
+    val waiting by vm.waitingTransfers.collectAsState()
+    val settings by vm.settings.collectAsState()
+    val sales by vm.recentSales.collectAsState()
+    var month by remember { mutableStateOf(0L to 0L) }
+    LaunchedEffect(sales) { month = vm.monthTips() }
+    val (tips, revenue) = month
+    if (waiting.isEmpty() && tips == 0L) return
+    Card(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(top = 12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (waiting.isNotEmpty()) {
+                ReportRow(tr("Čeká na převod (%d účtenek)", waiting.size), Money.format(waiting.sumOf { it.transferMissing }), bold = true)
+            }
+            if (tips != 0L) {
+                ReportRow(tr("Spropitné tento měsíc"), Money.format(tips), bold = true)
+                if (settings.tipsOwner == TipsOwner.STAFF) {
+                    val limit = revenue * 7 / 100
+                    ReportRow(tr("Limit osvobození (7 %% tržby %s)", Money.format(revenue)), Money.format(limit))
+                    if (tips > limit) {
+                        Text(tr("Nad limit: %s – tato část se u zaměstnanců daní jako mzda.", Money.format(tips - limit)),
+                            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        ReportRow(tr("Zbývá do limitu"), Money.format(limit - tips))
+                    }
+                }
+            }
+        }
     }
 }

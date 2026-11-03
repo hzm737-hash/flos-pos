@@ -25,6 +25,13 @@ import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.DeliveryDining
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Undo
+import androidx.compose.material.icons.rounded.HourglassTop
+import androidx.compose.material.icons.rounded.VolunteerActivism
+import androidx.compose.material.icons.rounded.AccountBalance
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.FilledTonalButton
+import cz.flos.pos.data.TransferStatus
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -93,6 +100,8 @@ sealed class HistoryFilter(val key: String) {
     data object Unpaid : HistoryFilter("open")
     data object Voided : HistoryFilter("storno")
     data object Cancelled : HistoryFilter("void")
+    data object AwaitingTransfer : HistoryFilter("transfer")
+    data object Tips : HistoryFilter("tips")
 
     val label: String
         get() = when (this) {
@@ -101,6 +110,8 @@ sealed class HistoryFilter(val key: String) {
             Unpaid -> tr("Nezaplacené")
             Voided -> tr("Stornované")
             Cancelled -> tr("Zrušené objednávky")
+            AwaitingTransfer -> tr("Čeká na převod")
+            Tips -> tr("Spropitné")
         }
 
     val icon: ImageVector
@@ -110,6 +121,8 @@ sealed class HistoryFilter(val key: String) {
             Unpaid -> Icons.Rounded.DeliveryDining
             Voided -> Icons.Rounded.Undo
             Cancelled -> Icons.Rounded.Block
+            AwaitingTransfer -> Icons.Rounded.HourglassTop
+            Tips -> Icons.Rounded.VolunteerActivism
         }
 
     fun matches(sw: SaleWithItems): Boolean {
@@ -120,14 +133,20 @@ sealed class HistoryFilter(val key: String) {
             Unpaid -> s.isOpen
             Voided -> s.isPaid && s.cancelled
             Cancelled -> s.saleStatus == SaleStatus.VOID
+            AwaitingTransfer -> s.awaitsTransfer
+            Tips -> s.isPaid && !s.cancelled && s.tip > 0
         }
     }
 
     /** Amount the sale adds to this group: what was received for paid sales, the order total otherwise. */
-    fun amountOf(sw: SaleWithItems): Long = if (sw.sale.isPaid) sw.sale.received else sw.sale.total
+    fun amountOf(sw: SaleWithItems): Long = when (this) {
+        Tips -> sw.sale.tip
+        AwaitingTransfer -> sw.sale.transferMissing
+        else -> if (sw.sale.isPaid) sw.sale.received else sw.sale.total
+    }
 
     companion object {
-        val entries: List<HistoryFilter> = listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(Unpaid, Voided, Cancelled)
+        val entries: List<HistoryFilter> = listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(AwaitingTransfer, Tips, Unpaid, Voided, Cancelled)
         fun of(key: String) = entries.firstOrNull { it.key == key } ?: All
     }
 }
@@ -141,6 +160,11 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
     val sales by remember(range) { vm.history(range.first, range.second) }.collectAsState(initial = emptyList())
     var open by remember { mutableStateOf<SaleWithItems?>(null) }
     var confirmCancel by remember { mutableStateOf<SaleWithItems?>(null) }
+    var bankDialog by remember { mutableStateOf(false) }
+    var confirmTransfer by remember { mutableStateOf<SaleWithItems?>(null) }
+    var editTip by remember { mutableStateOf<SaleWithItems?>(null) }
+    val unmatched by vm.unmatchedPayments.collectAsState()
+    val settings by vm.settings.collectAsState()
     val fmt = remember { SimpleDateFormat("d.M.yyyy HH:mm", Locale.forLanguageTag("cs-CZ")) }
 
     val eetRecords by vm.eetRecent.collectAsState()
@@ -156,6 +180,15 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item { EetQueueBanner(vm) }
+        item {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.End) {
+                BadgedBox(badge = { if (unmatched.isNotEmpty()) Badge { Text(unmatched.size.toString()) } }) {
+                    FilledTonalButton(onClick = { bankDialog = true }) {
+                        Icon(Icons.Rounded.AccountBalance, null, Modifier.size(18.dp)); Text(tr("  Platby z banky"))
+                    }
+                }
+            }
+        }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(HistoryPeriod.entries) { p ->
@@ -213,11 +246,35 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
             },
             dismissButton = {
                 Row {
+                    if (s.awaitsTransfer) TextButton(onClick = { confirmTransfer = sw; open = null }) { Text(tr("Platba přišla")) }
+                    if (s.isPaid && !s.cancelled) TextButton(onClick = { editTip = sw; open = null }) { Text(tr("Spropitné")) }
                     if (s.isPaid && !s.cancelled) TextButton(onClick = { confirmCancel = sw; open = null }) { Text(tr("Storno")) }
                     TextButton(onClick = { open = null }) { Text(tr("Zavřít")) }
                 }
             },
         )
+    }
+    if (bankDialog) BankPaymentsDialog(vm, onDismiss = { bankDialog = false })
+    confirmTransfer?.let { sw ->
+        val due = sw.sale.payAmount?.takeIf { sw.sale.isForeign } ?: sw.sale.received
+        val cur = if (sw.sale.isForeign) "EUR" else "Kč"
+        AmountDialog(
+            title = tr("Platba za účtenku %s", sw.sale.number),
+            label = if (sw.sale.isForeign) tr("Přišlo na účet (EUR)") else tr("Přišlo na účet (Kč)"),
+            initial = due,
+            hint = { amount -> if (amount > due) tr("Spropitné: %s", Money.format(amount - due, cur))
+                else if (amount < due) tr("Chybí: %s", Money.format(due - amount, cur)) else "" },
+            onDismiss = { confirmTransfer = null },
+        ) { vm.confirmTransfer(sw.sale, it); confirmTransfer = null }
+    }
+    editTip?.let { sw ->
+        AmountDialog(
+            title = tr("Spropitné k účtence %s", sw.sale.number),
+            label = tr("Spropitné (Kč)"),
+            initial = sw.sale.tip,
+            hint = { tipsHint(settings.tipsOwner) },
+            onDismiss = { editTip = null },
+        ) { vm.setTip(sw.sale, it); editTip = null }
     }
     confirmCancel?.let { sw ->
         AlertDialog(
@@ -283,7 +340,11 @@ private fun SaleRow(sw: SaleWithItems, fmt: SimpleDateFormat, eet: List<EetRecor
                     s.isOpen -> tr("Nezaplaceno")
                     s.saleStatus == SaleStatus.VOID -> tr("Zrušeno")
                     s.cancelled -> tr("STORNO") + " " + (s.stornoNumber ?: "")
-                    else -> s.paymentMethod?.let { tr(it.label) } ?: ""
+                    else -> listOfNotNull(
+                        s.paymentMethod?.let { tr(it.label) },
+                        s.transferStatus?.let { t -> if (t == TransferStatus.UNDERPAID) tr("chybí %s", Money.format(s.transferMissing)) else tr(t.label) },
+                        if (s.tip > 0) tr("spropitné %s", Money.format(s.tip)) else null,
+                    ).joinToString(" · ")
                 }
                 Text(
                     listOf(fmt.format(Date(s.createdAt)), status, s.note.take(40)).filter { it.isNotBlank() }.joinToString(" · ") + eetLabel(eet),
