@@ -6,6 +6,8 @@ on:
   push:
     branches: [ main ]
     paths: [ "server/**", "shared/**", "core/**", "gradle/**", "*.gradle.kts", ".github/workflows/server-image.yml" ]
+  pull_request:
+    paths: [ "server/**", "shared/**", "core/**", "gradle/**", "*.gradle.kts", ".github/workflows/server-image.yml" ]
   workflow_dispatch:
 
 permissions:
@@ -17,8 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test the back office
+        # Same trimming as server/Dockerfile: the Android and Windows modules are not needed here.
+        run: |
+          sed -i 's/^include(":app")$//; s/^include(":desktop")$//' settings.gradle.kts
+          sed -i '/android.application\|kotlin.android\|kotlin.compose\|libs.plugins.ksp\|compose.multiplatform/d' build.gradle.kts
+          ./gradlew :server:test --no-daemon
+          git checkout -- settings.gradle.kts build.gradle.kts
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -30,7 +45,7 @@ jobs:
         with:
           context: .
           file: server/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ steps.name.outputs.image }}:latest
             ${{ steps.name.outputs.image }}:${{ github.sha }}

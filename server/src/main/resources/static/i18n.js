@@ -278,6 +278,7 @@ const EN = {
   'Vyplňte jméno': 'Fill in the name',
   'Vyplňte název': 'Fill in the name',
   'Účet s tímto e-mailem už existuje': 'An account with this e-mail already exists',
+  'Registrace je uzavřena. Nového uživatele přidá majitel v sekci Uživatelé.': 'Sign-up is closed. The owner adds new users under Users.',
 };
 
 // Texts with a variable part.

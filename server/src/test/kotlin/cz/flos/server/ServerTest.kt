@@ -25,9 +25,9 @@ import java.time.LocalDate
 
 class ServerTest {
 
-    private fun run(block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
+    private fun run(openSignup: Boolean = true, block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
         val db = Db.inMemory().also { it.migrate() }
-        application { flosModule(db) }
+        application { flosModule(db, openSignup) }
         val client = createClient { install(ContentNegotiation) { json(FlosJson) } }
         block(client)
     }
@@ -40,6 +40,14 @@ class ServerTest {
 
     private suspend fun HttpClient.register(email: String = "majitel@flos.cz"): String =
         postJson("/api/v1/auth/register", RegisterRequest("Kavárna Flos", "Hazem", email, "tajneheslo1")).body<TokenResponse>().token
+
+    @Test fun closedSignupAllowsOnlyTheFirstOwner() = run(openSignup = false) { client ->
+        assertTrue(client.get("/api/v1/auth/signup").body<SignupStatus>().open)
+        client.register()
+        assertEquals(false, client.get("/api/v1/auth/signup").body<SignupStatus>().open)
+        val second = client.postJson("/api/v1/auth/register", RegisterRequest("Cizí firma", "Někdo", "cizi@firma.cz", "tajneheslo2"))
+        assertEquals(HttpStatusCode.Forbidden, second.status)
+    }
 
     @Test fun registerLoginAndOrgIsolation() = run { client ->
         val token = client.register()
