@@ -52,9 +52,11 @@ class BankSync(
             when (s.bankSource) {
                 BankSource.OFF -> emptyList()
                 BankSource.EMAIL -> readMailbox(s)
+                // Several tokens (CZK and EUR account) can be given, separated by commas.
                 BankSource.FIO -> {
                     val wait = FioApi.MIN_INTERVAL_MS - (System.currentTimeMillis() - lastFioCall)
-                    if (wait > 0) emptyList() else FioApi.fetchNew(s.fioToken).also { lastFioCall = System.currentTimeMillis() }
+                    if (wait > 0) emptyList()
+                    else fioTokens(s).flatMap { FioApi.fetchNew(it) }.also { lastFioCall = System.currentTimeMillis() }
                 }
             }
         }
@@ -84,7 +86,9 @@ class BankSync(
 
     /** A person assigns a payment to a receipt by hand. Returns the updated sale and the tip it added. */
     suspend fun assign(payment: BankPaymentEntity, sale: SaleEntity): Pair<SaleEntity, Long> = lock.withLock {
-        val r = PaymentMatcher.settle(sale.expected(), payment.amount)
+        val expected = sale.expected()
+        val value = PaymentMatcher.valueIn(IncomingPayment(payment.sourceId, payment.amount, currency = payment.currency), expected) ?: payment.amount
+        val r = PaymentMatcher.settle(expected, value)
         val result = apply(sale, r)
         bank.update(payment.copy(saleId = sale.id, status = BankPaymentStatus.MATCHED.name))
         result
@@ -99,8 +103,9 @@ class BankSync(
 
     private suspend fun apply(sale: SaleEntity, r: MatchResult): Pair<SaleEntity, Long> {
         val updated = when (r) {
+            // A tip from abroad comes in euro; the till keeps tips in crowns at the receipt's rate.
             is MatchResult.Paid -> sale.copy(
-                bankStatus = TransferStatus.CONFIRMED.name, bankPaid = r.paid, tip = r.tip, bankConfirmedAt = System.currentTimeMillis(),
+                bankStatus = TransferStatus.CONFIRMED.name, bankPaid = r.paid, tip = sale.toCzk(r.tip), bankConfirmedAt = System.currentTimeMillis(),
             )
             is MatchResult.Underpaid -> sale.copy(bankStatus = TransferStatus.UNDERPAID.name, bankPaid = r.paid)
             MatchResult.NoMatch -> sale
@@ -109,11 +114,18 @@ class BankSync(
         return updated to (updated.tip - sale.tip).coerceAtLeast(0)
     }
 
-    private fun SaleEntity.expected() = ExpectedPayment(id, variableSymbol, received, bankPaid)
+    private fun fioTokens(s: AppSettings) = s.fioToken.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }
+        .ifEmpty { throw IllegalStateException("Chybí token Fio API") }
+
+    private fun SaleEntity.expected() =
+        if (isForeign) ExpectedPayment(id, variableSymbol, payAmount!!, bankPaid, payCurrency!!, eurRate)
+        else ExpectedPayment(id, variableSymbol, received, bankPaid)
 
     private fun IncomingPayment.toEntity() = BankPaymentEntity(
         sourceId = sourceId, readAt = System.currentTimeMillis(), bookedAt = at, amount = amount, variableSymbol = variableSymbol,
-        counterAccount = counterAccount, counterName = counterName, message = message,
+        counterAccount = counterAccount, counterName = counterName,
+        message = listOfNotNull(message, originalAmount?.let { "(${cz.flos.core.Money.format(it, originalCurrency ?: "")})" }).joinToString(" ").ifBlank { null },
+        currency = currency,
     )
 
     private fun readMailbox(s: AppSettings): List<IncomingPayment> {
@@ -145,7 +157,7 @@ class BankSync(
             BankSource.FIO -> {
                 val wait = FioApi.MIN_INTERVAL_MS - (System.currentTimeMillis() - lastFioCall)
                 if (wait > 0) kotlinx.coroutines.delay(wait)
-                val list = FioApi.fetchPeriod(s.fioToken).also { lastFioCall = System.currentTimeMillis() }
+                val list = fioTokens(s).flatMap { FioApi.fetchPeriod(it) }.also { lastFioCall = System.currentTimeMillis() }
                 "OK: ${list.size} příchozích plateb za 7 dní"
             }
         }

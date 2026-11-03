@@ -159,6 +159,16 @@ private fun ReportBody(r: DailyReport, vatPayer: Boolean, onPrint: () -> Unit) {
                     ReportRow(tr("Spropitné (mimo DPH)"), Money.format(r.tips), bold = true)
                     ReportRow(tr("Přijato celkem"), Money.format(r.total + r.tips))
                 }
+                r.transfers?.let { t ->
+                    HorizontalDivider()
+                    Text(tr("Převody a QR platby"), fontWeight = FontWeight.Bold)
+                    ReportRow(tr("Přišlo (%d)", t.confirmedCount), Money.format(t.confirmed))
+                    ReportRow(tr("Čeká na platbu (%d)", t.waitingCount), Money.format(t.waiting))
+                    if (t.lateCount > 0) ReportRow(tr("Doplaceno za dřívější dny (%d)", t.lateCount), Money.format(t.late))
+                    if (t.openCount > 0) ReportRow(tr("Neuhrazeno celkem (%d)", t.openCount), Money.format(t.open))
+                    if (t.overdueCount > 0) Text(tr("Po splatnosti: %d účtenek za %s. Ověřte je v internetovém bankovnictví; když peníze nepřijdou, kontaktujte zákazníka nebo účtenku stornujte.",
+                        t.overdueCount, Money.format(t.overdue)), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
                 if (vatPayer && r.byVat.isNotEmpty()) {
                     HorizontalDivider()
                     r.byVat.forEach {

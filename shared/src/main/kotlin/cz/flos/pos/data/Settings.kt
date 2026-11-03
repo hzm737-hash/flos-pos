@@ -61,7 +61,16 @@ data class AppSettings(
     val fioToken: String = "",
     /** Who keeps the tips: staff (outside EET, tax-free up to 7 % of monthly catering revenue) or the business (recorded in EET). */
     val tipsOwner: TipsOwner = TipsOwner.STAFF,
+    /** Account for SEPA payments from abroad (a Fio EUR account is best); empty = the main account. */
+    val eurAccount: String = "",
+    /** Own CZK per EUR rate, e.g. "24,50"; empty = today's ČNB rate. */
+    val eurRateManual: String = "",
+    /** After how many days an unpaid transfer is shown as overdue. */
+    val transferDueDays: Int = 3,
 ) {
+    /** IBAN for the SEPA QR code: the EUR account when set, otherwise the main account. */
+    val eurIban: String? get() = eurAccount.takeIf { it.isNotBlank() }?.let { CzechBankAccount.toIban(it) } ?: iban
+    val eurRateOverride: Double? get() = eurRateManual.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }
     val effectiveEic: String get() = eetEic.ifBlank { dic }.replace(" ", "").uppercase()
 
     val iban: String? get() = bankAccount.takeIf { it.isNotBlank() }?.let { CzechBankAccount.toIban(it) }
@@ -137,6 +146,9 @@ class SettingsStore(private val prefs: KeyValueStore) {
             imapFolder = str("imapFolder", d.imapFolder),
             fioToken = str("fioToken", d.fioToken),
             tipsOwner = enum("tipsOwner", d.tipsOwner),
+            eurAccount = str("eurAccount", d.eurAccount),
+            eurRateManual = str("eurRateManual", d.eurRateManual),
+            transferDueDays = int("transferDueDays", d.transferDueDays),
         )
     }
 
@@ -179,6 +191,9 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "imapFolder" to s.imapFolder,
                 "fioToken" to s.fioToken,
                 "tipsOwner" to s.tipsOwner.name,
+                "eurAccount" to s.eurAccount,
+                "eurRateManual" to s.eurRateManual,
+                "transferDueDays" to s.transferDueDays.toString(),
             ),
         )
         _state.value = s

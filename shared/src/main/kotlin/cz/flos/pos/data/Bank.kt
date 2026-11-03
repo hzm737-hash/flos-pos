@@ -21,6 +21,8 @@ data class BankPaymentEntity(
     /** When the bank booked it, if the source says. */
     val bookedAt: Long? = null,
     val amount: Long,
+    /** Currency of [amount] (the account's currency). */
+    val currency: String = "CZK",
     val variableSymbol: String? = null,
     val counterAccount: String? = null,
     val counterName: String? = null,
@@ -57,6 +59,10 @@ interface BankDao {
 
     @Query("SELECT * FROM sales WHERE status = 'PAID' AND cancelled = 0 AND bankStatus IN ('WAITING', 'UNDERPAID') ORDER BY createdAt DESC")
     fun waitingSalesFlow(): Flow<List<SaleEntity>>
+
+    /** Transfers whose money arrived in a period (possibly for receipts of earlier days). */
+    @Query("SELECT * FROM sales WHERE bankStatus = 'CONFIRMED' AND cancelled = 0 AND bankConfirmedAt >= :from AND bankConfirmedAt < :to")
+    suspend fun confirmedBetween(from: Long, to: Long): List<SaleEntity>
 
     /** Tips and paid sales of a period, for the monthly tax-free tips limit. */
     @Query("SELECT COALESCE(SUM(tip), 0) FROM sales WHERE status = 'PAID' AND cancelled = 0 AND createdAt >= :from AND createdAt < :to")

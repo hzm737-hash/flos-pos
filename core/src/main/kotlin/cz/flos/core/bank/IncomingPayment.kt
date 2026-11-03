@@ -15,4 +15,7 @@ data class IncomingPayment(
     val counterName: String? = null,
     val message: String? = null,
     val currency: String = "CZK",
+    /** For a payment converted by the bank: what the payer sent, e.g. 1050 (cents) in EUR. */
+    val originalAmount: Long? = null,
+    val originalCurrency: String? = null,
 )

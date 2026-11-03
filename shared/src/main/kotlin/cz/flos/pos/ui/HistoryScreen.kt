@@ -256,12 +256,14 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
     }
     if (bankDialog) BankPaymentsDialog(vm, onDismiss = { bankDialog = false })
     confirmTransfer?.let { sw ->
+        val due = sw.sale.payAmount?.takeIf { sw.sale.isForeign } ?: sw.sale.received
+        val cur = if (sw.sale.isForeign) "EUR" else "Kč"
         AmountDialog(
             title = tr("Platba za účtenku %s", sw.sale.number),
-            label = tr("Přišlo na účet (Kč)"),
-            initial = sw.sale.received,
-            hint = { amount -> if (amount > sw.sale.received) tr("Spropitné: %s", Money.format(amount - sw.sale.received))
-                else if (amount < sw.sale.received) tr("Chybí: %s", Money.format(sw.sale.received - amount)) else "" },
+            label = if (sw.sale.isForeign) tr("Přišlo na účet (EUR)") else tr("Přišlo na účet (Kč)"),
+            initial = due,
+            hint = { amount -> if (amount > due) tr("Spropitné: %s", Money.format(amount - due, cur))
+                else if (amount < due) tr("Chybí: %s", Money.format(due - amount, cur)) else "" },
             onDismiss = { confirmTransfer = null },
         ) { vm.confirmTransfer(sw.sale, it); confirmTransfer = null }
     }

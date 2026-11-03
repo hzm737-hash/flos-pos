@@ -75,11 +75,25 @@ data class SaleEntity(
     /** What has arrived on the bank account for this receipt so far. */
     val bankPaid: Long = 0,
     val bankConfirmedAt: Long? = null,
+    /** "EUR" when a payer from abroad got a SEPA QR code; [bankPaid] is then in euro cents too. */
+    val payCurrency: String? = null,
+    /** Amount asked in [payCurrency] (euro cents). */
+    val payAmount: Long? = null,
+    /** CZK per 1 EUR used for [payAmount]. */
+    val eurRate: Double? = null,
 ) {
+    val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
+    /** Converts an amount in [payCurrency] to haléře. */
+    fun toCzk(amount: Long): Long = if (isForeign) Math.round(amount * eurRate!!) else amount
     val transferStatus: TransferStatus? get() = TransferStatus.entries.firstOrNull { it.name == bankStatus }
     /** Still waiting for (part of) the money on the bank account. */
     val awaitsTransfer: Boolean get() = isPaid && !cancelled && (transferStatus == TransferStatus.WAITING || transferStatus == TransferStatus.UNDERPAID)
-    val transferMissing: Long get() = if (awaitsTransfer) (received - bankPaid).coerceAtLeast(0) else 0
+    /** What is still missing, in haléře. */
+    val transferMissing: Long get() = when {
+        !awaitsTransfer -> 0
+        isForeign -> toCzk((payAmount!! - bankPaid).coerceAtLeast(0))
+        else -> (received - bankPaid).coerceAtLeast(0)
+    }
     val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
     val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID
     val isPaid: Boolean get() = saleStatus == SaleStatus.PAID

@@ -63,6 +63,8 @@ object FioApi {
             val amount = col(t, 1)?.let { BigDecimal(it).movePointRight(2).toLong() } ?: return@mapNotNull null
             if (amount <= 0) return@mapNotNull null
             val id = col(t, 22) ?: return@mapNotNull null
+            // For a converted payment Fio puts the original amount in "Upřesnění", e.g. "15.90 EUR".
+            val detail = col(t, 18)?.let { Regex("""^\s*([0-9]+(?:[.,][0-9]{1,2})?)\s+([A-Z]{3})\s*$""").find(it) }
             val account = col(t, 2)?.let { acc -> col(t, 3)?.let { "$acc/$it" } ?: acc }
             IncomingPayment(
                 sourceId = "fio:$id",
@@ -73,6 +75,8 @@ object FioApi {
                 counterName = col(t, 10),
                 message = col(t, 16) ?: col(t, 25),
                 currency = col(t, 14) ?: currency,
+                originalAmount = detail?.let { BigDecimal(it.groupValues[1].replace(',', '.')).movePointRight(2).toLong() },
+                originalCurrency = detail?.groupValues?.get(2),
             )
         }
     }

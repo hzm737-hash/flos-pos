@@ -20,6 +20,18 @@ import cz.flos.core.QrPlatba
 @Composable
 fun QrImage(qr: QrPlatba, size: Dp = 240.dp, modifier: Modifier = Modifier) {
     val matrix = remember(qr) { qr.toMatrix() }
+    QrMatrix(matrix, size, modifier)
+}
+
+/** Shows a SEPA (EPC) QR code for payers from abroad. */
+@Composable
+fun QrImage(qr: cz.flos.core.EpcQr, size: Dp = 240.dp, modifier: Modifier = Modifier) {
+    val matrix = remember(qr) { qr.toMatrix() }
+    QrMatrix(matrix, size, modifier)
+}
+
+@Composable
+private fun QrMatrix(matrix: com.google.zxing.common.BitMatrix, size: Dp, modifier: Modifier) {
     val description = tr("QR Platba")
     Canvas(
         modifier

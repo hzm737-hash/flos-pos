@@ -19,6 +19,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -52,6 +54,7 @@ fun PaymentDialog(
     var method by remember { mutableStateOf(PaymentMethod.CASH) }
     var given by remember { mutableStateOf("") }
     val qr = remember(total) { vm.preparePaymentQr(total) }
+    LaunchedEffect(Unit) { vm.setForeignTransfer(false) }
     val cashDue = Money.roundToCrowns(total)
     val givenHaler = Money.parse(given)
     val change = givenHaler?.let { it - cashDue }
@@ -106,7 +109,30 @@ fun PaymentDialog(
                         }
                     }
                     PaymentMethod.QR_TRANSFER -> {
-                        if (qr == null) {
+                        val foreign by vm.foreignTransfer.collectAsState()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(tr("Plátce ze zahraničí (SEPA QR v EUR)"), Modifier.weight(1f))
+                            Switch(checked = foreign, onCheckedChange = { vm.setForeignTransfer(it) })
+                        }
+                        if (foreign) {
+                            var epc by remember { mutableStateOf<Pair<cz.flos.core.EpcQr, Double>?>(null) }
+                            var loaded by remember { mutableStateOf(false) }
+                            LaunchedEffect(total) { epc = vm.prepareForeignQr(total); loaded = true }
+                            val e = epc
+                            when {
+                                e != null -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    QrImage(e.first)
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(Money.format(e.first.amount, "EUR"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                    Text(tr("Kurz 1 EUR = %s Kč · IBAN %s", "%.3f".format(java.util.Locale.ROOT, e.second).replace('.', ','),
+                                        CzechBankAccount.formatIban(e.first.iban)), style = MaterialTheme.typography.bodySmall)
+                                    Text(tr("Platba z ciziny trvá obvykle 1–2 pracovní dny. Účtenka počká na platbu a spáruje se sama."),
+                                        style = MaterialTheme.typography.bodySmall)
+                                }
+                                loaded -> Hint(tr("Kurz EUR se nepodařilo načíst. Zadejte vlastní kurz v Nastavení → Platby z banky."), error = true)
+                                else -> Hint(tr("Načítám kurz ČNB…"))
+                            }
+                        } else if (qr == null) {
                             Hint(tr("Pro QR platbu zadejte číslo účtu v Nastavení."), error = true)
                         } else {
                             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {

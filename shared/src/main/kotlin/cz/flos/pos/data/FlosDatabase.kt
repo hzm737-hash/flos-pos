@@ -50,9 +50,12 @@ abstract class FlosDatabase : RoomDatabase() {
                 connection.execSQL("ALTER TABLE sales ADD COLUMN bankStatus TEXT")
                 connection.execSQL("ALTER TABLE sales ADD COLUMN bankPaid INTEGER NOT NULL DEFAULT 0")
                 connection.execSQL("ALTER TABLE sales ADD COLUMN bankConfirmedAt INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN payCurrency TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN payAmount INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN eurRate REAL")
                 connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `bank_payments` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sourceId` TEXT NOT NULL, " +
-                        "`readAt` INTEGER NOT NULL, `bookedAt` INTEGER, `amount` INTEGER NOT NULL, `variableSymbol` TEXT, `counterAccount` TEXT, " +
+                        "`readAt` INTEGER NOT NULL, `bookedAt` INTEGER, `amount` INTEGER NOT NULL, `currency` TEXT NOT NULL, `variableSymbol` TEXT, `counterAccount` TEXT, " +
                         "`counterName` TEXT, `message` TEXT, `saleId` INTEGER, `status` TEXT NOT NULL)",
                 )
                 connection.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_bank_payments_sourceId` ON `bank_payments` (`sourceId`)")

@@ -119,7 +119,7 @@ fun BankPaymentsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
                 item { HorizontalDivider() }
                 item { Text(tr("Účtenky čekající na platbu (%d)", waiting.size), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
                 if (waiting.isEmpty()) item { Text(tr("Žádné"), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                items(waiting, key = { "w" + it.id }) { s -> WaitingRow(s, fmt) }
+                items(waiting, key = { "w" + it.id }) { s -> WaitingRow(s, fmt, settings.transferDueDays) }
             }
         },
         confirmButton = { Button(onClick = { vm.checkBankNow() }, enabled = settings.bankSource != BankSource.OFF) { Text(tr("Zkontrolovat teď")) } },
@@ -134,7 +134,7 @@ fun BankPaymentsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
                 LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(waiting, key = { it.id }) { s ->
                         Card(onClick = { vm.assignPayment(p, s); assigning = null }, shape = RoundedCornerShape(14.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp)) { WaitingRow(s, fmt) }
+                            Column(Modifier.fillMaxWidth().padding(12.dp)) { WaitingRow(s, fmt, settings.transferDueDays) }
                         }
                     }
                 }
@@ -146,13 +146,17 @@ fun BankPaymentsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun WaitingRow(s: SaleEntity, fmt: SimpleDateFormat) {
+private fun WaitingRow(s: SaleEntity, fmt: SimpleDateFormat, dueDays: Int) {
+    val overdue = s.createdAt < System.currentTimeMillis() - dueDays * 86_400_000L
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(s.number, fontWeight = FontWeight.SemiBold)
             Text(listOfNotNull(fmt.format(Date(s.createdAt)), s.variableSymbol?.let { "VS $it" },
-                if (s.bankPaid > 0) tr("přišlo %s", Money.format(s.bankPaid)) else null).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall)
+                if (s.isForeign) Money.format(s.payAmount!!, "EUR") else null,
+                if (s.bankPaid > 0) tr("přišlo %s", Money.format(s.bankPaid, if (s.isForeign) "EUR" else "Kč")) else null,
+                if (overdue) tr("po splatnosti") else null).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(Money.format(s.transferMissing), fontWeight = FontWeight.Bold)
     }

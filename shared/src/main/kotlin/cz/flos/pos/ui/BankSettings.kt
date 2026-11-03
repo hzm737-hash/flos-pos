@@ -77,6 +77,24 @@ fun BankSettings(vm: PosViewModel, s: AppSettings) {
         state?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 
+    Text(tr("Platby ze zahraničí (SEPA QR v EUR)"), style = MaterialTheme.typography.labelLarge)
+    Text(
+        tr("Zahraniční zákazník dostane QR kód evropského standardu EPC s částkou v eurech. Nejlepší je samostatný EUR účet (u Fio zdarma): peníze přijdou bez převodu měny a spropitné se spočítá přesně. Bez něj se použije hlavní účet a banka eura převede."),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Field(tr("EUR účet nebo IBAN (nepovinné)"), s.eurAccount) { v -> vm.updateSettings { it.copy(eurAccount = v) } }
+    if (s.eurAccount.isNotBlank() && s.eurIban == null) Text(tr("Neplatné číslo účtu"), color = MaterialTheme.colorScheme.error)
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Field(tr("Vlastní kurz Kč/EUR (prázdné = kurz ČNB)"), s.eurRateManual, Modifier.weight(1f), KeyboardType.Decimal) { v ->
+            vm.updateSettings { it.copy(eurRateManual = v.filter { c -> c.isDigit() || c == ',' || c == '.' }.take(8)) }
+        }
+        NumberField(tr("Splatnost převodu (dny)"), s.transferDueDays, 1..30, Modifier.weight(1f)) { d -> vm.updateSettings { it.copy(transferDueDays = d) } }
+    }
+    if (s.bankSource == BankSource.FIO) Text(
+        tr("Máte-li u Fio i EUR účet, vložte do pole tokenu oba tokeny oddělené čárkou."),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
     Text(tr("Komu patří spropitné"), style = MaterialTheme.typography.labelLarge)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TipsOwner.entries.forEach { o ->
