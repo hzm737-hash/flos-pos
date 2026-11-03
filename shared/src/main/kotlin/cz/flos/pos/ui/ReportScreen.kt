@@ -32,6 +32,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Payments
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.KeyboardType
+import cz.flos.pos.data.CashKind
+import cz.flos.pos.data.CashState
 import cz.flos.core.DailyReport
 import cz.flos.core.Money
 import cz.flos.core.PaymentMethod
@@ -56,8 +70,76 @@ fun ReportScreen(vm: PosViewModel) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, tr("Další den"))
             }
         }
+        val cash by vm.cashState.collectAsState()
+        CashCard(vm, cash)
         report?.let { r -> ReportBody(r, settings.vatPayer) { vm.printReport(r) } }
     }
+}
+
+/** Cash in the drawer for the current shift, with deposits, withdrawals and the shift close. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CashCard(vm: PosViewModel, cash: CashState) {
+    var dialog by remember { mutableStateOf<CashKind?>(null) }
+    Card(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(top = 12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Payments, null, tint = MaterialTheme.colorScheme.primary)
+                Text(tr("  Hotovost v pokladně"), style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                Text(Money.format(cash.expected), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            if (cash.float != 0L) ReportRow(tr("Počáteční stav"), Money.format(cash.float))
+            ReportRow(tr("Hotovostní tržby"), Money.format(cash.sales))
+            if (cash.refunds != 0L) ReportRow(tr("Storna v hotovosti"), Money.format(-cash.refunds))
+            if (cash.cashIn != 0L) ReportRow(tr("Vklady"), Money.format(cash.cashIn))
+            if (cash.cashOut != 0L) ReportRow(tr("Výběry"), Money.format(-cash.cashOut))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { dialog = CashKind.IN }) { Icon(Icons.Rounded.Add, null); Text(tr(" Vklad")) }
+                FilledTonalButton(onClick = { dialog = CashKind.OUT }) { Icon(Icons.Rounded.Remove, null); Text(tr(" Výběr")) }
+                Button(onClick = { dialog = CashKind.CLOSE }) { Icon(Icons.Rounded.Lock, null); Text(tr(" Uzavřít směnu")) }
+            }
+        }
+    }
+    dialog?.let { kind -> CashDialog(kind, cash, onDismiss = { dialog = null }) { amount, second, note ->
+        if (kind == CashKind.CLOSE) vm.closeShift(amount, second) else vm.cashMovement(kind, amount, note)
+        dialog = null
+    } }
+}
+
+@Composable
+private fun CashDialog(kind: CashKind, cash: CashState, onDismiss: () -> Unit, onConfirm: (Long, Long, String) -> Unit) {
+    var amount by remember { mutableStateOf("") }
+    var second by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    val parsed = Money.parse(amount)
+    val close = kind == CashKind.CLOSE
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr(kind.label)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (close) ReportRow(tr("Očekáváno v pokladně"), Money.format(cash.expected), bold = true)
+                OutlinedTextField(amount, { amount = it }, singleLine = true,
+                    label = { Text(if (close) tr("Spočítaná hotovost (Kč)") else tr("Částka (Kč)")) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                if (close) {
+                    parsed?.let { ReportRow(tr("Rozdíl"), Money.format(it - cash.expected)) }
+                    OutlinedTextField(second, { second = it }, singleLine = true,
+                        label = { Text(tr("Nechat v pokladně na další směnu (Kč)")) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                } else {
+                    OutlinedTextField(note, { note = it }, singleLine = true, label = { Text(tr("Poznámka")) })
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = parsed != null && (close || parsed > 0), onClick = {
+                onConfirm(parsed ?: 0, Money.parse(second) ?: 0, note)
+            }) { Text(if (close) tr("Uzavřít směnu") else tr("Uložit")) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
+    )
 }
 
 @Composable

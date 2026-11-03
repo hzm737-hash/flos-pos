@@ -35,6 +35,8 @@ data class ProductEntity(
     val sortOrder: Int = 0,
     /** Key from ProductIcons; null uses the category icon. */
     val icon: String? = null,
+    /** EAN or own code; a barcode scanner typing it into the search field adds the product. */
+    val barcode: String? = null,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }
@@ -64,6 +66,8 @@ data class SaleEntity(
     val note: String = "",
     /** When the order was opened; [createdAt] is the moment of payment for paid sales. */
     val openedAt: Long? = null,
+    /** When the receipt was voided (storno); used for the cash count of the shift. */
+    val cancelledAt: Long? = null,
 ) {
     val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
     val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID

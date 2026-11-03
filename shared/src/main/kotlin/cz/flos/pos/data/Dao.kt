@@ -72,6 +72,17 @@ interface SalesDao {
     @Query("SELECT * FROM sales WHERE status = 'OPEN' ORDER BY createdAt")
     fun openOrders(): Flow<List<SaleWithItems>>
 
+    /** Cash received for sales paid after [since] (cash is rounded to whole crowns). */
+    @Query("SELECT COALESCE(SUM(received), 0) FROM sales WHERE status = 'PAID' AND payment = 'CASH' AND createdAt > :since")
+    fun cashReceivedSince(since: Long): Flow<Long>
+
+    /** Cash paid back for cash receipts voided after [since]. */
+    @Query("SELECT COALESCE(SUM(received), 0) FROM sales WHERE status = 'PAID' AND payment = 'CASH' AND cancelled = 1 AND cancelledAt > :since")
+    fun cashRefundedSince(since: Long): Flow<Long>
+
+    @Query("SELECT * FROM products WHERE active = 1 AND barcode = :code LIMIT 1")
+    suspend fun productByBarcode(code: String): ProductEntity?
+
     @Query("DELETE FROM sale_items WHERE saleId = :saleId")
     suspend fun deleteItems(saleId: Long)
 

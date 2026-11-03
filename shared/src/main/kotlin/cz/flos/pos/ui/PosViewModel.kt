@@ -34,6 +34,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import cz.flos.pos.data.CashDao
+import cz.flos.pos.data.CashKind
+import cz.flos.pos.data.CashMovementEntity
+import cz.flos.pos.data.CashState
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -48,6 +56,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val catalog = flos.database.catalog()
     private val salesDao = flos.database.sales()
     private val eetDao = flos.database.eet()
+    private val cashDao: CashDao = flos.database.cash()
     val printer = flos.printer
     val eet = flos.eet
 
@@ -61,6 +70,23 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Orders waiting for payment (delivery, takeaway, a table). */
     val openOrders = salesDao.openOrders().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Cash that should be in the drawer since the last shift close. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val cashState: StateFlow<CashState> = cashDao.lastClose().flatMapLatest { since ->
+        combine(cashDao.since(since), salesDao.cashReceivedSince(since), salesDao.cashRefundedSince(since)) { moves, sales, refunds ->
+            CashState(
+                since = since,
+                float = moves.filter { it.cashKind == CashKind.FLOAT }.sumOf { it.amount },
+                sales = sales,
+                refunds = refunds,
+                cashIn = moves.filter { it.cashKind == CashKind.IN }.sumOf { it.amount },
+                cashOut = moves.filter { it.cashKind == CashKind.OUT }.sumOf { it.amount },
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CashState(0, 0, 0, 0, 0, 0))
+
+    val shiftCloses = cashDao.closes().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _cart = MutableStateFlow(Cart())
     val cart: StateFlow<Cart> = _cart.asStateFlow()
@@ -160,8 +186,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
         val sent = record?.let { sendToEet(it) }
         val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = sale.note)
-        if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number))
-        else _messages.tryEmit(tr("Účtenka %s uložena", number))
+        val drawer = s.openDrawer && payment == PaymentMethod.CASH
+        if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number), drawer)
+        else {
+            if (drawer) openDrawer()
+            _messages.tryEmit(tr("Účtenka %s uložena", number))
+        }
     }
 
     /** Prints the cart as a check print (předběžný účet) before payment. Nothing is stored or sent to EET. */
@@ -285,7 +315,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val now = LocalDateTime.now()
         val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val stornoNumber = flos.settings.nextReceiptNumber(now.year)
-        salesDao.update(sw.sale.copy(cancelled = true, stornoNumber = stornoNumber))
+        salesDao.update(sw.sale.copy(cancelled = true, stornoNumber = stornoNumber, cancelledAt = millis))
         // A storno is recorded in EET only when the original sale was (not for invoices or sales before EET was switched on).
         val recorded = eetDao.forSale(sw.sale.id).any { !it.storno }
         val record = if (recorded) eet.createRecord(sw.sale.id, stornoNumber, millis, -sw.sale.received, storno = true) else null
@@ -351,14 +381,80 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         printBlocks(blocks, tr("Zkušební tisk odeslán"))
     }
 
-    private fun printBlocks(blocks: List<ReceiptBlock>, okMessage: String) {
+    private fun printBlocks(blocks: List<ReceiptBlock>, okMessage: String, drawer: Boolean = false) {
         val s = settings.value
         viewModelScope.launch {
-            val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks)
+            val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks, openDrawer = drawer)
             runCatching { printer.print(s, bytes) }
                 .onSuccess { _messages.tryEmit(okMessage) }
                 .onFailure { _messages.tryEmit(tr("Tisk se nezdařil: %s", it.message)) }
         }
+    }
+
+    fun notify(text: String) { _messages.tryEmit(text) }
+
+    /** Opens the cash drawer connected to the receipt printer. */
+    fun openDrawer() {
+        val s = settings.value
+        viewModelScope.launch {
+            val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(emptyList(), cut = false, openDrawer = true)
+            runCatching { printer.print(s, bytes) }
+                .onFailure { _messages.tryEmit(tr("Tisk se nezdařil: %s", it.message)) }
+        }
+    }
+
+    // ---- Cash drawer and shifts ----
+    fun cashMovement(kind: CashKind, amount: Long, note: String) = viewModelScope.launch {
+        if (amount <= 0) return@launch
+        cashDao.insert(CashMovementEntity(at = System.currentTimeMillis(), kind = kind.name, amount = amount, note = note.trim(),
+            cashier = settings.value.cashier))
+        if (settings.value.openDrawer) openDrawer()
+        _messages.tryEmit(tr("%s: %s", tr(kind.label), Money.format(amount)))
+    }
+
+    /**
+     * Closes the shift: stores the counted cash next to the expected amount, prints a shift
+     * report and, when [leaveFloat] is above zero, starts the next shift with that change money.
+     */
+    fun closeShift(counted: Long, leaveFloat: Long) = viewModelScope.launch {
+        val s = settings.value
+        val state = cashState.value
+        val now = System.currentTimeMillis()
+        cashDao.insert(CashMovementEntity(at = now, kind = CashKind.CLOSE.name, amount = counted, cashier = s.cashier, expected = state.expected))
+        if (leaveFloat > 0) {
+            cashDao.insert(CashMovementEntity(at = now + 1, kind = CashKind.FLOAT.name, amount = leaveFloat, cashier = s.cashier))
+        }
+        val zone = ZoneId.systemDefault()
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("d.M.yyyy HH:mm")
+        val layout = ReceiptLayout(s.paperWidth.chars)
+        fun row(label: String, amount: Long) = ReceiptBlock.Line(layout.twoCol(label, Money.format(amount)))
+        val blocks = buildList {
+            add(ReceiptBlock.Line(s.businessName, Align.CENTER, bold = true))
+            add(ReceiptBlock.Line("UZAVŘENÍ SMĚNY", Align.CENTER, bold = true, large = true))
+            if (state.since > 0) add(ReceiptBlock.Line("Od: " + fmt.format(Instant.ofEpochMilli(state.since).atZone(zone))))
+            add(ReceiptBlock.Line("Do: " + fmt.format(Instant.ofEpochMilli(now).atZone(zone))))
+            if (s.cashier.isNotBlank()) add(ReceiptBlock.Line("Pokladník: ${s.cashier}"))
+            add(ReceiptBlock.Separator)
+            add(row("Počáteční stav", state.float))
+            add(row("Hotovostní tržby", state.sales))
+            add(row("Storna v hotovosti", -state.refunds))
+            add(row("Vklady", state.cashIn))
+            add(row("Výběry", -state.cashOut))
+            add(ReceiptBlock.Separator)
+            add(row("Očekáváno", state.expected))
+            add(row("Spočítáno", counted))
+            add(row("Rozdíl", counted - state.expected))
+            if (leaveFloat > 0) add(row("Ponecháno na další směnu", leaveFloat))
+            add(ReceiptBlock.Feed(3))
+        }
+        printBlocks(blocks, tr("Směna uzavřena"))
+    }
+
+    /** Looks up a product by its barcode and adds it to the cart. Returns false when no product has that code. */
+    suspend fun addByBarcode(code: String): Boolean {
+        val p = salesDao.productByBarcode(code.trim()) ?: return false
+        addToCart(p)
+        return true
     }
 
     // ---- Catalogue ----

@@ -35,6 +35,8 @@ data class AppSettings(
     /** IP address or host name of a Wi-Fi / LAN printer. */
     val printerHost: String = "",
     val printerPort: Int = NetworkPrinter.DEFAULT_PORT,
+    /** Send the drawer-kick pulse through the receipt printer for cash payments. */
+    val openDrawer: Boolean = false,
 
     // ---- EET 2.0 ----
     val eetEnabled: Boolean = false,
@@ -96,6 +98,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             printerType = enum("printerType", d.printerType),
             printerHost = str("printerHost", d.printerHost),
             printerPort = int("printerPort", d.printerPort),
+            openDrawer = bool("openDrawer", d.openDrawer),
             eetEnabled = bool("eetEnabled", d.eetEnabled),
             eetEnvironment = enum("eetEnvironment", d.eetEnvironment),
             eetVerification = bool("eetVerification", d.eetVerification),
@@ -129,6 +132,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "printerType" to s.printerType.name,
                 "printerHost" to s.printerHost,
                 "printerPort" to s.printerPort.toString(),
+                "openDrawer" to s.openDrawer.toString(),
                 "eetEnabled" to s.eetEnabled.toString(),
                 "eetEnvironment" to s.eetEnvironment.name,
                 "eetVerification" to s.eetVerification.toString(),

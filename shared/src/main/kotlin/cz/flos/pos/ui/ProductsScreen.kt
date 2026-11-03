@@ -161,6 +161,7 @@ private fun ProductDialog(
     var vat by remember { mutableStateOf(initial.vatPercent) }
     var category by remember { mutableStateOf(initial.categoryId) }
     var icon by remember { mutableStateOf(initial.icon) }
+    var barcode by remember { mutableStateOf(initial.barcode.orEmpty()) }
     val parsed = Money.parse(price)
     val valid = name.isNotBlank() && parsed != null && parsed >= 0
 
@@ -170,6 +171,7 @@ private fun ProductDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text(tr("Název")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(barcode, { barcode = it }, label = { Text(tr("Čárový kód (EAN)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
                     price, { price = it }, label = { Text(tr("Cena vč. DPH (Kč)")) }, singleLine = true,
                     isError = price.isNotEmpty() && parsed == null,
@@ -199,7 +201,8 @@ private fun ProductDialog(
         },
         confirmButton = {
             Button(enabled = valid, onClick = {
-                onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon))
+                onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon,
+                    barcode = barcode.trim().ifEmpty { null }))
             }) { Text(tr("Uložit")) }
         },
         dismissButton = {

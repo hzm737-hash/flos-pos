@@ -147,8 +147,12 @@ fun SettingsScreen(vm: PosViewModel) {
                 }
             }
             SwitchRow(tr("Tisknout účtenku automaticky po platbě"), s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
-            Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
-                Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))
+            SwitchRow(tr("Otevírat pokladní zásuvku při platbě hotově"), s.openDrawer) { v -> vm.updateSettings { it.copy(openDrawer = v) } }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
+                    Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))
+                }
+                OutlinedButton(onClick = { vm.openDrawer() }, enabled = vm.printer.isConfigured(s)) { Text(tr("Otevřít zásuvku")) }
             }
 
             EetSettings(vm, s)

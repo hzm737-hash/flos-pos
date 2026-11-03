@@ -49,6 +49,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.input.ImeAction
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -154,7 +164,17 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
     val q = CoreText.stripDiacritics(query.trim()).lowercase()
     val shown = products
         .filter { selected == null || it.categoryId == selected }
-        .filter { q.isEmpty() || CoreText.stripDiacritics(it.name).lowercase().contains(q) }
+        .filter { q.isEmpty() || CoreText.stripDiacritics(it.name).lowercase().contains(q) || it.barcode == query.trim() }
+    val scope = rememberCoroutineScope()
+    // A barcode scanner types the code and presses Enter: add the product with that code,
+    // or the only product the search shows.
+    val submit: () -> Unit = {
+        val code = query.trim()
+        if (code.isNotEmpty()) scope.launch {
+            val added = vm.addByBarcode(code) || shown.singleOrNull()?.let { vm.addToCart(it); true } == true
+            if (added) query = "" else vm.notify(tr("Produkt s kódem %s nenalezen", code))
+        }
+    }
 
     Column(modifier.fillMaxHeight()) {
         Row(Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -165,7 +185,12 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                 trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, tr("Vymazat")) } },
                 singleLine = true,
                 shape = RoundedCornerShape(50),
-                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { submit() }, onDone = { submit() }),
+                modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
+                    if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && it.type == KeyEventType.KeyUp) { submit(); true }
+                    else it.key == Key.Enter || it.key == Key.NumPadEnter
+                },
             )
         }
         LazyRow(
