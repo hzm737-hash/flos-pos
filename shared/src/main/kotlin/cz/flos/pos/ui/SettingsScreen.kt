@@ -1,9 +1,5 @@
 package cz.flos.pos.ui
 
-import android.Manifest
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,19 +36,18 @@ import androidx.compose.ui.unit.dp
 import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
-import cz.flos.pos.print.PairedPrinter
+import cz.flos.pos.LocalPlatform
+import cz.flos.pos.PrinterDevice
 import cz.flos.pos.print.PrinterType
 
 @Composable
 fun SettingsScreen(vm: PosViewModel) {
     val s by vm.settings.collectAsState()
-    var devices by remember { mutableStateOf<List<PairedPrinter>?>(null) }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) devices = vm.printer.bluetooth.pairedDevices()
-    }
+    val platform = LocalPlatform.current
+    var devices by remember(s.printerType) { mutableStateOf<List<PrinterDevice>?>(null) }
+    val askPermission = platform.rememberPrinterPermission { devices = platform.localPrinters(s.printerType) }
     fun loadDevices() {
-        if (vm.printer.bluetooth.hasPermission()) devices = vm.printer.bluetooth.pairedDevices()
-        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) permission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        if (platform.canUsePrinters()) devices = platform.localPrinters(s.printerType) else askPermission()
     }
 
     Column(
@@ -101,23 +96,23 @@ fun SettingsScreen(vm: PosViewModel) {
 
             Section(tr("Tiskárna"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrinterType.entries.forEach { t ->
-                    FilterChip(selected = s.printerType == t, onClick = { vm.updateSettings { it.copy(printerType = t) } }, label = { Text(tr(t.label)) })
+                platform.printerTypes.forEach { t ->
+                    FilterChip(selected = s.printerType == t, onClick = { vm.updateSettings { it.copy(printerType = t) } }, label = { Text(platform.printerTypeLabel(t)) })
                 }
             }
-            if (s.printerType == PrinterType.BLUETOOTH) {
+            if (s.printerType != PrinterType.NETWORK) {
                 Text(
                     if (s.printerAddress.isBlank()) tr("Není vybrána žádná tiskárna.") else tr("Vybraná tiskárna: %s (%s)", s.printerName, s.printerAddress),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    tr("Tiskárnu nejdřív spárujte v nastavení Bluetooth v Androidu, potom ji zde vyberte."),
+                    platform.printerHelp(s.printerType),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Bluetooth, null); Text(tr("  Vybrat spárovanou tiskárnu")) }
+                OutlinedButton(onClick = { loadDevices() }) { Icon(Icons.Filled.Print, null); Text(tr("  Vybrat tiskárnu")) }
                 devices?.let { list ->
-                    if (list.isEmpty()) Text(tr("Žádná spárovaná zařízení. Zapněte Bluetooth a spárujte tiskárnu."))
+                    if (list.isEmpty()) Text(tr("Nenalezena žádná tiskárna."))
                     list.forEach { d ->
                         FilterChip(
                             selected = d.address == s.printerAddress,

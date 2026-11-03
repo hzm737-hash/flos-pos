@@ -1,7 +1,6 @@
 package cz.flos.pos.eet
 
 import cz.flos.pos.ui.tr
-import android.content.Context
 import cz.flos.core.eet.EetCertificate
 import cz.flos.core.eet.EetClient
 import cz.flos.core.eet.EetFormat
@@ -25,17 +24,17 @@ import java.time.format.DateTimeFormatter
  *
  * Every sale is first stored as a PENDING record, so nothing is lost if the phone has no
  * internet. It is then sent at once; if no answer comes within the response time limit, the
- * receipt is printed without POK and the record is resent automatically (see [EetRetryWorker])
+ * receipt is printed without POK and the record is resent automatically (by the platform's retry job)
  * with prvni_zaslani=false and a new message UUID, until a confirmation arrives. The law asks
  * for sending within 48 hours of the sale; the app warns well before that.
  */
 class EetService(
-    private val context: Context,
+    private val dataDir: File,
     private val dao: EetDao,
     private val settings: () -> AppSettings,
 ) {
     private val mutex = Mutex()
-    private val certFile get() = File(context.filesDir, "eet/pokladni_certifikat.p12")
+    private val certFile get() = File(dataDir, "eet/pokladni_certifikat.p12")
     private var cached: Pair<String, EetCertificate>? = null
 
     fun hasCertificate(): Boolean = certFile.exists()

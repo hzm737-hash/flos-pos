@@ -1,8 +1,5 @@
 package cz.flos.pos.ui
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,15 +26,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import cz.flos.core.eet.EetEnvironment
+import cz.flos.pos.LocalPlatform
 import cz.flos.pos.data.AppSettings
 import java.text.DateFormat
 
 /** EET 2.0 section of the settings screen. */
 @Composable
 fun EetSettings(vm: PosViewModel, s: AppSettings) {
-    var pickedUri by remember { mutableStateOf<Uri?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> pickedUri = uri }
-    val cert = remember(s.eetCertPassword, pickedUri, vm.eet.hasCertificate()) { vm.eet.certificate() }
+    var picked by remember { mutableStateOf<ByteArray?>(null) }
+    val pickFile = LocalPlatform.current.rememberFilePicker { bytes -> picked = bytes }
+    val cert = remember(s.eetCertPassword, picked, vm.eet.hasCertificate()) { vm.eet.certificate() }
 
     Section(tr("EET 2.0 – evidence tržeb"))
     SwitchRow(tr("Evidovat tržby v EET"), s.eetEnabled) { v -> vm.updateSettings { it.copy(eetEnabled = v) } }
@@ -84,7 +82,7 @@ fun EetSettings(vm: PosViewModel, s: AppSettings) {
     if (cert != null && cert.eic != null && cert.eic != s.effectiveEic) {
         Text(tr("Pozor: EIČ v certifikátu (%s) se liší od zadaného EIČ (%s).", cert.eic, s.effectiveEic), color = MaterialTheme.colorScheme.error)
     }
-    OutlinedButton(onClick = { picker.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }) {
+    OutlinedButton(onClick = pickFile) {
         Icon(Icons.Filled.Key, null); Text(tr("  Nahrát certifikát (.p12)"))
     }
     Button(onClick = { vm.testEet() }, enabled = cert != null) {
@@ -96,10 +94,10 @@ fun EetSettings(vm: PosViewModel, s: AppSettings) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 
-    pickedUri?.let { uri ->
-        var password by remember(uri) { mutableStateOf("") }
+    picked?.let { bytes ->
+        var password by remember(bytes) { mutableStateOf("") }
         AlertDialog(
-            onDismissRequest = { pickedUri = null },
+            onDismissRequest = { picked = null },
             title = { Text(tr("Heslo k certifikátu")) },
             text = {
                 OutlinedTextField(
@@ -108,8 +106,8 @@ fun EetSettings(vm: PosViewModel, s: AppSettings) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 )
             },
-            confirmButton = { Button(onClick = { vm.importCertificate(uri, password); pickedUri = null }) { Text(tr("Nahrát")) } },
-            dismissButton = { TextButton(onClick = { pickedUri = null }) { Text(tr("Zrušit")) } },
+            confirmButton = { Button(onClick = { vm.importCertificate(bytes, password); picked = null }) { Text(tr("Nahrát")) } },
+            dismissButton = { TextButton(onClick = { picked = null }) { Text(tr("Zrušit")) } },
         )
     }
 }

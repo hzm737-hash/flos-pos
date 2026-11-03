@@ -3,10 +3,20 @@ package cz.flos.core
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-enum class PaymentMethod(val label: String) {
+/**
+ * How a sale was paid.
+ *
+ * [eet] tells whether the payment is recorded in EET 2.0. The law covers payments made in
+ * person (cash, card, a transfer or QR payment ordered at the counter, vouchers used like
+ * cash). Sales paid on an invoice are not recorded, even when the invoice is paid at the counter.
+ */
+enum class PaymentMethod(val label: String, val eet: Boolean = true) {
     CASH("Hotově"),
     CARD("Kartou"),
     QR_TRANSFER("QR platba převodem"),
+    BANK_TRANSFER("Bankovní převod"),
+    MEAL_VOUCHER("Stravenky"),
+    INVOICE("Na fakturu", eet = false),
 }
 
 data class BusinessInfo(

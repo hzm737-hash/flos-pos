@@ -45,6 +45,16 @@ data class EetSale(
         }
     }
 
+    /**
+     * Problems the tax administration accepts but reports as warnings (interface v1.2, "propustné kontroly").
+     * Shown to the user in settings so they can fix the data before going live.
+     */
+    fun warnings(): List<String> = buildList {
+        val unit = idJednotky.toString()
+        if (unit.length < 2 || unit.last() !in '1'..'4') add("Označení evidenční jednotky má neobvyklý tvar (nejméně 2 číslice, poslední 1–4). Zkontrolujte ho v DIS+.")
+        if (eicPoverujiciho != null && eicPoverujiciho == eicPopl) add("EIČ pověřujícího je shodné s EIČ poplatníka")
+    }
+
     companion object {
         private val EIC = Regex("CZ[0-9]{8,10}")
         private val ID20 = Regex("[0-9a-zA-Z.,:;/#\\-_ ]{1,20}")

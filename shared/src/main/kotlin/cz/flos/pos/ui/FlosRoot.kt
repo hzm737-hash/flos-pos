@@ -1,9 +1,5 @@
 package cz.flos.pos.ui
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,9 +33,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import cz.flos.pos.LocalPlatform
 
 enum class Screen(val label: String, val icon: ImageVector) {
     SELL("Prodej", Icons.Filled.PointOfSale),
@@ -49,20 +47,24 @@ enum class Screen(val label: String, val icon: ImageVector) {
     SETTINGS("Nastavení", Icons.Filled.Settings),
 }
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent { FlosTheme { FlosRoot() } }
+private val LocalWide = compositionLocalOf { false }
+
+/** True on tablets, desktop windows and phones in landscape: the layout then shows panels side by side. */
+@Composable
+fun isWide(): Boolean = LocalWide.current
+
+/** Entry point shared by Android and Windows. */
+@Composable
+fun FlosScreen(vm: PosViewModel) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalPlatform provides vm.platform, LocalWide provides (maxWidth >= 600.dp)) {
+            FlosTheme { FlosRoot(vm) }
+        }
     }
 }
 
-/** True on tablets and on phones in landscape: the layout then shows panels side by side. */
 @Composable
-fun isWide(): Boolean = LocalConfiguration.current.screenWidthDp >= 600
-
-@Composable
-fun FlosRoot(vm: PosViewModel = viewModel()) {
+private fun FlosRoot(vm: PosViewModel) {
     var screen by rememberSaveable { mutableStateOf(Screen.SELL) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }

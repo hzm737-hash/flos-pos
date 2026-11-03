@@ -1,8 +1,6 @@
 package cz.flos.pos.ui
 
-import android.app.Application
-import android.net.Uri
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cz.flos.core.Align
 import cz.flos.core.Cart
@@ -15,7 +13,7 @@ import cz.flos.core.QrPlatba
 import cz.flos.core.Receipt
 import cz.flos.core.ReceiptBlock
 import cz.flos.core.ReceiptLayout
-import cz.flos.pos.FlosApp
+import cz.flos.pos.FlosContainer
 import cz.flos.pos.data.AppSettings
 import cz.flos.pos.data.CategoryEntity
 import cz.flos.pos.data.EetRecordEntity
@@ -24,7 +22,6 @@ import cz.flos.pos.data.ProductEntity
 import cz.flos.pos.data.SaleEntity
 import cz.flos.pos.data.SaleItemEntity
 import cz.flos.pos.data.SaleWithItems
-import cz.flos.pos.eet.EetRetryWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,8 +38,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 
-class PosViewModel(app: Application) : AndroidViewModel(app) {
-    private val flos = app as FlosApp
+class PosViewModel(private val flos: FlosContainer) : ViewModel() {
+    val platform = flos.platform
     private val catalog = flos.database.catalog()
     private val salesDao = flos.database.sales()
     private val eetDao = flos.database.eet()
@@ -136,7 +133,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         val after = try { eet.send(r.id) ?: r } finally { _busy.value = null }
         when (after.status) {
             EetStatus.PENDING -> {
-                EetRetryWorker.scheduleSoon(getApplication())
+                platform.scheduleEetRetry()
                 _messages.tryEmit(tr("EET neodpověděla včas, tržba se odešle automaticky později."))
             }
             EetStatus.REJECTED -> _messages.tryEmit(tr("EET odmítla tržbu: %s", after.lastError))
@@ -196,7 +193,7 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         _busy.value = tr("Odesílám čekající tržby do EET…")
         val left = try { eet.sendPending() } finally { _busy.value = null }
         _messages.tryEmit(if (left == 0) tr("Všechny tržby jsou odeslané") else tr("Stále čeká %d tržeb, zkusím to znovu automaticky", left))
-        if (left > 0) EetRetryWorker.scheduleSoon(getApplication())
+        if (left > 0) platform.scheduleEetRetry()
     }
 
     fun requeueEet(r: EetRecordEntity) = viewModelScope.launch {
@@ -210,13 +207,8 @@ class PosViewModel(app: Application) : AndroidViewModel(app) {
         _messages.tryEmit(text)
     }
 
-    fun importCertificate(uri: Uri, password: String) = viewModelScope.launch {
-        val result = runCatching {
-            val bytes = withContext(Dispatchers.IO) {
-                getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            } ?: error(tr("Soubor nelze přečíst."))
-            eet.importCertificate(bytes, password)
-        }
+    fun importCertificate(bytes: ByteArray, password: String) = viewModelScope.launch {
+        val result = runCatching { eet.importCertificate(bytes, password) }
         result.onSuccess { cert ->
             updateSettings { it.copy(eetCertPassword = password, eetEic = it.eetEic.ifBlank { cert.eic ?: "" }) }
             _messages.tryEmit(tr("Certifikát nahrán (%s, platí do %s)", cert.eic, java.text.DateFormat.getDateInstance().format(cert.validUntil)))

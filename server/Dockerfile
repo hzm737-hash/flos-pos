@@ -2,9 +2,9 @@
 FROM gradle:8.14.3-jdk17 AS build
 WORKDIR /src
 COPY . .
-# The Android module is not needed for the server image.
-RUN sed -i 's/^include(":app")$//' settings.gradle.kts && \
-    sed -i '/android.application\|kotlin.android\|kotlin.compose\|libs.plugins.ksp/d' build.gradle.kts && \
+# The Android and Windows till modules are not needed for the server image.
+RUN sed -i 's/^include(":app")$//; s/^include(":desktop")$//' settings.gradle.kts && \
+    sed -i '/android.application\|kotlin.android\|kotlin.compose\|libs.plugins.ksp\|compose.multiplatform/d' build.gradle.kts && \
     gradle :server:installDist --no-daemon -q
 
 FROM eclipse-temurin:17-jre
