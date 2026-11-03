@@ -10,11 +10,11 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
-/** A payment that arrived on the business bank account (from a notification e-mail or the bank API). */
+/** A payment that arrived on the business bank account (from a notification e-mail, a statement or the bank API). */
 @Entity(tableName = "bank_payments", indices = [Index(value = ["sourceId"], unique = true), Index("saleId")])
 data class BankPaymentEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    /** Id from the source so a payment is never counted twice ("imap:<uidvalidity>:<uid>", "fio:<id>"). */
+    /** Id from the source so a payment is never counted twice ("imap:<uidvalidity>:<uid>", "fio:<id>", "gpc:…", "camt:…"). */
     val sourceId: String,
     /** When Flos read it, epoch milliseconds. */
     val readAt: Long,
@@ -43,6 +43,10 @@ interface BankDao {
 
     @Update
     suspend fun update(p: BankPaymentEntity)
+
+    /** Payments of the same amount around the same time, to spot one payment reported by two sources. */
+    @Query("SELECT * FROM bank_payments WHERE amount = :amount AND currency = :currency AND COALESCE(bookedAt, readAt) BETWEEN :from AND :to")
+    suspend fun similar(amount: Long, currency: String, from: Long, to: Long): List<BankPaymentEntity>
 
     @Query("SELECT * FROM bank_payments WHERE status = 'UNMATCHED' ORDER BY readAt DESC")
     fun unmatched(): Flow<List<BankPaymentEntity>>

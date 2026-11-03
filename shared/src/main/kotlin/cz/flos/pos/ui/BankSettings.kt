@@ -40,7 +40,11 @@ fun BankSettings(vm: PosViewModel, s: AppSettings) {
         BankSource.OFF -> {}
         BankSource.EMAIL -> {
             Text(
-                tr("Zapněte v internetovém bankovnictví e-mailová upozornění na příchozí platby a zadejte schránku, kam chodí. Doporučujeme samostatnou schránku jen pro tato upozornění. U Gmailu a Seznamu použijte heslo pro aplikace."),
+                tr("Funguje s každou českou bankou. V internetovém bankovnictví zapněte jedno z toho a posílejte to do schránky níže:"),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                tr("• e-mailová upozornění na příchozí platby (platba se potvrdí do minuty), nebo\n• denní výpis e-mailem jako příloha ve formátu GPC/ABO nebo XML CAMT.053 (potvrzení druhý den ráno).\nČeská spořitelna, ČSOB, Komerční banka, Raiffeisenbank, Moneta, Air Bank, UniCredit, mBank i Fio umí obojí. Doporučujeme samostatnou schránku jen pro banku. U Gmailu a Seznamu použijte heslo pro aplikace."),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -69,6 +73,10 @@ fun BankSettings(vm: PosViewModel, s: AppSettings) {
             )
         }
     }
+    Text(
+        tr("Výpis lze také kdykoli nahrát ručně v Historii → Platby z banky (soubor GPC/ABO nebo XML CAMT.053 stažený z internetového bankovnictví)."),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     if (s.bankSource != BankSource.OFF) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { vm.testBank(s) }) { Text(tr("Vyzkoušet spojení")) }

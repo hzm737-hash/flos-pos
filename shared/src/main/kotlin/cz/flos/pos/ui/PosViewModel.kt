@@ -166,6 +166,20 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun checkBankNow() = viewModelScope.launch { checkBank(silent = false) }
 
+    /** A statement file (GPC/ABO or CAMT.053) downloaded from any bank's internet banking. */
+    fun importStatement(bytes: ByteArray) = viewModelScope.launch {
+        _busy.value = tr("Načítám výpis…")
+        try {
+            runCatching { flos.bank.importStatement(bytes) }
+                .onSuccess { r ->
+                    _bankState.value = tr("Výpis načten: %d nových příchozích plateb", r.newPayments)
+                    _messages.tryEmit(_bankState.value!!)
+                    report(r, silent = true)
+                }
+                .onFailure { _messages.tryEmit(tr("Výpis nelze načíst: %s", it.message ?: it.javaClass.simpleName)) }
+        } finally { _busy.value = null }
+    }
+
     private suspend fun checkBank(silent: Boolean) {
         val time = java.time.LocalTime.now().withNano(0).withSecond(0)
         runCatching { flos.bank.check() }

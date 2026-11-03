@@ -13,6 +13,34 @@ object Mime {
         return Message(decodeWords(headers["subject"].orEmpty()), headers["message-id"]?.trim(), text)
     }
 
+    data class Attachment(val name: String, val bytes: ByteArray)
+
+    /** Files attached to a message (e.g. a daily bank statement), decoded. */
+    fun attachments(raw: ByteArray): List<Attachment> {
+        val out = mutableListOf<Attachment>()
+        fun walk(headers: Map<String, String>, body: ByteArray, depth: Int) {
+            val type = headers["content-type"]?.substringBefore(';')?.trim()?.lowercase() ?: "text/plain"
+            if (type.startsWith("multipart/") && depth < 6) {
+                val boundary = param(headers["content-type"], "boundary") ?: return
+                splitMultipart(body, boundary).forEach { val (h, b) = split(it); walk(h, b, depth + 1) }
+                return
+            }
+            val name = (param(headers["content-disposition"], "filename") ?: param(headers["content-type"], "name"))
+                ?.let(::decodeWords)?.trim() ?: return
+            out += Attachment(name, decode(headers, body))
+        }
+        val (h, b) = split(raw)
+        walk(h, b, 0)
+        return out
+    }
+
+    private fun decode(headers: Map<String, String>, body: ByteArray): ByteArray =
+        when (headers["content-transfer-encoding"]?.trim()?.lowercase()) {
+            "base64" -> runCatching { Base64.getMimeDecoder().decode(body) }.getOrDefault(ByteArray(0))
+            "quoted-printable" -> quotedPrintable(body)
+            else -> body
+        }
+
     private fun split(raw: ByteArray): Pair<Map<String, String>, ByteArray> {
         val s = String(raw, Charsets.ISO_8859_1)
         val idx = listOf("\r\n\r\n", "\n\n").map { s.indexOf(it) to it.length }.filter { it.first >= 0 }.minByOrNull { it.first }
@@ -51,11 +79,9 @@ object Mime {
                 ?: texts.firstOrNull { it.second.isNotBlank() }?.second ?: ""
         }
         if (!type.startsWith("text/")) return ""
-        val decoded = when (headers["content-transfer-encoding"]?.trim()?.lowercase()) {
-            "base64" -> runCatching { Base64.getMimeDecoder().decode(body) }.getOrDefault(ByteArray(0))
-            "quoted-printable" -> quotedPrintable(body)
-            else -> body
-        }
+        // An attached statement is a file, not the text of the message.
+        if (headers["content-disposition"]?.trim()?.lowercase()?.startsWith("attachment") == true) return ""
+        val decoded = decode(headers, body)
         val text = String(decoded, charsetOf(param(headers["content-type"], "charset")))
         return if (type == "text/html") htmlToText(text) else text
     }

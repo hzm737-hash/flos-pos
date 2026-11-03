@@ -9,6 +9,7 @@ import cz.flos.core.bank.IncomingPayment
 import cz.flos.core.bank.MatchResult
 import cz.flos.core.bank.Mime
 import cz.flos.core.bank.PaymentMatcher
+import cz.flos.core.bank.StatementParser
 import cz.flos.pos.data.AppSettings
 import cz.flos.pos.data.BankDao
 import cz.flos.pos.data.BankPaymentEntity
@@ -34,10 +35,12 @@ data class BankCheck(
 )
 
 /**
- * Reads new payments from the bank (notification e-mails or the Fio API), matches them to
+ * Reads new payments from the bank (notification e-mails or statements from any Czech bank, the Fio API, or a statement file), matches them to
  * receipts paid by QR code / transfer by variable symbol and amount, and records what the
  * customer sent above the receipt total as a tip.
  */
+private val STATEMENT_FILES = setOf("gpc", "abo", "xml", "zip", "txt")
+
 class BankSync(
     private val settings: SettingsStore,
     private val bank: BankDao,
@@ -60,12 +63,30 @@ class BankSync(
                 }
             }
         }
+        process(incoming)
+    }
+
+    /**
+     * Imports a statement file downloaded from internet banking (GPC/ABO or CAMT.053 XML, also
+     * zipped), so Flos works with any Czech bank even without e-mail or API access.
+     */
+    suspend fun importStatement(bytes: ByteArray): BankCheck = lock.withLock {
+        val incoming = withContext(Dispatchers.Default) { StatementParser.parse(bytes) }
+        if (incoming.isEmpty() && StatementParser.detect(bytes) == null && !isZip(bytes))
+            throw IllegalArgumentException("Soubor není výpis ve formátu GPC/ABO ani CAMT.053 (XML)")
+        process(incoming)
+    }
+
+    private fun isZip(b: ByteArray) = b.size > 2 && b[0] == 'P'.code.toByte() && b[1] == 'K'.code.toByte()
+
+    private suspend fun process(incoming: List<IncomingPayment>): BankCheck {
         var added = 0
         var unmatched = 0
         val confirmed = mutableListOf<SaleEntity>()
         val underpaid = mutableListOf<SaleEntity>()
         val tips = mutableListOf<Pair<SaleEntity, Long>>()
         for (p in incoming) {
+            if (reportedElsewhere(p)) continue
             val id = bank.insert(p.toEntity())
             if (id < 0) continue // read before
             added++
@@ -81,7 +102,23 @@ class BankSync(
                 }
             }
         }
-        BankCheck(added, confirmed, underpaid, unmatched, tips)
+        return BankCheck(added, confirmed, underpaid, unmatched, tips)
+    }
+
+    /**
+     * The same payment can reach Flos twice: as a notification e-mail and again in the daily
+     * statement (or from the Fio API). Same amount, currency and VS within three days from a
+     * different kind of source is taken as the same payment.
+     */
+    private suspend fun reportedElsewhere(p: IncomingPayment): Boolean {
+        val kind = p.sourceId.substringBefore(':')
+        val at = p.at ?: System.currentTimeMillis()
+        val day = 86_400_000L
+        val vs = PaymentMatcher.variableSymbolOf(p)
+        return bank.similar(p.amount, p.currency, at - 3 * day, at + 3 * day).any { other ->
+            other.sourceId.substringBefore(':') != kind && other.sourceId != p.sourceId &&
+                PaymentMatcher.normalizeVs(other.variableSymbol) == vs
+        }
     }
 
     /** A person assigns a payment to a receipt by hand. Returns the updated sale and the tip it added. */
@@ -138,10 +175,20 @@ class BankSync(
         if (validity != 0L && client.uidValidity != validity && lastUid > 0) mails = client.fetchNew(0)
         val maxUid = mails.maxOfOrNull { it.uid } ?: if (client.uidValidity == validity) lastUid else 0
         settings.saveImapPosition(account, client.uidValidity, maxUid)
-        return mails.mapNotNull { m ->
-            val msg = Mime.parse(m.raw)
-            BankEmailParser.parse("imap:${client.uidValidity}:${m.uid}", msg.subject, msg.text)
-        }
+        return mails.flatMap { m -> paymentsInMail("imap:${client.uidValidity}:${m.uid}", m.raw) }
+    }
+
+    /**
+     * A bank e-mail is either a notification about one payment (read from its text) or a daily
+     * statement sent as an attachment (GPC/ABO or CAMT.053, as most Czech banks can send).
+     */
+    private fun paymentsInMail(sourceId: String, raw: ByteArray): List<IncomingPayment> {
+        val fromFiles = Mime.attachments(raw)
+            .filter { a -> a.name.substringAfterLast('.').lowercase() in STATEMENT_FILES }
+            .flatMap { a -> runCatching { StatementParser.parse(a.bytes) }.getOrDefault(emptyList()) }
+        if (fromFiles.isNotEmpty()) return fromFiles
+        val msg = Mime.parse(raw)
+        return listOfNotNull(BankEmailParser.parse(sourceId, msg.subject, msg.text))
     }
 
     /** Checks the connection without storing anything; returns a short description for the settings screen. */
@@ -151,8 +198,8 @@ class BankSync(
             BankSource.EMAIL -> {
                 val client = ImapClient(ImapAccount(s.imapHost.trim(), s.imapPort, s.imapUser.trim(), s.imapPassword, s.imapFolder.ifBlank { "INBOX" }))
                 val mails = client.fetchNew(0, firstRunDays = 7, max = 30)
-                val payments = mails.count { m -> Mime.parse(m.raw).let { BankEmailParser.parse("t", it.subject, it.text) } != null }
-                "OK: ${mails.size} e-mailů za 7 dní, z toho $payments plateb"
+                val payments = mails.sumOf { m -> paymentsInMail("t", m.raw).size }
+                "OK: ${mails.size} e-mailů za 7 dní, z toho $payments příchozích plateb"
             }
             BankSource.FIO -> {
                 val wait = FioApi.MIN_INTERVAL_MS - (System.currentTimeMillis() - lastFioCall)

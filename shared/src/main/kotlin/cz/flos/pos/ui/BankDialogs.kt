@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cz.flos.core.Money
+import cz.flos.pos.LocalPlatform
 import cz.flos.pos.data.BankPaymentEntity
 import cz.flos.pos.data.BankSource
 import cz.flos.pos.data.SaleEntity
@@ -85,6 +86,7 @@ fun BankPaymentsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
     val state by vm.bankState.collectAsState()
     var assigning by remember { mutableStateOf<BankPaymentEntity?>(null) }
     val fmt = remember { SimpleDateFormat("d.M. HH:mm", Locale.forLanguageTag("cs-CZ")) }
+    val pickStatement = LocalPlatform.current.rememberFilePicker { bytes -> vm.importStatement(bytes) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -97,6 +99,12 @@ fun BankPaymentsDialog(vm: PosViewModel, onDismiss: () -> Unit) {
                         else state ?: tr("Kontrola probíhá každou minutu, dokud je pokladna otevřená."),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(tr("Výpis z jakékoli banky (GPC/ABO nebo XML CAMT.053)"), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        OutlinedButton(onClick = pickStatement) { Text(tr("Nahrát výpis")) }
+                    }
                 }
                 item { Text(tr("Nepřiřazené platby (%d)", unmatched.size), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
                 if (unmatched.isEmpty()) item { Text(tr("Žádné"), color = MaterialTheme.colorScheme.onSurfaceVariant) }

@@ -88,7 +88,7 @@ data class AppSettings(
 
 enum class BankSource(val label: String) {
     OFF("Vypnuto"),
-    EMAIL("E-mail od banky (IMAP)"),
+    EMAIL("E-mail od banky (jakákoli banka)"),
     FIO("Fio banka API"),
 }
 
