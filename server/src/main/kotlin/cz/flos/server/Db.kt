@@ -43,7 +43,7 @@ class Db(val dataSource: DataSource) {
     }
 
     companion object {
-        private val MIGRATIONS = listOf("V1__schema.sql")
+        private val MIGRATIONS = listOf("V1__schema.sql", "V2__memberships.sql")
 
         /**
          * DATABASE_URL like jdbc:postgresql://host:5432/flos (with DATABASE_USER / DATABASE_PASSWORD),

@@ -97,6 +97,7 @@ private fun Route.authRoutes(db: Db) {
             val user = insert("INSERT INTO users (org_id, email, name, role, password_hash, created_at) VALUES (?,?,?,?,?,?)",
                 org, r.email.lowercase().trim(), r.name.trim(), Role.OWNER, Passwords.hash(r.password), now)
             insert("INSERT INTO branches (org_id, name) VALUES (?, ?)", org, "Hlavní provozovna")
+            update("INSERT INTO memberships (user_id, org_id, role) VALUES (?,?,?)", user, org, Role.OWNER)
             TokenResponse(newSession(user, org), userDto(user))
         }
         call.respond(HttpStatusCode.Created, res)
@@ -121,7 +122,44 @@ private fun Route.authRoutes(db: Db) {
     }
     get("/me") {
         val c = call.caller(db) as? Caller.User ?: throw ApiError(HttpStatusCode.Forbidden, "Jen pro uživatele")
-        call.respond(db.tx { MeResponse(userDto(c.userId), org(c.orgId)) })
+        call.respond(db.tx { MeResponse(userDto(c.userId).copy(role = c.role.name), org(c.orgId)) })
+    }
+
+    // ---- several companies (different IČO/DIČ) under one login ----
+    get("/companies") {
+        val c = call.caller(db) as? Caller.User ?: throw ApiError(HttpStatusCode.Forbidden, "Jen pro uživatele")
+        call.respond(db.tx {
+            query("SELECT o.id, o.name, o.ico, o.dic, m.role FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ? ORDER BY o.name", c.userId) {
+                CompanyDto(it.getLong(1), it.getString(2), it.getString(3), it.getString(4), it.getString(5), it.getLong(1) == c.orgId)
+            }
+        })
+    }
+    post("/companies") {
+        val c = call.caller(db) as? Caller.User ?: throw ApiError(HttpStatusCode.Forbidden, "Jen pro uživatele")
+        if (c.role != Role.OWNER) throw ApiError(HttpStatusCode.Forbidden, "Novou firmu může založit jen majitel")
+        val r = call.receive<NewCompanyRequest>()
+        if (r.name.isBlank()) throw ApiError(HttpStatusCode.BadRequest, "Vyplňte název firmy")
+        val org = db.tx {
+            val org = insert("INSERT INTO orgs (name, ico, dic, vat_payer, address, created_at) VALUES (?,?,?,?,?,?)",
+                r.name.trim(), r.ico.trim(), r.dic.trim().uppercase(), r.vatPayer, r.address.trim(), System.currentTimeMillis())
+            update("INSERT INTO memberships (user_id, org_id, role) VALUES (?,?,?)", c.userId, org, Role.OWNER)
+            insert("INSERT INTO branches (org_id, name) VALUES (?, ?)", org, "Hlavní provozovna")
+            org(org)
+        }
+        call.respond(HttpStatusCode.Created, org)
+    }
+    /** Switches the current session to another company the user belongs to. */
+    post("/companies/{id}/switch") {
+        val c = call.caller(db) as? Caller.User ?: throw ApiError(HttpStatusCode.Forbidden, "Jen pro uživatele")
+        val id = call.longParam("id")
+        val token = call.request.headers["Authorization"]!!.removePrefix("Bearer ").trim()
+        val res = db.tx {
+            val role = queryOne("SELECT role FROM memberships WHERE user_id = ? AND org_id = ?", c.userId, id) { it.getString(1) }
+                ?: throw ApiError(HttpStatusCode.NotFound, "Firma nenalezena")
+            update("UPDATE sessions SET org_id = ? WHERE token_hash = ?", id, Tokens.hash(token))
+            MeResponse(userDto(c.userId).copy(role = role), org(id))
+        }
+        call.respond(res)
     }
 }
 
@@ -211,8 +249,10 @@ private fun Route.orgRoutes(db: Db) {
             u.email?.takeIf { it.isNotBlank() }?.let { e ->
                 if (queryOne("SELECT id FROM users WHERE email = ?", e.lowercase()) { it.getLong(1) } != null) throw ApiError(HttpStatusCode.Conflict, "E-mail už je použit")
             }
-            insert("INSERT INTO users (org_id, email, name, role, password_hash, pin_hash, active, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            val newId = insert("INSERT INTO users (org_id, email, name, role, password_hash, pin_hash, active, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 c.orgId, u.email?.lowercase()?.ifBlank { null }, u.name, role, u.password?.let(Passwords::hash), u.pin?.let(Passwords::hash), u.active, System.currentTimeMillis())
+            update("INSERT INTO memberships (user_id, org_id, role) VALUES (?,?,?)", newId, c.orgId, role)
+            newId
         }
         call.respond(HttpStatusCode.Created, db.tx { userDto(id) })
     }
@@ -225,6 +265,7 @@ private fun Route.orgRoutes(db: Db) {
         db.tx {
             val n = update("UPDATE users SET name = ?, email = ?, role = ?, active = ? WHERE id = ? AND org_id = ?", u.name, u.email?.lowercase()?.ifBlank { null }, role, u.active, id, c.orgId)
             if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Uživatel nenalezen")
+            update("UPDATE memberships SET role = ? WHERE user_id = ? AND org_id = ?", role, id, c.orgId)
             u.password?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET password_hash = ? WHERE id = ?", Passwords.hash(it), id) }
             u.pin?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET pin_hash = ? WHERE id = ?", Passwords.hash(it), id) }
             if (!u.active) update("DELETE FROM sessions WHERE user_id = ?", id)

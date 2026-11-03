@@ -8,7 +8,7 @@ const toHaler = (s) => Math.round(parseFloat(String(s).replace(/\s/g, '').replac
 const fromHaler = (h) => (Number(h || 0) / 100).toFixed(2).replace('.', ',');
 const dt = (ms) => ms ? new Date(ms).toLocaleString(LOCALE) : '–';
 const today = () => new Date().toLocaleDateString('sv-SE');
-const PAYMENT = { CASH: 'Hotově', CARD: 'Kartou', QR_TRANSFER: 'QR převod' };
+const PAYMENT = { CASH: 'Hotově', CARD: 'Kartou', QR_TRANSFER: 'QR převod', BANK_TRANSFER: 'Bankovní převod', MEAL_VOUCHER: 'Stravenky', INVOICE: 'Na fakturu' };
 const ROLE = { OWNER: 'Majitel', MANAGER: 'Vedoucí', CASHIER: 'Pokladní' };
 const KIND = { RECEIPT: 'Naskladnění', WASTE: 'Odpis', ADJUST: 'Oprava', INVENTORY: 'Inventura', TRANSFER_IN: 'Převod – příjem', TRANSFER_OUT: 'Převod – výdej', SALE: 'Prodej', SALE_RETURN: 'Storno prodeje' };
 
@@ -54,8 +54,40 @@ async function start() {
   if (!token) return showLogin();
   try { me = await api('/me'); } catch (e) { return showLogin(); }
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  $('#org-name').textContent = me.org.name + ' · ' + me.user.name;
+  $('#org-name').textContent = me.user.name;
+  await loadCompanies();
   route();
+}
+
+// ---------- several companies (each with its own IČO/DIČ) under one login ----------
+async function loadCompanies() {
+  const list = await api('/companies').catch(() => []);
+  const sel = $('#company-switch');
+  sel.innerHTML = list.map((c) => `<option value="${c.id}" ${c.current ? 'selected' : ''}>${esc(c.name)}${c.dic ? ' · ' + esc(c.dic) : ''}</option>`).join('')
+    + (me.user.role === 'OWNER' ? `<option value="new">${esc(t('+ Přidat další firmu…'))}</option>` : '');
+  sel.onchange = async () => {
+    if (sel.value === 'new') { sel.value = String(me.org.id); return companyDialog(); }
+    try { me = await api('/companies/' + sel.value + '/switch', { method: 'POST', body: {} }); Object.keys(cache).forEach((k) => delete cache[k]); toast(t('Přepnuto na') + ' ' + me.org.name); route(); }
+    catch (err) { toast(err.message); }
+  };
+}
+function companyDialog() {
+  const d = $('#cdlg');
+  d.innerHTML = `<form><h2>Nová firma</h2><p class="muted">Každá firma má vlastní IČO a DIČ, produkty, provozovny, pokladny a tržby. Přepínáte mezi nimi nahoře v liště.</p>
+    <label>Název<input name="name" required></label><div class="row"><label>IČO<input name="ico"></label><label>DIČ<input name="dic"></label></div>
+    <label>Sídlo<input name="address"></label><label class="check"><input type="checkbox" name="vatPayer"> Plátce DPH</label>
+    <div class="actions"><button type="button" id="cancel">Zrušit</button><button class="primary">Založit firmu</button></div></form>`;
+  $('#cancel', d).onclick = () => d.close();
+  $('form', d).onsubmit = async (e) => {
+    e.preventDefault(); const f = new FormData(e.target);
+    try {
+      const o = await api('/companies', { method: 'POST', body: { name: f.get('name'), ico: f.get('ico'), dic: f.get('dic'), address: f.get('address'), vatPayer: f.get('vatPayer') === 'on' } });
+      me = await api('/companies/' + o.id + '/switch', { method: 'POST', body: {} });
+      Object.keys(cache).forEach((k) => delete cache[k]);
+      d.close(); await loadCompanies(); location.hash = '#company'; route();
+    } catch (err) { toast(err.message); }
+  };
+  d.showModal();
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
@@ -416,10 +448,21 @@ pages.company = async (main) => {
   main.innerHTML = `<h1>Firma</h1><form class="card" id="org" style="max-width:560px;display:flex;flex-direction:column;gap:10px">
     <label>Název<input name="name" required value="${esc(o.name)}"></label><div class="row"><label>IČO<input name="ico" value="${esc(o.ico)}"></label><label>DIČ<input name="dic" value="${esc(o.dic)}"></label></div>
     <label>Sídlo<input name="address" value="${esc(o.address)}"></label><label class="check"><input type="checkbox" name="vatPayer" ${o.vatPayer ? 'checked' : ''}> Plátce DPH</label>
-    <div class="actions"><button class="primary">Uložit</button></div></form>`;
+    <div class="actions"><button class="primary">Uložit</button></div></form>
+    <h2>Všechny firmy</h2><p class="muted">Jeden účet může spravovat více firem s různými DIČ. Každá firma může mít více provozoven a pokladen.</p>
+    <div id="companies"></div>`;
+  const list = await api('/companies');
+  $('#companies').innerHTML = `<table><tr><th>Firma</th><th>IČO</th><th>DIČ</th><th>Role</th><th></th></tr>
+    ${list.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.ico)}</td><td>${esc(c.dic)}</td><td>${ROLE[c.role] || c.role}</td>
+      <td>${c.current ? '<span class="badge ok">aktuální</span>' : `<button data-sw="${c.id}">Přepnout</button>`}</td></tr>`).join('')}</table>
+    ${me.user.role === 'OWNER' ? '<button class="primary" id="add-company">+ Přidat další firmu</button>' : ''}`;
+  document.querySelectorAll('[data-sw]').forEach((b) => b.addEventListener('click', async () => {
+    me = await api('/companies/' + b.dataset.sw + '/switch', { method: 'POST', body: {} }); Object.keys(cache).forEach((k) => delete cache[k]); await loadCompanies(); route();
+  }));
+  $('#add-company')?.addEventListener('click', companyDialog);
   $('#org').onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    try { await api('/org', { method: 'PUT', body: { name: f.get('name'), ico: f.get('ico'), dic: f.get('dic'), address: f.get('address'), vatPayer: f.get('vatPayer') === 'on' } }); toast('Uloženo'); me = await api('/me'); }
+    try { await api('/org', { method: 'PUT', body: { name: f.get('name'), ico: f.get('ico'), dic: f.get('dic'), address: f.get('address'), vatPayer: f.get('vatPayer') === 'on' } }); toast('Uloženo'); me = await api('/me'); loadCompanies(); }
     catch (err) { toast(err.message); }
   };
 };
