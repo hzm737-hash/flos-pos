@@ -69,7 +69,27 @@ data class AppSettings(
     val transferDueDays: Int = 3,
     /** Table names for the table map, separated by commas ("1, 2, 3, Terasa 1"); empty hides the map. */
     val tables: String = "1, 2, 3, 4, 5, 6, 7, 8",
+
+    // ---- Back office ----
+    /** Address of the back office, e.g. "https://flos.example.cz". */
+    val boUrl: String = "",
+    /** Device token from pairing; empty = not paired. */
+    val boToken: String = "",
+    val boDeviceName: String = "",
+    /** Server time of the last catalogue download, so only changes are fetched next time. */
+    val boCatalogSince: Long = 0,
+    /** Staff with their PIN hashes from the back office, as JSON. */
+    val boStaff: String = "",
+    val boLastSync: Long = 0,
+
+    // ---- Customers ----
+    /** Crowns spent for one loyalty point; 0 switches points off. */
+    val loyaltyCrownsPerPoint: Int = 100,
+    /** Show the cart and total to the customer on a second screen. */
+    val customerDisplay: Boolean = false,
 ) {
+    val paired: Boolean get() = boToken.isNotBlank() && boUrl.isNotBlank()
+
     val tableList: List<String> get() = tables.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
     /** IBAN for the SEPA QR code: the EUR account when set, otherwise the main account. */
@@ -154,6 +174,14 @@ class SettingsStore(private val prefs: KeyValueStore) {
             eurRateManual = str("eurRateManual", d.eurRateManual),
             transferDueDays = int("transferDueDays", d.transferDueDays),
             tables = str("tables", d.tables),
+            boUrl = str("boUrl", d.boUrl),
+            boToken = str("boToken", d.boToken),
+            boDeviceName = str("boDeviceName", d.boDeviceName),
+            boCatalogSince = prefs.get("boCatalogSince")?.toLongOrNull() ?: d.boCatalogSince,
+            boStaff = str("boStaff", d.boStaff),
+            boLastSync = prefs.get("boLastSync")?.toLongOrNull() ?: d.boLastSync,
+            loyaltyCrownsPerPoint = int("loyaltyCrownsPerPoint", d.loyaltyCrownsPerPoint),
+            customerDisplay = bool("customerDisplay", d.customerDisplay),
         )
     }
 
@@ -200,6 +228,14 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "eurRateManual" to s.eurRateManual,
                 "transferDueDays" to s.transferDueDays.toString(),
                 "tables" to s.tables,
+                "boUrl" to s.boUrl,
+                "boToken" to s.boToken,
+                "boDeviceName" to s.boDeviceName,
+                "boCatalogSince" to s.boCatalogSince.toString(),
+                "boStaff" to s.boStaff,
+                "boLastSync" to s.boLastSync.toString(),
+                "loyaltyCrownsPerPoint" to s.loyaltyCrownsPerPoint.toString(),
+                "customerDisplay" to s.customerDisplay.toString(),
             ),
         )
         _state.value = s

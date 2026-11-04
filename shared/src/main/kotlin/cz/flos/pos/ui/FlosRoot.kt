@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.SoupKitchen
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.rounded.DeliveryDining
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.TableRestaurant
@@ -56,6 +60,8 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     PRODUCTS("Produkty", Icons.Rounded.Inventory2, false),
     REPORT("Uzávěrka", Icons.Rounded.Insights, false),
     STATS("Statistiky", Icons.Rounded.BarChart, false),
+    KITCHEN("Kuchyně", Icons.Rounded.SoupKitchen, false),
+    CUSTOMERS("Zákazníci", Icons.Rounded.Groups, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
 }
 
@@ -141,7 +147,8 @@ private fun FlosRoot(vm: PosViewModel) {
             Text(text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
         }
         Row(Modifier.fillMaxSize()) {
-            if (wide) NavigationRail {
+            // Ten screens do not fit the height of a landscape tablet, so the rail scrolls.
+            if (wide) NavigationRail(Modifier.verticalScroll(rememberScrollState())) {
                 Screen.entries.forEach { s ->
                     NavigationRailItem(
                         selected = screen == s,
@@ -160,6 +167,8 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.HISTORY -> HistoryScreen(vm, onEditOrder = { screen = Screen.SELL })
                 Screen.REPORT -> ReportScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm)
+                Screen.KITCHEN -> KitchenScreen(vm)
+                Screen.CUSTOMERS -> CustomersScreen(vm)
             }
         }
         }

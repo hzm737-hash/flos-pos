@@ -64,6 +64,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val eetDao = flos.database.eet()
     private val cashDao: CashDao = flos.database.cash()
     private val bankDao = flos.database.bank()
+    private val customerDao = flos.database.customers()
     val printer = flos.printer
     val eet = flos.eet
 
@@ -123,10 +124,13 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
-        // Checks the bank every minute while the till is open.
+        // Checks the bank every minute and syncs with the back office every five minutes while the till is open.
         viewModelScope.launch {
+            var minute = 0
             while (true) {
                 if (settings.value.bankSource != BankSource.OFF) checkBank(silent = true)
+                if (settings.value.paired && minute % 5 == 0) syncBackOffice(silent = true)
+                minute++
                 delay(60_000)
             }
         }
@@ -260,6 +264,111 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Adds a product with the variants and extras chosen for it ("Pizza (Velká, Sýr)"). */
     fun addToCart(p: ProductEntity, name: String, price: Long) = _cart.update { it.add(p.id, name, price, p.vatRate) }
 
+    // ---- Customers and loyalty ----
+    val customers = customerDao.all().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _customer = MutableStateFlow<cz.flos.pos.data.CustomerEntity?>(null)
+    /** Customer chosen for the cart; gets loyalty points and their discount. */
+    val customer: StateFlow<cz.flos.pos.data.CustomerEntity?> = _customer.asStateFlow()
+
+    fun selectCustomer(c: cz.flos.pos.data.CustomerEntity?) {
+        _customer.value = c
+        if (c != null && c.discountPercent > 0) _cart.update { it.setDiscount(c.discountPercent) }
+    }
+
+    /** Saves a customer; [select] also picks them for the cart (a new customer made at the till). */
+    fun saveCustomer(c: cz.flos.pos.data.CustomerEntity, select: Boolean = false) = viewModelScope.launch {
+        val rowId = customerDao.upsert(if (c.createdAt == 0L) c.copy(createdAt = System.currentTimeMillis()) else c)
+        val id = if (c.id != 0L) c.id else rowId
+        if (select || (_customer.value?.id == id && id != 0L)) customerDao.get(id)?.let { selectCustomer(it) }
+        _messages.tryEmit(tr("Zákazník %s uložen", c.name))
+    }
+
+    fun deleteCustomer(c: cz.flos.pos.data.CustomerEntity) = viewModelScope.launch {
+        customerDao.delete(c.id)
+        if (_customer.value?.id == c.id) _customer.value = null
+    }
+
+    suspend fun customerTotals(c: cz.flos.pos.data.CustomerEntity) = customerDao.totals(c.id)
+
+    /** Finds a customer by the loyalty card code (scanned or typed). */
+    suspend fun customerByCard(code: String) = customerDao.byCard(code.trim())
+
+    /** Points for a paid amount (in haléře): one point per [AppSettings.loyaltyCrownsPerPoint] crowns. */
+    private fun pointsFor(received: Long): Long {
+        val per = settings.value.loyaltyCrownsPerPoint
+        return if (per <= 0 || received <= 0) 0 else received / (per * 100L)
+    }
+
+    // ---- Back office ----
+    private val _syncState = MutableStateFlow<String?>(null)
+    val syncState: StateFlow<String?> = _syncState.asStateFlow()
+
+    fun pairBackOffice(url: String, code: String) = viewModelScope.launch {
+        _busy.value = tr("Páruji s back office…")
+        try {
+            runCatching { flos.backOffice.pair(url, code) }
+                .onSuccess { name ->
+                    _messages.tryEmit(tr("Pokladna spárována jako %s", name))
+                    syncBackOffice(silent = false)
+                }
+                .onFailure { _messages.tryEmit(tr("Párování se nezdařilo: %s", it.message ?: it.javaClass.simpleName)) }
+        } finally { _busy.value = null }
+    }
+
+    fun unpairBackOffice() {
+        flos.backOffice.unpair()
+        _syncState.value = null
+        _messages.tryEmit(tr("Pokladna odpojena od back office"))
+    }
+
+    fun syncNow() = viewModelScope.launch { syncBackOffice(silent = false) }
+
+    private suspend fun syncBackOffice(silent: Boolean) {
+        val time = java.time.LocalTime.now().withNano(0).withSecond(0)
+        runCatching { flos.backOffice.sync() }
+            .onSuccess { r ->
+                _syncState.value = tr("Synchronizováno %s: %d změn katalogu, odesláno %d účtenek", time.toString(), r.productsChanged, r.salesSent)
+                if (!silent) _messages.tryEmit(_syncState.value!!)
+            }
+            .onFailure {
+                _syncState.value = tr("Synchronizace selhala (%s): %s", time.toString(), it.message ?: it.javaClass.simpleName)
+                if (!silent) _messages.tryEmit(_syncState.value!!)
+            }
+    }
+
+    /** Switches the cashier to the staff member with this PIN (checked offline). Returns false for a wrong PIN. */
+    suspend fun loginWithPin(pin: String): Boolean {
+        val staff = flos.backOffice.staffForPin(pin) ?: return false
+        updateSettings { it.copy(cashier = staff.name) }
+        _messages.tryEmit(tr("Přihlášen(a): %s", staff.name))
+        return true
+    }
+
+    /** Clocks in or out in the back office attendance. */
+    fun clockInOut(pin: String) = viewModelScope.launch {
+        runCatching { flos.backOffice.clock(pin) }
+            .onSuccess { (name, action) -> _messages.tryEmit(if (action == "IN") tr("%s: příchod zapsán", name) else tr("%s: odchod zapsán", name)) }
+            .onFailure { _messages.tryEmit(tr("Docházku nelze zapsat: %s", it.message ?: it.javaClass.simpleName)) }
+    }
+
+    // ---- Customer display ----
+    data class LastPaid(val at: Long, val amount: Long, val change: Long?)
+    private val _lastPaid = MutableStateFlow<LastPaid?>(null)
+    /** The last payment, for the thank-you on the customer display. */
+    val lastPaid: StateFlow<LastPaid?> = _lastPaid.asStateFlow()
+
+    private val _displayQr = MutableStateFlow<Any?>(null)
+    /** QR code shown to the customer while the payment dialog shows it ([QrPlatba] or [cz.flos.core.EpcQr]). */
+    val displayQr: StateFlow<Any?> = _displayQr.asStateFlow()
+    fun showOnDisplay(qr: Any?) { _displayQr.value = qr }
+
+    // ---- Kitchen ----
+    /** Marks an open order as ready in the kitchen (or back to preparing). */
+    fun kitchenReady(sw: SaleWithItems, ready: Boolean) = viewModelScope.launch {
+        salesDao.update(sw.sale.copy(kitchenReadyAt = if (ready) System.currentTimeMillis() else null))
+    }
+
     // ---- Tables ----
     private val _pendingTable = MutableStateFlow<String?>(null)
     /** Table chosen on the table map for a new order that has not been saved yet. */
@@ -281,6 +390,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _cart.update { it.clear() }
         _editingOrder.value = null
         _pendingTable.value = null
+        _customer.value = null
     }
 
     /** The QR payment for an amount, or null when no valid bank account is set. */
@@ -315,13 +425,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         if (cart.isEmpty()) return
         val order = _editingOrder.value
         val table = currentTable
+        val customer = _customer.value
         val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
         _foreignTransfer.value = false
         _cart.value = Cart()
         _editingOrder.value = null
         _pendingTable.value = null
+        _customer.value = null
         onDone()
-        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign, table) }
+        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign, table, customer) }
     }
 
     /**
@@ -355,7 +467,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 salesDao.replace(updated, itemsOf(rest))
                 _editingOrder.value = updated
             }
-            pay(null, part, payment, cashGiven, foreign, table)
+            pay(null, part, payment, cashGiven, foreign, table, _customer.value)
         }
     }
 
@@ -373,6 +485,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      */
     private suspend fun pay(
         order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?, foreign: Boolean = false, table: String? = order?.tableName,
+        customer: cz.flos.pos.data.CustomerEntity? = null,
     ) {
         val s = settings.value
         val rate = if (foreign) eurRate() else null
@@ -391,14 +504,22 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             received = received, status = SaleStatus.PAID.name,
             bankStatus = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) TransferStatus.WAITING.name else null,
             payCurrency = epc?.let { "EUR" }, payAmount = epc?.amount, eurRate = epc?.let { rate },
-            tableName = table,
+            tableName = table, customerId = customer?.id ?: order?.customerId,
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
         val record = if (payment.eet && received != 0L) eet.createRecord(saleId, number, millis, received, storno = false) else null
 
+        _lastPaid.value = LastPaid(System.currentTimeMillis(), received, cashGiven?.let { it - received }?.takeIf { it > 0 })
         val sent = record?.let { sendToEet(it) }
-        val note = listOfNotNull(table?.let { tr("Stůl %s", it) }, sale.note.takeIf { it.isNotBlank() }).joinToString(" · ")
+        val buyer = customer ?: sale.customerId?.let { customerDao.get(it) }
+        val earned = if (buyer != null) pointsFor(received) else 0L
+        if (buyer != null && earned > 0) customerDao.addPoints(buyer.id, earned)
+        val note = listOfNotNull(
+            table?.let { tr("Stůl %s", it) },
+            buyer?.let { "Zákazník: ${it.name}" + if (earned > 0) ", body +$earned (celkem ${it.points + earned})" else "" },
+            sale.note.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
         val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = note,
             epc = epc, eurRate = epc?.let { rate })
         val drawer = s.openDrawer && payment == PaymentMethod.CASH
@@ -429,14 +550,17 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         if (cart.isEmpty()) return
         val existing = _editingOrder.value
         val table = currentTable
+        val customer = _customer.value
         _cart.value = Cart()
         _editingOrder.value = null
         _pendingTable.value = null
+        _customer.value = null
         viewModelScope.launch {
             val s = settings.value
             val now = LocalDateTime.now()
             val sale = if (existing != null) {
-                existing.copy(total = cart.total, received = cart.total, discountPercent = cart.discountPercent, note = note.trim())
+                existing.copy(total = cart.total, received = cart.total, discountPercent = cart.discountPercent, note = note.trim(),
+                    kitchenReadyAt = null, customerId = customer?.id ?: existing.customerId)
                     .also { salesDao.replace(it, itemsOf(cart)) }
             } else {
                 val orderNo = flos.settings.nextOrderNumber()
@@ -444,7 +568,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 SaleEntity(
                     number = "O-$millis", createdAt = millis, openedAt = millis, total = cart.total, received = cart.total,
                     payment = "", cashier = s.cashier, discountPercent = cart.discountPercent,
-                    status = SaleStatus.OPEN.name, orderNumber = orderNo, note = note.trim(), tableName = table,
+                    status = SaleStatus.OPEN.name, orderNumber = orderNo, note = note.trim(), tableName = table, customerId = customer?.id,
                 ).let { it.copy(id = salesDao.insert(it, itemsOf(cart))) }
             }
             _messages.tryEmit(sale.tableName?.let { tr("Stůl %s uložen", it) } ?: tr("Objednávka č. %d uložena", sale.orderNumber ?: 0))
@@ -467,6 +591,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _cart.value = sw.toCart()
         _editingOrder.value = sw.sale
         _pendingTable.value = null
+        _customer.value = null
+        sw.sale.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
     }
 
     /** Cancels an unpaid order. It stays in history as cancelled; nothing is sent to EET. */

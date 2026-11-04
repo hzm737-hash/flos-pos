@@ -21,6 +21,8 @@ data class CategoryEntity(
     val sortOrder: Int = 0,
     /** Key from ProductIcons, shown on the category's product tiles when a product has no icon of its own. */
     val icon: String? = null,
+    /** Id in the back office when the category comes from there. */
+    val remoteId: Long? = null,
 )
 
 @Entity(tableName = "products", indices = [Index("categoryId")])
@@ -39,6 +41,8 @@ data class ProductEntity(
     val barcode: String? = null,
     /** Variants and extras as text, see cz.flos.core.ProductOptions ("Velikost: Malá, Velká +40"). */
     val options: String? = null,
+    /** Id in the back office when the product comes from there. */
+    val remoteId: Long? = null,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }
@@ -87,6 +91,12 @@ data class SaleEntity(
     val refundOf: Long? = null,
     /** Table of an open order or a paid table bill ("5", "Terasa 2"). */
     val tableName: String? = null,
+    /** Sent to the back office (it is sent again while it is recent, so later changes such as a storno arrive too). */
+    val uploaded: Boolean = false,
+    /** Customer the sale belongs to (loyalty points, history). */
+    val customerId: Long? = null,
+    /** When the kitchen marked the order as ready; null while it is being prepared. */
+    val kitchenReadyAt: Long? = null,
 ) {
     val isRefund: Boolean get() = refundOf != null
     val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
