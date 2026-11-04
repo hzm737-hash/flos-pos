@@ -55,6 +55,7 @@ compose.desktop {
                 perUserInstall = true
                 dirChooser = true
                 upgradeUuid = "3f0a8c5e-6d1b-4c5e-9a57-0c1f5e2b7d41"
+                iconFile.set(project.file("src/main/resources/flos.ico"))
             }
         }
     }

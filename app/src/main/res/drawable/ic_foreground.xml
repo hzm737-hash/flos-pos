@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Flos mark: a simple four-petal flower (flos = flower in Latin) -->
+<!-- Flos mark: an ancient Egyptian lotus (the Nile lotus of tomb paintings): gold and turquoise petals on lapis blue. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#F2C14E" android:pathData="M54,30 C62,30 66,40 54,52 C42,40 46,30 54,30 Z" />
-    <path android:fillColor="#F2C14E" android:pathData="M78,54 C78,62 68,66 56,54 C68,42 78,46 78,54 Z" />
-    <path android:fillColor="#F2C14E" android:pathData="M54,78 C46,78 42,68 54,56 C66,68 62,78 54,78 Z" />
-    <path android:fillColor="#F2C14E" android:pathData="M30,54 C30,46 40,42 52,54 C40,66 30,62 30,54 Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M54,49 A5,5 0 1,1 53.99,49 Z" />
+    <path android:fillColor="#C98F2A" android:pathData="M52.6,70 L55.4,70 L55.4,86 Q54,87.5 52.6,86 Z" />
+    <path android:fillColor="#E9B949" android:pathData="M54,66 C44,62 34,54 27,45 C28,57 40,66 54,66 Z" />
+    <path android:fillColor="#E9B949" android:pathData="M54,66 C64,62 74,54 81,45 C80,57 68,66 54,66 Z" />
+    <path android:fillColor="#3FB8AF" android:pathData="M54,64 C47,54 41,42 35,32 C33,48 41,60 54,64 Z" />
+    <path android:fillColor="#3FB8AF" android:pathData="M54,64 C61,54 67,42 73,32 C75,48 67,60 54,64 Z" />
+    <path android:fillColor="#E9B949" android:pathData="M54,21 C61,34 63,50 54,64 C45,50 47,34 54,21 Z" />
+    <path android:fillColor="#C98F2A" android:pathData="M43,59 C48,62 60,62 65,59 L54,73 Z" />
+    <path android:fillColor="#C98F2A" android:pathData="M54,74 C45,72 39,64 38,53 C45,58 51,64 54,74 Z" />
+    <path android:fillColor="#C98F2A" android:pathData="M54,74 C63,72 69,64 70,53 C63,58 57,64 54,74 Z" />
 </vector>

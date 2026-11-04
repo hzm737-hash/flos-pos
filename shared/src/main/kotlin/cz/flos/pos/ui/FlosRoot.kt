@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.SoupKitchen
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -60,6 +61,7 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     PRODUCTS("Produkty", Icons.Rounded.Inventory2, false),
     REPORT("Uzávěrka", Icons.Rounded.Insights, false),
     STATS("Statistiky", Icons.Rounded.BarChart, false),
+    RECEIPT_STATS("Statistiky účtenek", Icons.Rounded.QueryStats, false),
     KITCHEN("Kuchyně", Icons.Rounded.SoupKitchen, false),
     CUSTOMERS("Zákazníci", Icons.Rounded.Groups, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
@@ -162,6 +164,7 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.SELL -> SellScreen(vm)
                 Screen.TABLES -> TablesScreen(vm, onOpen = { screen = Screen.SELL })
                 Screen.STATS -> StatsScreen(vm)
+                Screen.RECEIPT_STATS -> ReceiptStatsScreen(vm)
                 Screen.ORDERS -> OrdersScreen(vm, onEdit = { screen = Screen.SELL })
                 Screen.PRODUCTS -> ProductsScreen(vm)
                 Screen.HISTORY -> HistoryScreen(vm, onEditOrder = { screen = Screen.SELL })

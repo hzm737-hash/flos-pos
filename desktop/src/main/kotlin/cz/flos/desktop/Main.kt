@@ -4,6 +4,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -51,9 +53,16 @@ fun main() {
 
     application {
         val vm = remember { PosViewModel(container) }
+        // The lotus mark in the title bar and the taskbar.
+        val icon = remember {
+            Thread.currentThread().contextClassLoader.getResourceAsStream("flos.png")?.use { stream ->
+                BitmapPainter(org.jetbrains.skia.Image.makeFromEncoded(stream.readBytes()).toComposeImageBitmap())
+            }
+        }
         Window(
             onCloseRequest = ::exitApplication,
             title = "Flos",
+            icon = icon,
             state = rememberWindowState(width = 1280.dp, height = 820.dp),
         ) {
             FlosScreen(vm)
@@ -64,6 +73,7 @@ fun main() {
             Window(
                 onCloseRequest = { vm.updateSettings { it.copy(customerDisplay = false) } },
                 title = "Flos – zákazník",
+                icon = icon,
                 state = rememberWindowState(width = 1024.dp, height = 600.dp),
             ) {
                 CustomerDisplay(vm)
