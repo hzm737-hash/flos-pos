@@ -67,7 +67,11 @@ data class AppSettings(
     val eurRateManual: String = "",
     /** After how many days an unpaid transfer is shown as overdue. */
     val transferDueDays: Int = 3,
+    /** Table names for the table map, separated by commas ("1, 2, 3, Terasa 1"); empty hides the map. */
+    val tables: String = "1, 2, 3, 4, 5, 6, 7, 8",
 ) {
+    val tableList: List<String> get() = tables.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
     /** IBAN for the SEPA QR code: the EUR account when set, otherwise the main account. */
     val eurIban: String? get() = eurAccount.takeIf { it.isNotBlank() }?.let { CzechBankAccount.toIban(it) } ?: iban
     val eurRateOverride: Double? get() = eurRateManual.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }
@@ -149,6 +153,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             eurAccount = str("eurAccount", d.eurAccount),
             eurRateManual = str("eurRateManual", d.eurRateManual),
             transferDueDays = int("transferDueDays", d.transferDueDays),
+            tables = str("tables", d.tables),
         )
     }
 
@@ -194,6 +199,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "eurAccount" to s.eurAccount,
                 "eurRateManual" to s.eurRateManual,
                 "transferDueDays" to s.transferDueDays.toString(),
+                "tables" to s.tables,
             ),
         )
         _state.value = s

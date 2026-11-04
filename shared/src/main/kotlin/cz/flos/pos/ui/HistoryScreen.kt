@@ -1,5 +1,15 @@
 package cz.flos.pos.ui
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.ui.text.style.TextAlign
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -146,11 +156,16 @@ sealed class HistoryFilter(val key: String) {
     }
 
     companion object {
-        val entries: List<HistoryFilter> = listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(AwaitingTransfer, Tips, Unpaid, Voided, Cancelled)
+        // Lazy on purpose: built eagerly, this list is filled while the first object used (e.g.
+        // All, via All.key) is still being created, so it would hold null and crash the screen.
+        val entries: List<HistoryFilter> by lazy {
+            listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(AwaitingTransfer, Tips, Unpaid, Voided, Cancelled)
+        }
         fun of(key: String) = entries.firstOrNull { it.key == key } ?: All
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
     var period by rememberSaveable { mutableStateOf(HistoryPeriod.TODAY) }
@@ -163,6 +178,7 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
     var bankDialog by remember { mutableStateOf(false) }
     var confirmTransfer by remember { mutableStateOf<SaleWithItems?>(null) }
     var editTip by remember { mutableStateOf<SaleWithItems?>(null) }
+    var refunding by remember { mutableStateOf<SaleWithItems?>(null) }
     val unmatched by vm.unmatchedPayments.collectAsState()
     val settings by vm.settings.collectAsState()
     val fmt = remember { SimpleDateFormat("d.M.yyyy HH:mm", Locale.forLanguageTag("cs-CZ")) }
@@ -245,9 +261,10 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
                 }
             },
             dismissButton = {
-                Row {
+                FlowRow {
                     if (s.awaitsTransfer) TextButton(onClick = { confirmTransfer = sw; open = null }) { Text(tr("Platba přišla")) }
-                    if (s.isPaid && !s.cancelled) TextButton(onClick = { editTip = sw; open = null }) { Text(tr("Spropitné")) }
+                    if (s.isPaid && !s.cancelled && !s.isRefund) TextButton(onClick = { refunding = sw; open = null }) { Text(tr("Vrátit položky")) }
+                    if (s.isPaid && !s.cancelled && !s.isRefund) TextButton(onClick = { editTip = sw; open = null }) { Text(tr("Spropitné")) }
                     if (s.isPaid && !s.cancelled) TextButton(onClick = { confirmCancel = sw; open = null }) { Text(tr("Storno")) }
                     TextButton(onClick = { open = null }) { Text(tr("Zavřít")) }
                 }
@@ -276,6 +293,7 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
             onDismiss = { editTip = null },
         ) { vm.setTip(sw.sale, it); editTip = null }
     }
+    refunding?.let { sw -> RefundDialog(vm, sw, onDismiss = { refunding = null }) }
     confirmCancel?.let { sw ->
         AlertDialog(
             onDismissRequest = { confirmCancel = null },
@@ -285,6 +303,57 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
             dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(tr("Zpět")) } },
         )
     }
+}
+
+/** Return some items of a paid receipt: a refund document (vratka) with negative quantities. */
+@Composable
+private fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> Unit) {
+    var left by remember(sw) { mutableStateOf<List<Int>?>(null) }
+    LaunchedEffect(sw) { left = vm.refundable(sw) }
+    var chosen by remember(sw) { mutableStateOf(mapOf<Int, Int>()) }
+    val cart = sw.toCart()
+    val amount = sw.items.indices.sumOf { i ->
+        val q = chosen[i] ?: 0
+        if (q == 0) 0L else cart.items[i].copy(quantity = q).total
+    }.let { Math.round(it * (100 - sw.sale.discountPercent) / 100.0) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr("Vrátit položky z účtenky %s", sw.sale.number)) },
+        text = {
+            val l = left
+            if (l == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(tr("Vyberte vrácené kusy. Vznikne doklad vratky se zápornou částkou (zaeviduje se i v EET) a peníze vrátíte stejným způsobem, jakým zákazník platil."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(Modifier.heightIn(max = 340.dp)) {
+                    itemsIndexed(sw.items) { i, item ->
+                        val q = chosen[i] ?: 0
+                        val max = l.getOrElse(i) { 0 }
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name, fontWeight = FontWeight.Medium)
+                                Text(tr("lze vrátit %d z %d", max, item.quantity), style = MaterialTheme.typography.bodySmall)
+                            }
+                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q - 1).coerceAtLeast(0)) }, enabled = q > 0, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Remove, tr("Méně"))
+                            }
+                            Text("$q", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(32.dp))
+                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q + 1).coerceAtMost(max)) }, enabled = q < max, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Add, tr("Více"))
+                            }
+                        }
+                    }
+                }
+                Text(tr("Vrátit zákazníkovi: %s", Money.format(amount)), fontWeight = FontWeight.Bold)
+            }
+        },
+        confirmButton = {
+            Button(onClick = { vm.refund(sw, chosen.filterValues { it > 0 }); onDismiss() }, enabled = amount > 0 || chosen.values.any { it > 0 }) {
+                Text(tr("Vrátit"))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
+    )
 }
 
 @Composable
@@ -341,6 +410,8 @@ private fun SaleRow(sw: SaleWithItems, fmt: SimpleDateFormat, eet: List<EetRecor
                     s.saleStatus == SaleStatus.VOID -> tr("Zrušeno")
                     s.cancelled -> tr("STORNO") + " " + (s.stornoNumber ?: "")
                     else -> listOfNotNull(
+                        if (s.isRefund) tr("Vratka") else null,
+                        s.tableName?.let { tr("Stůl %s", it) },
                         s.paymentMethod?.let { tr(it.label) },
                         s.transferStatus?.let { t -> if (t == TransferStatus.UNDERPAID) tr("chybí %s", Money.format(s.transferMissing)) else tr(t.label) },
                         if (s.tip > 0) tr("spropitné %s", Money.format(s.tip)) else null,

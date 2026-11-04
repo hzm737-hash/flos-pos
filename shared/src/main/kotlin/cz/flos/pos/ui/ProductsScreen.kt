@@ -162,6 +162,7 @@ private fun ProductDialog(
     var category by remember { mutableStateOf(initial.categoryId) }
     var icon by remember { mutableStateOf(initial.icon) }
     var barcode by remember { mutableStateOf(initial.barcode.orEmpty()) }
+    var options by remember { mutableStateOf(initial.options.orEmpty()) }
     val parsed = Money.parse(price)
     val valid = name.isNotBlank() && parsed != null && parsed >= 0
 
@@ -197,12 +198,22 @@ private fun ProductDialog(
                 }
                 Text(tr("Ikona"), style = MaterialTheme.typography.labelLarge)
                 IconPicker(icon, tr("Podle kategorie")) { icon = it }
+                Text(tr("Varianty a přídavky"), style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(
+                    options, { options = it }, minLines = 2, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Velikost: Malá, Velká +40\nPřílohy*: Sýr +15, Slanina +25") },
+                    supportingText = {
+                        val groups = cz.flos.core.ProductOptions.parse(options)
+                        Text(if (options.isBlank()) tr("Každý řádek jedna skupina: název, dvojtečka a volby oddělené čárkou s příplatkem v Kč. Hvězdička za názvem = lze vybrat více (přídavky).")
+                            else tr("Skupin: %d · voleb: %d", groups.size, groups.sumOf { it.choices.size }))
+                    },
+                )
             }
         },
         confirmButton = {
             Button(enabled = valid, onClick = {
                 onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon,
-                    barcode = barcode.trim().ifEmpty { null }))
+                    barcode = barcode.trim().ifEmpty { null }, options = options.trim().ifEmpty { null }))
             }) { Text(tr("Uložit")) }
         },
         dismissButton = {

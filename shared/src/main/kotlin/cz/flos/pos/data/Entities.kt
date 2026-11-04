@@ -37,6 +37,8 @@ data class ProductEntity(
     val icon: String? = null,
     /** EAN or own code; a barcode scanner typing it into the search field adds the product. */
     val barcode: String? = null,
+    /** Variants and extras as text, see cz.flos.core.ProductOptions ("Velikost: Malá, Velká +40"). */
+    val options: String? = null,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }
@@ -81,7 +83,12 @@ data class SaleEntity(
     val payAmount: Long? = null,
     /** CZK per 1 EUR used for [payAmount]. */
     val eurRate: Double? = null,
+    /** For a refund (vratka): id of the receipt whose items were returned. Its items have negative quantities. */
+    val refundOf: Long? = null,
+    /** Table of an open order or a paid table bill ("5", "Terasa 2"). */
+    val tableName: String? = null,
 ) {
+    val isRefund: Boolean get() = refundOf != null
     val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
     /** Converts an amount in [payCurrency] to haléře. */
     fun toCzk(amount: Long): Long = if (isForeign) Math.round(amount * eurRate!!) else amount
