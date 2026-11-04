@@ -106,6 +106,27 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** History of a period (epoch millis, end exclusive); open orders are always included. */
     fun history(from: Long, to: Long): Flow<List<SaleWithItems>> = salesDao.history(from, to)
 
+    /** Receipts matching [text] (number, amount, item, note, table, cashier, customer) in a period. */
+    fun searchHistory(text: String, from: Long, to: Long): Flow<List<SaleWithItems>> {
+        val t = text.trim()
+        val amount = if (t.any(Char::isDigit) && t.all { it.isDigit() || it == ',' || it == '.' || it == ' ' }) Money.parse(t) else null
+        return salesDao.search(t, amount, from, to)
+    }
+
+    /** The receipt a refund belongs to, and the refunds made from this receipt. */
+    suspend fun relatedReceipts(sw: SaleWithItems): Pair<SaleWithItems?, List<SaleWithItems>> =
+        (sw.sale.refundOf?.let { salesDao.get(it) }) to salesDao.refundsOf(sw.sale.id)
+
+    suspend fun customerName(id: Long?): String? = id?.let { customerDao.get(it)?.name }
+
+    /** Puts the items of an old receipt into the cart again (the same order once more). */
+    fun repeatSale(sw: SaleWithItems) {
+        clearCart()
+        _cart.value = sw.toCart().let { c -> c.copy(items = c.items.filter { it.quantity > 0 }) }
+        sw.sale.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
+        _messages.tryEmit(tr("Položky účtenky %s jsou v košíku", sw.sale.number))
+    }
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages: SharedFlow<String> = _messages
 
@@ -732,17 +753,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     // ---- Statistics ----
 
     /** Statistics for the days [from]..[to] (inclusive), compared with the same number of days before. */
-    suspend fun statistics(from: LocalDate, to: LocalDate): cz.flos.core.Statistics {
-        val zone = ZoneId.systemDefault()
-        fun ms(d: LocalDate) = d.atStartOfDay(zone).toInstant().toEpochMilli()
-        val days = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1
+    /** Sales as the statistics need them, with product names and categories from the catalogue. */
+    private suspend fun statSales(list: List<SaleWithItems>): List<cz.flos.core.StatSale> {
         val products = catalog.allProducts().associateBy { it.id }
         val categories = categories.value.associateBy { it.id }
-        fun stat(list: List<SaleWithItems>) = list.map { sw ->
+        return list.map { sw ->
             cz.flos.core.StatSale(
                 at = sw.sale.createdAt, received = sw.sale.received, tip = sw.sale.tip,
                 payment = sw.sale.paymentMethod ?: PaymentMethod.CASH, cashier = sw.sale.cashier, cancelled = sw.sale.cancelled,
-                refund = sw.sale.isRefund,
+                refund = sw.sale.isRefund, number = sw.sale.number,
                 items = sw.toCart().items.map { item ->
                     val product = products[item.productId]
                     cz.flos.core.StatItem(
@@ -753,9 +772,21 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 },
             )
         }
-        val current = salesDao.between(ms(from), ms(to.plusDays(1)))
-        val previous = salesDao.between(ms(from.minusDays(days)), ms(from))
-        return cz.flos.core.Statistics.of(stat(current), from, to, zone, stat(previous))
+    }
+
+    private fun startOf(d: LocalDate) = d.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
+    suspend fun statistics(from: LocalDate, to: LocalDate): cz.flos.core.Statistics {
+        val days = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1
+        val current = salesDao.between(startOf(from), startOf(to.plusDays(1)))
+        val previous = salesDao.between(startOf(from.minusDays(days)), startOf(from))
+        return cz.flos.core.Statistics.of(statSales(current), from, to, ZoneId.systemDefault(), statSales(previous))
+    }
+
+    /** Receipt statistics: how many receipts, how big, when, and the largest ones. */
+    suspend fun receiptStatistics(from: LocalDate, to: LocalDate): cz.flos.core.ReceiptStatistics {
+        val list = salesDao.between(startOf(from), startOf(to.plusDays(1)))
+        return cz.flos.core.ReceiptStatistics.of(statSales(list), from, to, ZoneId.systemDefault())
     }
 
     // ---- EET ----

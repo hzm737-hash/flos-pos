@@ -140,7 +140,7 @@ fun StatsScreen(vm: PosViewModel) {
 }
 
 @Composable
-private fun Kpi(label: String, value: String, sub: String? = null, subColor: Color = Color.Unspecified) {
+internal fun Kpi(label: String, value: String, sub: String? = null, subColor: Color = Color.Unspecified) {
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp).width(150.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -151,7 +151,7 @@ private fun Kpi(label: String, value: String, sub: String? = null, subColor: Col
 }
 
 @Composable
-private fun ChartCard(title: String, content: @Composable () -> Unit) {
+internal fun ChartCard(title: String, content: @Composable () -> Unit) {
     Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -162,14 +162,14 @@ private fun ChartCard(title: String, content: @Composable () -> Unit) {
 
 /** A simple bar chart: one bar per value, labels under the bars (only some shown when there are many). */
 @Composable
-private fun Bars(values: List<Long>, labels: List<String>) {
+internal fun Bars(values: List<Long>, labels: List<String>, format: (Long) -> String = { Money.format(it) }) {
     val max = (values.maxOrNull() ?: 0L).coerceAtLeast(1L)
     val every = when {
         values.size > 40 -> 7
         values.size > 16 -> 3
         else -> 1
     }
-    Text(tr("Nejvíc: %s", Money.format(values.maxOrNull() ?: 0L)), style = MaterialTheme.typography.labelSmall,
+    Text(tr("Nejvíc: %s", format(values.maxOrNull() ?: 0L)), style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(Modifier.fillMaxWidth().height(140.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
         values.forEach { v ->
@@ -191,7 +191,7 @@ private fun Bars(values: List<Long>, labels: List<String>) {
 }
 
 @Composable
-private fun RankCard(title: String, rows: List<Ranked>, modifier: Modifier = Modifier, units: Boolean = false) {
+internal fun RankCard(title: String, rows: List<Ranked>, modifier: Modifier = Modifier, units: Boolean = false) {
     Card(shape = RoundedCornerShape(20.dp), modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)

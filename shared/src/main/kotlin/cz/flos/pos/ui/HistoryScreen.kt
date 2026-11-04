@@ -10,6 +10,19 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.ui.text.style.TextAlign
 
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.rememberDateRangePickerState
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -165,54 +178,111 @@ sealed class HistoryFilter(val key: String) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
     var period by rememberSaveable { mutableStateOf(HistoryPeriod.TODAY) }
+    // A day or range picked in the calendar (epoch days, inclusive); overrides the period chips.
+    var customFrom by rememberSaveable { mutableStateOf<Long?>(null) }
+    var customTo by rememberSaveable { mutableStateOf<Long?>(null) }
+    var picking by remember { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var everywhere by rememberSaveable { mutableStateOf(true) }
     var filterKey by rememberSaveable { mutableStateOf(HistoryFilter.All.key) }
     val filter = HistoryFilter.of(filterKey)
-    val range = remember(period) { period.range() }
-    val sales by remember(range) { vm.history(range.first, range.second) }.collectAsState(initial = emptyList())
-    var open by remember { mutableStateOf<SaleWithItems?>(null) }
-    var confirmCancel by remember { mutableStateOf<SaleWithItems?>(null) }
+    val zone = ZoneId.systemDefault()
+    val range = remember(period, customFrom, customTo) {
+        val f = customFrom; val t = customTo
+        if (f != null && t != null) LocalDate.ofEpochDay(f).atStartOfDay(zone).toInstant().toEpochMilli() to
+            LocalDate.ofEpochDay(t + 1).atStartOfDay(zone).toInstant().toEpochMilli()
+        else period.range()
+    }
+    val searching = query.isNotBlank()
+    val sales by remember(range, query, everywhere) {
+        if (query.isBlank()) vm.history(range.first, range.second)
+        else if (everywhere) vm.searchHistory(query, 0L, Long.MAX_VALUE)
+        else vm.searchHistory(query, range.first, range.second)
+    }.collectAsState(initial = emptyList())
+    var openId by remember { mutableStateOf<Long?>(null) }
     var bankDialog by remember { mutableStateOf(false) }
-    var confirmTransfer by remember { mutableStateOf<SaleWithItems?>(null) }
-    var editTip by remember { mutableStateOf<SaleWithItems?>(null) }
-    var refunding by remember { mutableStateOf<SaleWithItems?>(null) }
     val unmatched by vm.unmatchedPayments.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val fmt = remember { SimpleDateFormat("d.M.yyyy HH:mm", Locale.forLanguageTag("cs-CZ")) }
+    val fmt = remember { SimpleDateFormat("HH:mm", Locale.forLanguageTag("cs-CZ")) }
+    val dayFmt = remember { DateTimeFormatter.ofPattern("EEEE d. M. yyyy", Locale.forLanguageTag("cs-CZ")) }
 
     val eetRecords by vm.eetRecent.collectAsState()
     val eetBySale = eetRecords.groupBy { it.saleId }
 
     // Open orders are always loaded; in a past period only those opened in it are counted.
-    val inPeriod = sales.filter { !it.sale.isOpen || (it.sale.openedAt ?: it.sale.createdAt) in range.first until range.second }
+    val inPeriod = if (searching) sales
+        else sales.filter { !it.sale.isOpen || (it.sale.openedAt ?: it.sale.createdAt) in range.first until range.second }
     val groups = HistoryFilter.entries.map { f ->
         val matching = inPeriod.filter(f::matches)
         Triple(f, matching.size, matching.sumOf(f::amountOf))
     }
-    val shown = inPeriod.filter(filter::matches)
+    // While searching, every match is shown whatever the group; otherwise the chosen group filters the list.
+    val shown = if (searching) inPeriod else inPeriod.filter(filter::matches)
+    val byDay = shown.groupBy { Instant.ofEpochMilli(it.sale.createdAt).atZone(zone).toLocalDate() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item { EetQueueBanner(vm) }
         item {
-            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query, onValueChange = { query = it }, singleLine = true,
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Rounded.Close, tr("Smazat")) } },
+                    placeholder = { Text(tr("Číslo účtenky, částka, položka, stůl, zákazník…"), maxLines = 1) },
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.weight(1f),
+                )
                 BadgedBox(badge = { if (unmatched.isNotEmpty()) Badge { Text(unmatched.size.toString()) } }) {
-                    FilledTonalButton(onClick = { bankDialog = true }) {
-                        Icon(Icons.Rounded.AccountBalance, null, Modifier.size(18.dp)); Text(tr("  Platby z banky"))
+                    FilledTonalIconButton(onClick = { bankDialog = true }) { Icon(Icons.Rounded.AccountBalance, tr("Platby z banky")) }
+                }
+            }
+        }
+        item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (searching) item {
+                    FilterChip(selected = everywhere, onClick = { everywhere = !everywhere }, label = { Text(tr("Hledat v celé historii")) },
+                        shape = RoundedCornerShape(50))
+                }
+                val custom = customFrom != null && customTo != null
+                if (!searching || !everywhere) {
+                    item {
+                        val f = customFrom; val t = customTo
+                        val df = DateTimeFormatter.ofPattern("d. M. yyyy")
+                        FilterChip(
+                            selected = custom, onClick = { picking = true }, shape = RoundedCornerShape(50),
+                            leadingIcon = { Icon(Icons.Rounded.CalendarMonth, null, Modifier.size(18.dp)) },
+                            label = {
+                                Text(if (f != null && t != null) {
+                                    if (f == t) df.format(LocalDate.ofEpochDay(f)) else df.format(LocalDate.ofEpochDay(f)) + " – " + df.format(LocalDate.ofEpochDay(t))
+                                } else tr("Vybrat datum"))
+                            },
+                        )
+                    }
+                    if (custom) item {
+                        // Step the picked day (or range) backwards and forwards.
+                        Row {
+                            val len = customTo!! - customFrom!! + 1
+                            IconButton(onClick = { customFrom = customFrom!! - len; customTo = customTo!! - len }) {
+                                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, tr("Předchozí"))
+                            }
+                            IconButton(onClick = { customFrom = customFrom!! + len; customTo = customTo!! + len }) {
+                                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, tr("Další"))
+                            }
+                        }
+                    }
+                    items(HistoryPeriod.entries) { p ->
+                        FilterChip(selected = !custom && period == p, onClick = { period = p; customFrom = null; customTo = null },
+                            label = { Text(tr(p.label)) }, shape = RoundedCornerShape(50))
                     }
                 }
             }
         }
-        item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(HistoryPeriod.entries) { p ->
-                    FilterChip(selected = period == p, onClick = { period = p }, label = { Text(tr(p.label)) }, shape = RoundedCornerShape(50))
-                }
-            }
-        }
-        item {
+        if (!searching) item {
             // One card per group with its count and total; tapping a card filters the list.
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(groups, key = { it.first.key }) { (f, count, total) ->
@@ -222,92 +292,79 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
         }
         item {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(filter.label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(if (searching) tr("Nalezeno") else filter.label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Text(tr("%d × · %s", shown.size, Money.format(shown.sumOf(filter::amountOf))), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
+            if (searching && shown.size >= 500) Text(tr("Zobrazeno prvních 500 výsledků, upřesněte hledání."),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
         }
         if (shown.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text(tr("Žádné doklady v tomto výběru"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (searching) tr("Nic nenalezeno") else tr("Žádné doklady v tomto výběru"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        items(shown, key = { it.sale.id }) { sw ->
-            SaleRow(sw, fmt, eetBySale[sw.sale.id].orEmpty()) { open = sw }
+        byDay.forEach { (day, list) ->
+            item(key = "day-$day") {
+                val paid = list.filter { it.sale.isPaid && !it.sale.cancelled }
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(dayFmt.format(day).replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                    Text(tr("%d dokladů", list.size) + " · " + Money.format(paid.sumOf { it.sale.received }), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            items(list, key = { it.sale.id }) { sw ->
+                SaleRow(sw, fmt, eetBySale[sw.sale.id].orEmpty()) { openId = sw.sale.id }
+            }
         }
     }
 
-    open?.let { sw ->
-        val s = sw.sale
-        AlertDialog(
-            onDismissRequest = { open = null },
-            title = { Text(if (s.isPaid) tr("Účtenka %s", s.number) else tr("Objednávka č. %d", s.orderNumber ?: 0)) },
-            text = {
-                var preview by remember(sw) { mutableStateOf("") }
-                LaunchedEffect(sw) { preview = vm.receiptPreview(sw) }
-                Text(
-                    preview,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    modifier = Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()),
-                )
-            },
+    if (picking) {
+        val state = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = customFrom?.let { it * 86_400_000L },
+            initialSelectedEndDateMillis = customTo?.let { it * 86_400_000L },
+        )
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
             confirmButton = {
-                when {
-                    s.isPaid -> Button(onClick = { vm.reprint(sw) }) { Text(tr("Tisknout kopii")) }
-                    s.isOpen -> Button(onClick = { vm.editOrder(sw); open = null; onEditOrder() }) { Text(tr("Otevřít v košíku")) }
-                    else -> {}
-                }
+                TextButton(enabled = state.selectedStartDateMillis != null, onClick = {
+                    val start = state.selectedStartDateMillis!! / 86_400_000L
+                    customFrom = start
+                    customTo = (state.selectedEndDateMillis?.div(86_400_000L) ?: start).coerceAtLeast(start)
+                    picking = false
+                }) { Text(tr("Zobrazit")) }
             },
-            dismissButton = {
-                FlowRow {
-                    if (s.awaitsTransfer) TextButton(onClick = { confirmTransfer = sw; open = null }) { Text(tr("Platba přišla")) }
-                    if (s.isPaid && !s.cancelled && !s.isRefund) TextButton(onClick = { refunding = sw; open = null }) { Text(tr("Vrátit položky")) }
-                    if (s.isPaid && !s.cancelled && !s.isRefund) TextButton(onClick = { editTip = sw; open = null }) { Text(tr("Spropitné")) }
-                    if (s.isPaid && !s.cancelled) TextButton(onClick = { confirmCancel = sw; open = null }) { Text(tr("Storno")) }
-                    TextButton(onClick = { open = null }) { Text(tr("Zavřít")) }
-                }
-            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text(tr("Zrušit")) } },
+        ) {
+            DateRangePicker(
+                state = state, modifier = Modifier.weight(1f),
+                title = { Text(tr("Vyberte den nebo období (od – do)"), Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)) },
+            )
+        }
+    }
+
+    openId?.let { id ->
+        val index = shown.indexOfFirst { it.sale.id == id }
+        val sw = shown.getOrNull(index)
+        if (sw != null) ReceiptDetailDialog(
+            vm, sw, eetBySale[sw.sale.id].orEmpty(),
+            onDismiss = { openId = null },
+            onEditOrder = { vm.editOrder(sw); openId = null; onEditOrder() },
+            onRepeat = { vm.repeatSale(sw); openId = null; onEditOrder() },
+            onOpenOther = { other -> openId = other.sale.id },
+            // The list is newest first: "previous" is the older receipt below.
+            onPrevious = shown.getOrNull(index + 1)?.let { p -> { openId = p.sale.id } },
+            onNext = shown.getOrNull(index - 1)?.let { n -> { openId = n.sale.id } },
         )
     }
     if (bankDialog) BankPaymentsDialog(vm, onDismiss = { bankDialog = false })
-    confirmTransfer?.let { sw ->
-        val due = sw.sale.payAmount?.takeIf { sw.sale.isForeign } ?: sw.sale.received
-        val cur = if (sw.sale.isForeign) "EUR" else "Kč"
-        AmountDialog(
-            title = tr("Platba za účtenku %s", sw.sale.number),
-            label = if (sw.sale.isForeign) tr("Přišlo na účet (EUR)") else tr("Přišlo na účet (Kč)"),
-            initial = due,
-            hint = { amount -> if (amount > due) tr("Spropitné: %s", Money.format(amount - due, cur))
-                else if (amount < due) tr("Chybí: %s", Money.format(due - amount, cur)) else "" },
-            onDismiss = { confirmTransfer = null },
-        ) { vm.confirmTransfer(sw.sale, it); confirmTransfer = null }
-    }
-    editTip?.let { sw ->
-        AmountDialog(
-            title = tr("Spropitné k účtence %s", sw.sale.number),
-            label = tr("Spropitné (Kč)"),
-            initial = sw.sale.tip,
-            hint = { tipsHint(settings.tipsOwner) },
-            onDismiss = { editTip = null },
-        ) { vm.setTip(sw.sale, it); editTip = null }
-    }
-    refunding?.let { sw -> RefundDialog(vm, sw, onDismiss = { refunding = null }) }
-    confirmCancel?.let { sw ->
-        AlertDialog(
-            onDismissRequest = { confirmCancel = null },
-            title = { Text(tr("Stornovat účtenku %s?", sw.sale.number)) },
-            text = { Text(tr("Účtenka zůstane v historii označená jako storno a nezapočítá se do tržby.")) },
-            confirmButton = { Button(onClick = { vm.cancelSale(sw); confirmCancel = null }) { Text(tr("Stornovat")) } },
-            dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(tr("Zpět")) } },
-        )
-    }
 }
 
 /** Return some items of a paid receipt: a refund document (vratka) with negative quantities. */
 @Composable
-private fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> Unit) {
+internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> Unit) {
     var left by remember(sw) { mutableStateOf<List<Int>?>(null) }
     LaunchedEffect(sw) { left = vm.refundable(sw) }
     var chosen by remember(sw) { mutableStateOf(mapOf<Int, Int>()) }
@@ -430,7 +487,7 @@ private fun SaleRow(sw: SaleWithItems, fmt: SimpleDateFormat, eet: List<EetRecor
 }
 
 /** Short EET state for the receipt list. */
-private fun eetLabel(records: List<EetRecordEntity>): String {
+internal fun eetLabel(records: List<EetRecordEntity>): String {
     val r = records.firstOrNull { !it.storno } ?: return ""
     return when (r.status) {
         EetStatus.CONFIRMED -> " · EET ✓"
