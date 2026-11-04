@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -32,6 +35,10 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DeliveryDining
 import androidx.compose.material.icons.rounded.Percent
 import androidx.compose.material.icons.rounded.ReceiptLong
+import androidx.compose.material.icons.rounded.CallSplit
+import androidx.compose.material.icons.rounded.TableRestaurant
+import cz.flos.core.OptionGroup
+import cz.flos.core.ProductOptions
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
@@ -87,6 +94,8 @@ fun SellScreen(vm: PosViewModel) {
     val cart by vm.cart.collectAsState()
     var paying by remember { mutableStateOf(false) }
     var parking by remember { mutableStateOf(false) }
+    var splitting by remember { mutableStateOf(false) }
+    var partToPay by remember { mutableStateOf<Map<Int, Int>?>(null) }
     var showCartOnPhone by rememberSaveable { mutableStateOf(false) }
 
     if (isWide()) {
@@ -98,7 +107,7 @@ fun SellScreen(vm: PosViewModel) {
                 shadowElevation = 6.dp,
                 modifier = Modifier.width(380.dp).fillMaxHeight(),
             ) {
-                CartPanel(vm, cart, onPay = { paying = true }, onPark = { parking = true })
+                CartPanel(vm, cart, onPay = { paying = true }, onPark = { parking = true }, onSplit = { splitting = true })
             }
         }
     } else {
@@ -108,7 +117,7 @@ fun SellScreen(vm: PosViewModel) {
                     IconButton(onClick = { showCartOnPhone = false }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, tr("Zpět")) }
                     Text(tr("Košík"), style = MaterialTheme.typography.titleLarge)
                 }
-                CartPanel(vm, cart, onPay = { paying = true }, onPark = { parking = true }, modifier = Modifier.weight(1f))
+                CartPanel(vm, cart, onPay = { paying = true }, onPark = { parking = true }, onSplit = { splitting = true }, modifier = Modifier.weight(1f))
             } else {
                 ProductGrid(vm, Modifier.weight(1f))
                 Surface(
@@ -148,10 +157,119 @@ fun SellScreen(vm: PosViewModel) {
     }
     if (parking) {
         val order by vm.editingOrder.collectAsState()
-        OpenOrderDialog(order?.note.orEmpty(), onDismiss = { parking = false }) { note, print ->
+        OpenOrderDialog(order?.note.orEmpty(), table = vm.currentTable, onDismiss = { parking = false }) { note, print ->
             vm.saveOpenOrder(note, print); parking = false; showCartOnPhone = false
         }
     }
+    if (splitting) {
+        SplitDialog(cart, onDismiss = { splitting = false }) { selection ->
+            splitting = false
+            partToPay = selection
+        }
+    }
+    partToPay?.let { selection ->
+        val part = cz.flos.core.Cart(
+            cart.items.mapIndexedNotNull { i, item -> (selection[i] ?: 0).takeIf { it > 0 }?.let { item.copy(quantity = it.coerceAtMost(item.quantity)) } },
+            cart.discountPercent,
+        )
+        PaymentDialog(vm, part.total, title = tr("Platba části účtu"), onDismiss = { partToPay = null }) { method, given ->
+            vm.payPart(selection, method, given) { partToPay = null }
+        }
+    }
+}
+
+/** Split bill: choose how many of each line this guest pays; the rest stays open. */
+@Composable
+private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Int>) -> Unit) {
+    var chosen by remember { mutableStateOf(mapOf<Int, Int>()) }
+    val part = cz.flos.core.Cart(
+        cart.items.mapIndexedNotNull { i, item -> (chosen[i] ?: 0).takeIf { it > 0 }?.let { item.copy(quantity = it) } },
+        cart.discountPercent,
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.CallSplit, null) },
+        title = { Text(tr("Rozdělit účet")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(tr("Vyberte, co platí tento host. Zbytek zůstane v košíku pro další platbu."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    itemsIndexed(cart.items) { i, item ->
+                        val q = chosen[i] ?: 0
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name, fontWeight = FontWeight.Medium)
+                                Text(tr("%d z %d", q, item.quantity) + " · " + Money.format(item.unitPrice), style = MaterialTheme.typography.bodySmall)
+                            }
+                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q - 1).coerceAtLeast(0)) }, enabled = q > 0, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Remove, tr("Méně"))
+                            }
+                            Text("$q", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(32.dp))
+                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q + 1).coerceAtMost(item.quantity)) }, enabled = q < item.quantity, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Rounded.Add, tr("Více"))
+                            }
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { chosen = cart.items.indices.associateWith { cart.items[it].quantity } }) { Text(tr("Vybrat vše")) }
+                    TextButton(onClick = { chosen = emptyMap() }) { Text(tr("Nic")) }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onPay(chosen.filterValues { it > 0 }) }, enabled = !part.isEmpty()) {
+                Text(tr("Zaplatit %s", Money.format(part.total)))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
+    )
+}
+
+/** Variants (one choice) and extras (any number) of a product, chosen before it goes to the cart. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OptionsDialog(p: ProductEntity, groups: List<OptionGroup>, onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
+    var chosen by remember { mutableStateOf(ProductOptions.defaults(groups)) }
+    val (name, price) = ProductOptions.apply(p.name, p.price, groups, chosen)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(p.name) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                groups.forEachIndexed { gi, g ->
+                    item(key = "g$gi") {
+                        Text(g.name + if (g.multiple) " " + tr("(libovolně)") else "", style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                    }
+                    item(key = "c$gi") {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            g.choices.forEachIndexed { ci, c ->
+                                val selected = ci in chosen[gi].orEmpty()
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = {
+                                        val now = chosen[gi].orEmpty()
+                                        val next = when {
+                                            !g.multiple -> setOf(ci)
+                                            selected -> now - ci
+                                            else -> now + ci
+                                        }
+                                        chosen = chosen + (gi to next)
+                                    },
+                                    label = { Text(c.name + if (c.price != 0L) "  " + (if (c.price > 0) "+" else "") + Money.format(c.price) else "") },
+                                    shape = RoundedCornerShape(50),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onAdd(name, price) }) { Text(tr("Přidat · %s", Money.format(price))) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
+    )
 }
 
 @Composable
@@ -166,6 +284,10 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
         .filter { selected == null || it.categoryId == selected }
         .filter { q.isEmpty() || CoreText.stripDiacritics(it.name).lowercase().contains(q) || it.barcode == query.trim() }
     val scope = rememberCoroutineScope()
+    var choosing by remember { mutableStateOf<Pair<ProductEntity, List<OptionGroup>>?>(null) }
+    choosing?.let { (p, groups) ->
+        OptionsDialog(p, groups, onDismiss = { choosing = null }) { name, price -> vm.addToCart(p, name, price); choosing = null }
+    }
     // A barcode scanner types the code and presses Enter: add the product with that code,
     // or the only product the search shows.
     val submit: () -> Unit = {
@@ -223,7 +345,10 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                     p,
                     color = category?.let { Color(it.color) } ?: MaterialTheme.colorScheme.primary,
                     iconKey = p.icon ?: category?.icon,
-                ) { vm.addToCart(p) }
+                ) {
+                    val groups = ProductOptions.parse(p.options)
+                    if (groups.isEmpty()) vm.addToCart(p) else choosing = p to groups
+                }
             }
         }
     }
@@ -255,16 +380,26 @@ private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClic
 }
 
 @Composable
-private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: () -> Unit, modifier: Modifier = Modifier) {
+private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: () -> Unit, onSplit: () -> Unit, modifier: Modifier = Modifier) {
     var discountDialog by remember { mutableStateOf(false) }
     val order by vm.editingOrder.collectAsState()
+    val pendingTable by vm.pendingTable.collectAsState()
     Column(modifier.fillMaxHeight().padding(14.dp)) {
+        if (order == null) pendingTable?.let { t ->
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.TableRestaurant, null)
+                    Text(tr("Stůl %s", t), fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                    IconButton(onClick = { vm.clearCart() }) { Icon(Icons.Rounded.Close, tr("Zavřít")) }
+                }
+            }
+        }
         order?.let { o ->
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.DeliveryDining, null)
+                    Icon(if (o.tableName != null) Icons.Rounded.TableRestaurant else Icons.Rounded.DeliveryDining, null)
                     Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                        Text(tr("Objednávka č. %d", o.orderNumber ?: 0), fontWeight = FontWeight.SemiBold)
+                        Text(o.tableName?.let { tr("Stůl %s", it) } ?: tr("Objednávka č. %d", o.orderNumber ?: 0), fontWeight = FontWeight.SemiBold)
                         if (o.note.isNotBlank()) Text(o.note, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     IconButton(onClick = { vm.clearCart() }) { Icon(Icons.Rounded.Close, tr("Zavřít")) }
@@ -316,10 +451,12 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
             Text(Money.format(cart.total), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            SmallAction(Icons.Rounded.ReceiptLong, tr("Předúčet"), enabled = !cart.isEmpty()) { vm.printPreBill() }
-            SmallAction(Icons.Rounded.DeliveryDining, tr("Odložit"), enabled = !cart.isEmpty(), onClick = onPark)
-            SmallAction(Icons.Rounded.Percent, tr("Sleva"), enabled = !cart.isEmpty()) { discountDialog = true }
-            SmallAction(Icons.Rounded.DeleteOutline, tr("Vymazat"), enabled = !cart.isEmpty() || order != null) { vm.clearCart() }
+            val w = Modifier.weight(1f)
+            SmallAction(Icons.Rounded.ReceiptLong, tr("Předúčet"), enabled = !cart.isEmpty(), modifier = w) { vm.printPreBill() }
+            SmallAction(Icons.Rounded.DeliveryDining, tr("Odložit"), enabled = !cart.isEmpty(), modifier = w, onClick = onPark)
+            SmallAction(Icons.Rounded.CallSplit, tr("Rozdělit"), enabled = cart.itemCount > 1, modifier = w, onClick = onSplit)
+            SmallAction(Icons.Rounded.Percent, tr("Sleva"), enabled = !cart.isEmpty(), modifier = w) { discountDialog = true }
+            SmallAction(Icons.Rounded.DeleteOutline, tr("Vymazat"), enabled = !cart.isEmpty() || order != null || pendingTable != null, modifier = w) { vm.clearCart() }
         }
         Spacer(Modifier.height(10.dp))
         Button(
@@ -340,11 +477,13 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
 
 /** Icon-over-label button for the cart's secondary actions. */
 @Composable
-private fun SmallAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun SmallAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit,
+) {
     FilledTonalButton(
         onClick = onClick, enabled = enabled, shape = RoundedCornerShape(16.dp),
-        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-        modifier = Modifier.height(58.dp).width(84.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp),
+        modifier = modifier.height(58.dp),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, null, Modifier.size(20.dp))
@@ -355,13 +494,13 @@ private fun SmallAction(icon: androidx.compose.ui.graphics.vector.ImageVector, l
 
 /** Saves the cart as an unpaid order: for a delivery, takeaway or a table. */
 @Composable
-private fun OpenOrderDialog(initialNote: String, onDismiss: () -> Unit, onSave: (String, Boolean) -> Unit) {
+private fun OpenOrderDialog(initialNote: String, table: String?, onDismiss: () -> Unit, onSave: (String, Boolean) -> Unit) {
     var note by remember { mutableStateOf(initialNote) }
     var print by remember { mutableStateOf(true) }
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Rounded.DeliveryDining, null) },
-        title = { Text(tr("Odložit jako objednávku")) },
+        title = { Text(table?.let { tr("Uložit účet stolu %s", it) } ?: tr("Odložit jako objednávku")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
