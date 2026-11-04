@@ -146,7 +146,11 @@ sealed class HistoryFilter(val key: String) {
     }
 
     companion object {
-        val entries: List<HistoryFilter> = listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(AwaitingTransfer, Tips, Unpaid, Voided, Cancelled)
+        // Lazy on purpose: built eagerly, this list is filled while the first object used (e.g.
+        // All, via All.key) is still being created, so it would hold null and crash the screen.
+        val entries: List<HistoryFilter> by lazy {
+            listOf(All) + PaymentMethod.entries.map(::Paid) + listOf(AwaitingTransfer, Tips, Unpaid, Voided, Cancelled)
+        }
         fun of(key: String) = entries.firstOrNull { it.key == key } ?: All
     }
 }
