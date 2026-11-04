@@ -28,7 +28,8 @@ data class Cart(val items: List<CartItem> = emptyList(), val discountPercent: In
     fun isEmpty() = items.isEmpty()
 
     fun add(productId: Long, name: String, unitPrice: Long, vatRate: VatRate, qty: Int = 1): Cart {
-        val idx = items.indexOfFirst { it.productId == productId && it.unitPrice == unitPrice && it.discountPercent == 0 }
+        // Variants of one product ("Pizza (velká)") stay on separate lines.
+        val idx = items.indexOfFirst { it.productId == productId && it.name == name && it.unitPrice == unitPrice && it.discountPercent == 0 }
         return if (idx >= 0) {
             copy(items = items.toMutableList().also { it[idx] = it[idx].copy(quantity = it[idx].quantity + qty) })
         } else {

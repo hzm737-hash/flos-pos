@@ -12,7 +12,7 @@ import androidx.sqlite.execSQL
  */
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -63,6 +63,15 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        /** 3 → 4: refunds of single items, tables, product variants and extras. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE sales ADD COLUMN refundOf INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN tableName TEXT")
+                connection.execSQL("ALTER TABLE products ADD COLUMN options TEXT")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
     }
 }

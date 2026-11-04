@@ -6,7 +6,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.DeliveryDining
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.TableRestaurant
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.PointOfSale
@@ -42,13 +48,15 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.unit.dp
 import cz.flos.pos.LocalPlatform
 
-enum class Screen(val label: String, val icon: ImageVector) {
-    SELL("Prodej", Icons.Rounded.PointOfSale),
-    ORDERS("Objednávky", Icons.Rounded.DeliveryDining),
-    HISTORY("Účtenky", Icons.Rounded.ReceiptLong),
-    PRODUCTS("Produkty", Icons.Rounded.Inventory2),
-    REPORT("Uzávěrka", Icons.Rounded.Insights),
-    SETTINGS("Nastavení", Icons.Rounded.Settings),
+enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Boolean) {
+    SELL("Prodej", Icons.Rounded.PointOfSale, true),
+    TABLES("Stoly", Icons.Rounded.TableRestaurant, true),
+    ORDERS("Objednávky", Icons.Rounded.DeliveryDining, true),
+    HISTORY("Účtenky", Icons.Rounded.ReceiptLong, true),
+    PRODUCTS("Produkty", Icons.Rounded.Inventory2, false),
+    REPORT("Uzávěrka", Icons.Rounded.Insights, false),
+    STATS("Statistiky", Icons.Rounded.BarChart, false),
+    SETTINGS("Nastavení", Icons.Rounded.Settings, false),
 }
 
 /** Navigation icon with the number of unpaid orders on the Orders tab. */
@@ -92,15 +100,37 @@ private fun FlosRoot(vm: PosViewModel) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
+            // A phone has room for five items: the four used most, and "More" for the rest.
             if (!wide) NavigationBar {
-                Screen.entries.forEach { s ->
+                Screen.entries.filter { it.onPhoneBar }.forEach { s ->
                     NavigationBarItem(
                         selected = screen == s,
                         onClick = { screen = s },
                         icon = { NavIcon(s, openOrders.size) },
-                        label = { Text(tr(s.label)) },
+                        label = { Text(tr(s.label), maxLines = 1) },
                     )
                 }
+                var more by remember { mutableStateOf(false) }
+                val inMore = !screen.onPhoneBar
+                NavigationBarItem(
+                    selected = inMore,
+                    onClick = { more = true },
+                    icon = {
+                        Box {
+                            Icon(if (inMore) screen.icon else Icons.Rounded.MoreHoriz, contentDescription = null)
+                            DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                                Screen.entries.filter { !it.onPhoneBar }.forEach { s ->
+                                    DropdownMenuItem(
+                                        text = { Text(tr(s.label)) },
+                                        leadingIcon = { Icon(s.icon, contentDescription = null) },
+                                        onClick = { screen = s; more = false },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    label = { Text(if (inMore) tr(screen.label) else tr("Více"), maxLines = 1) },
+                )
             }
         },
     ) { padding ->
@@ -123,6 +153,8 @@ private fun FlosRoot(vm: PosViewModel) {
             }
             when (screen) {
                 Screen.SELL -> SellScreen(vm)
+                Screen.TABLES -> TablesScreen(vm, onOpen = { screen = Screen.SELL })
+                Screen.STATS -> StatsScreen(vm)
                 Screen.ORDERS -> OrdersScreen(vm, onEdit = { screen = Screen.SELL })
                 Screen.PRODUCTS -> ProductsScreen(vm)
                 Screen.HISTORY -> HistoryScreen(vm, onEditOrder = { screen = Screen.SELL })

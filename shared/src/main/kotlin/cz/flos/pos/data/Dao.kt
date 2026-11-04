@@ -32,6 +32,10 @@ interface CatalogDao {
     @Query("UPDATE products SET active = 0 WHERE id = :id")
     suspend fun deactivateProduct(id: Long)
 
+    /** Every product, also hidden ones, so statistics can name the category of old sales. */
+    @Query("SELECT * FROM products")
+    suspend fun allProducts(): List<ProductEntity>
+
     @Query("SELECT COUNT(*) FROM products")
     suspend fun productCount(): Int
 }
@@ -93,6 +97,11 @@ interface SalesDao {
         deleteItems(sale.id)
         insertItems(items.map { it.copy(id = 0, saleId = sale.id) })
     }
+
+    /** Refunds already made for a receipt, so the same item cannot be returned twice. */
+    @Transaction
+    @Query("SELECT * FROM sales WHERE refundOf = :saleId AND cancelled = 0")
+    suspend fun refundsOf(saleId: Long): List<SaleWithItems>
 
     @Transaction
     @Query("SELECT * FROM sales WHERE id = :id")

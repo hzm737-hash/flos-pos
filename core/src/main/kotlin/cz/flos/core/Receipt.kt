@@ -44,6 +44,8 @@ data class Receipt(
     val eet: EetReceiptInfo? = null,
     /** Number of the original receipt when this document cancels it (storno). */
     val stornoOf: String? = null,
+    /** Number of the original receipt when this document returns some of its items (negative quantities). */
+    val refundOf: String? = null,
     /** A receipt, or a non-fiscal check print / order ticket printed before payment. */
     val kind: DocumentKind = DocumentKind.RECEIPT,
     /** Order note: delivery address, customer, table. */
@@ -104,6 +106,7 @@ class ReceiptLayout(private val width: Int) {
             r.kind == DocumentKind.PRE_BILL -> "PŘEDBĚŽNÝ ÚČET"
             r.kind == DocumentKind.ORDER -> "OBJEDNÁVKA č. ${r.number}"
             r.stornoOf != null -> "STORNO účtenky ${r.stornoOf}"
+            r.refundOf != null -> "VRATKA k účtence ${r.refundOf}"
             business.vatPayer -> "Zjednodušený daňový doklad"
             else -> "Účtenka"
         }

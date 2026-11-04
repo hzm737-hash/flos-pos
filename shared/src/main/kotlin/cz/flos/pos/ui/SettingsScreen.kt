@@ -74,6 +74,10 @@ fun SettingsScreen(vm: PosViewModel) {
             Field(tr("Patička účtenky"), s.footer) { v -> vm.updateSettings { it.copy(footer = v) } }
             Field(tr("Jméno obsluhy"), s.cashier) { v -> vm.updateSettings { it.copy(cashier = v) } }
 
+            Section(tr("Stoly"))
+            Field(tr("Názvy stolů oddělené čárkou (prázdné = bez mapy stolů)"), s.tables) { v -> vm.updateSettings { it.copy(tables = v) } }
+            Text(tr("Stolů: %d", s.tableList.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
             Section(tr("QR platba"))
             val iban = s.iban
             OutlinedTextField(

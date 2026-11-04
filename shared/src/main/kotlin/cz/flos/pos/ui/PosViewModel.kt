@@ -256,12 +256,31 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     // ---- Cart ----
     fun addToCart(p: ProductEntity) = _cart.update { it.add(p.id, p.name, p.price, p.vatRate) }
+
+    /** Adds a product with the variants and extras chosen for it ("Pizza (Velká, Sýr)"). */
+    fun addToCart(p: ProductEntity, name: String, price: Long) = _cart.update { it.add(p.id, name, price, p.vatRate) }
+
+    // ---- Tables ----
+    private val _pendingTable = MutableStateFlow<String?>(null)
+    /** Table chosen on the table map for a new order that has not been saved yet. */
+    val pendingTable: StateFlow<String?> = _pendingTable.asStateFlow()
+
+    /** Starts a new order for a free table: an empty cart that is saved or paid with that table. */
+    fun startTable(name: String) {
+        _cart.value = Cart()
+        _editingOrder.value = null
+        _pendingTable.value = name
+    }
+
+    /** Table of the cart: the loaded order's table or the one just picked on the map. */
+    val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
     fun setQuantity(index: Int, qty: Int) = _cart.update { it.setQuantity(index, qty) }
     fun setLineDiscount(index: Int, percent: Int) = _cart.update { it.setLineDiscount(index, percent) }
     fun setCartDiscount(percent: Int) = _cart.update { it.setDiscount(percent) }
     fun clearCart() {
         _cart.update { it.clear() }
         _editingOrder.value = null
+        _pendingTable.value = null
     }
 
     /** The QR payment for an amount, or null when no valid bank account is set. */
@@ -295,12 +314,49 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cart = _cart.value
         if (cart.isEmpty()) return
         val order = _editingOrder.value
+        val table = currentTable
         val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
         _foreignTransfer.value = false
         _cart.value = Cart()
         _editingOrder.value = null
+        _pendingTable.value = null
         onDone()
-        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign) }
+        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign, table) }
+    }
+
+    /**
+     * Split bill: pays only the chosen quantities of the cart lines ([selected]: line index →
+     * quantity) as a receipt of its own. The rest stays in the cart, and on the open order or
+     * table when one is loaded, for the next guest.
+     */
+    fun payPart(selected: Map<Int, Int>, payment: PaymentMethod, cashGiven: Long?, onDone: () -> Unit) {
+        val cart = _cart.value
+        val partItems = cart.items.mapIndexedNotNull { i, item ->
+            val q = (selected[i] ?: 0).coerceIn(0, item.quantity)
+            if (q > 0) item.copy(quantity = q) else null
+        }
+        if (partItems.isEmpty()) return
+        val restItems = cart.items.mapIndexedNotNull { i, item ->
+            val q = item.quantity - (selected[i] ?: 0).coerceIn(0, item.quantity)
+            if (q > 0) item.copy(quantity = q) else null
+        }
+        if (restItems.isEmpty()) return checkout(payment, cashGiven, onDone)
+        val part = Cart(partItems, cart.discountPercent)
+        val rest = Cart(restItems, cart.discountPercent)
+        val order = _editingOrder.value
+        val table = currentTable
+        val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
+        _foreignTransfer.value = false
+        _cart.value = rest
+        onDone()
+        viewModelScope.launch {
+            if (order != null) {
+                val updated = order.copy(total = rest.total, received = rest.total)
+                salesDao.replace(updated, itemsOf(rest))
+                _editingOrder.value = updated
+            }
+            pay(null, part, payment, cashGiven, foreign, table)
+        }
     }
 
     /** Pays an open order straight from the order list. */
@@ -315,7 +371,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * when the payment type is covered by EET, its EET record. Nothing is sent to the tax
      * administration for an order that is never paid.
      */
-    private suspend fun pay(order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?, foreign: Boolean = false) {
+    private suspend fun pay(
+        order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?, foreign: Boolean = false, table: String? = order?.tableName,
+    ) {
         val s = settings.value
         val rate = if (foreign) eurRate() else null
         val now = LocalDateTime.now()
@@ -333,13 +391,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             received = received, status = SaleStatus.PAID.name,
             bankStatus = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) TransferStatus.WAITING.name else null,
             payCurrency = epc?.let { "EUR" }, payAmount = epc?.amount, eurRate = epc?.let { rate },
+            tableName = table,
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
         val record = if (payment.eet && received != 0L) eet.createRecord(saleId, number, millis, received, storno = false) else null
 
         val sent = record?.let { sendToEet(it) }
-        val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = sale.note,
+        val note = listOfNotNull(table?.let { tr("Stůl %s", it) }, sale.note.takeIf { it.isNotBlank() }).joinToString(" · ")
+        val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = note,
             epc = epc, eurRate = epc?.let { rate })
         val drawer = s.openDrawer && payment == PaymentMethod.CASH
         if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number), drawer)
@@ -368,8 +428,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cart = _cart.value
         if (cart.isEmpty()) return
         val existing = _editingOrder.value
+        val table = currentTable
         _cart.value = Cart()
         _editingOrder.value = null
+        _pendingTable.value = null
         viewModelScope.launch {
             val s = settings.value
             val now = LocalDateTime.now()
@@ -382,10 +444,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 SaleEntity(
                     number = "O-$millis", createdAt = millis, openedAt = millis, total = cart.total, received = cart.total,
                     payment = "", cashier = s.cashier, discountPercent = cart.discountPercent,
-                    status = SaleStatus.OPEN.name, orderNumber = orderNo, note = note.trim(),
+                    status = SaleStatus.OPEN.name, orderNumber = orderNo, note = note.trim(), tableName = table,
                 ).let { it.copy(id = salesDao.insert(it, itemsOf(cart))) }
             }
-            _messages.tryEmit(tr("Objednávka č. %d uložena", sale.orderNumber ?: 0))
+            _messages.tryEmit(sale.tableName?.let { tr("Stůl %s uložen", it) } ?: tr("Objednávka č. %d uložena", sale.orderNumber ?: 0))
             if (print) printOrder(sale, cart)
         }
     }
@@ -404,6 +466,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun editOrder(sw: SaleWithItems) {
         _cart.value = sw.toCart()
         _editingOrder.value = sw.sale
+        _pendingTable.value = null
     }
 
     /** Cancels an unpaid order. It stays in history as cancelled; nothing is sent to EET. */
@@ -448,8 +511,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             return Receipt((sw.sale.orderNumber ?: 0).toString(), created, sw.sale.cashier, sw.toCart(), PaymentMethod.CARD,
                 note = sw.sale.note, kind = DocumentKind.ORDER)
         }
-        return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), payment, sw.sale.cashGiven, qr, copy,
-            eet = record?.let(::eetInfo), note = sw.sale.note, epc = epc, eurRate = epc?.let { sw.sale.eurRate })
+        val refundOf = sw.sale.refundOf?.let { salesDao.get(it)?.sale?.number }
+        val note = listOfNotNull(sw.sale.tableName?.let { tr("Stůl %s", it) }, sw.sale.note.takeIf { it.isNotBlank() }).joinToString(" · ")
+        return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), payment, sw.sale.cashGiven, qr.takeIf { refundOf == null }, copy,
+            eet = record?.let(::eetInfo), note = note, epc = epc, eurRate = epc?.let { sw.sale.eurRate }, refundOf = refundOf)
     }
 
     suspend fun receiptPreview(sw: SaleWithItems): String {
@@ -486,6 +551,85 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 eet = sent?.let(::eetInfo), stornoOf = sw.sale.number)
             printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), tr("Storno doklad vytištěn"))
         }
+    }
+
+    // ---- Refunds of single items ----
+
+    /** How many of each line of [sw] can still be returned (lines already returned are subtracted). */
+    suspend fun refundable(sw: SaleWithItems): List<Int> {
+        val done = salesDao.refundsOf(sw.sale.id).flatMap { it.items }
+        return sw.items.map { item ->
+            val returned = done.filter { it.productId == item.productId && it.name == item.name && it.unitPrice == item.unitPrice }.sumOf { -it.quantity }
+            (item.quantity - returned).coerceAtLeast(0)
+        }
+    }
+
+    /**
+     * Returns some items of a paid receipt ([quantities]: line index → quantity). A refund
+     * document (vratka) with its own number and negative quantities is stored, recorded in EET
+     * with a negative amount when the original was, and printed. The money goes back the same
+     * way it was paid.
+     */
+    fun refund(sw: SaleWithItems, quantities: Map<Int, Int>) = viewModelScope.launch {
+        if (!sw.sale.isPaid || sw.sale.cancelled || sw.sale.isRefund) return@launch
+        val left = refundable(sw)
+        val items = sw.items.mapIndexedNotNull { i, item ->
+            val q = (quantities[i] ?: 0).coerceIn(0, left.getOrElse(i) { 0 })
+            if (q > 0) item.copy(id = 0, quantity = -q) else null
+        }
+        if (items.isEmpty()) return@launch
+        val s = settings.value
+        val payment = sw.sale.paymentMethod ?: PaymentMethod.CASH
+        val cart = Cart(items.map { CartItem(it.productId, it.name, it.unitPrice, VatRate.fromPercent(it.vatPercent), it.quantity, it.discountPercent) },
+            sw.sale.discountPercent)
+        val now = LocalDateTime.now()
+        val millis = nowMillis(now)
+        val number = flos.settings.nextReceiptNumber(now.year)
+        val received = if (payment == PaymentMethod.CASH) Money.roundToCrowns(cart.total) else cart.total
+        val sale = SaleEntity(
+            number = number, createdAt = millis, total = cart.total, payment = payment.name, cashier = s.cashier,
+            discountPercent = sw.sale.discountPercent, received = received, refundOf = sw.sale.id, tableName = sw.sale.tableName,
+            note = tr("Vratka k účtence %s", sw.sale.number),
+        )
+        val id = salesDao.insert(sale, items)
+        val wasRecorded = eetDao.forSale(sw.sale.id).any { !it.storno }
+        val record = if (wasRecorded && received != 0L) eet.createRecord(id, number, millis, received, storno = false) else null
+        val sent = record?.let { sendToEet(it) }
+        _messages.tryEmit(tr("Vratka %s: vraťte zákazníkovi %s", number, Money.format(-received)))
+        if (payment == PaymentMethod.CASH && s.openDrawer) openDrawer()
+        if (s.autoPrint) {
+            val doc = Receipt(number, now, s.cashier, cart, payment, eet = sent?.let(::eetInfo), refundOf = sw.sale.number)
+            printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), tr("Vratka vytištěna"))
+        }
+    }
+
+    // ---- Statistics ----
+
+    /** Statistics for the days [from]..[to] (inclusive), compared with the same number of days before. */
+    suspend fun statistics(from: LocalDate, to: LocalDate): cz.flos.core.Statistics {
+        val zone = ZoneId.systemDefault()
+        fun ms(d: LocalDate) = d.atStartOfDay(zone).toInstant().toEpochMilli()
+        val days = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1
+        val products = catalog.allProducts().associateBy { it.id }
+        val categories = categories.value.associateBy { it.id }
+        fun stat(list: List<SaleWithItems>) = list.map { sw ->
+            cz.flos.core.StatSale(
+                at = sw.sale.createdAt, received = sw.sale.received, tip = sw.sale.tip,
+                payment = sw.sale.paymentMethod ?: PaymentMethod.CASH, cashier = sw.sale.cashier, cancelled = sw.sale.cancelled,
+                refund = sw.sale.isRefund,
+                items = sw.toCart().items.map { item ->
+                    val product = products[item.productId]
+                    cz.flos.core.StatItem(
+                        name = product?.name ?: item.name,
+                        category = product?.categoryId?.let(categories::get)?.name ?: tr("Bez kategorie"),
+                        quantity = item.quantity, total = item.total,
+                    )
+                },
+            )
+        }
+        val current = salesDao.between(ms(from), ms(to.plusDays(1)))
+        val previous = salesDao.between(ms(from.minusDays(days)), ms(from))
+        return cz.flos.core.Statistics.of(stat(current), from, to, zone, stat(previous))
     }
 
     // ---- EET ----
