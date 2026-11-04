@@ -37,6 +37,9 @@ import androidx.compose.material.icons.rounded.Percent
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.CallSplit
 import androidx.compose.material.icons.rounded.TableRestaurant
+import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material3.AssistChip
 import cz.flos.core.OptionGroup
 import cz.flos.core.ProductOptions
 import androidx.compose.material.icons.rounded.Remove
@@ -406,6 +409,7 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
                 }
             }
         }
+        PeopleRow(vm)
         if (cart.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -473,6 +477,34 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
             vm.setCartDiscount(it); discountDialog = false
         }
     }
+}
+
+/** Who serves (switch with a staff PIN) and which customer the cart belongs to. */
+@Composable
+private fun PeopleRow(vm: PosViewModel) {
+    val settings by vm.settings.collectAsState()
+    val customer by vm.customer.collectAsState()
+    var picking by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AssistChip(
+            onClick = { pin = true },
+            label = { Text(settings.cashier.ifBlank { tr("Obsluha") }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            leadingIcon = { Icon(Icons.Rounded.Badge, null, Modifier.size(18.dp)) },
+            modifier = Modifier.weight(1f),
+        )
+        AssistChip(
+            onClick = { picking = true },
+            label = {
+                Text(customer?.let { c -> c.name + if (settings.loyaltyCrownsPerPoint > 0) " · " + tr("%d bodů", c.points) else "" } ?: tr("Zákazník"),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            leadingIcon = { Icon(Icons.Rounded.Person, null, Modifier.size(18.dp)) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+    if (picking) CustomerPickerDialog(vm, onDismiss = { picking = false })
+    if (pin) PinDialog(vm, onDismiss = { pin = false })
 }
 
 /** Icon-over-label button for the cart's secondary actions. */

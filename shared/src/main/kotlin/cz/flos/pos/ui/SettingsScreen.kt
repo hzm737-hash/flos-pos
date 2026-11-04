@@ -159,6 +159,7 @@ fun SettingsScreen(vm: PosViewModel) {
                 OutlinedButton(onClick = { vm.openDrawer() }, enabled = vm.printer.isConfigured(s)) { Text(tr("Otevřít zásuvku")) }
             }
 
+            BackOfficeSettings(vm, s)
             EetSettings(vm, s)
             BankSettings(vm, s)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))

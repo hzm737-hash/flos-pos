@@ -11,8 +11,8 @@ import androidx.sqlite.execSQL
  * (see FlosApp and desktop Main), using [FlosDatabase.MIGRATIONS].
  */
 @Database(
-    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class],
-    version = 4,
+    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class],
+    version = 5,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -21,6 +21,7 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun eet(): EetDao
     abstract fun cash(): CashDao
     abstract fun bank(): BankDao
+    abstract fun customers(): CustomerDao
 
     companion object {
         const val FILE_NAME = "flos.db"
@@ -72,6 +73,24 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        /** 4 → 5: back office sync, customers and loyalty, kitchen state of orders. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE sales ADD COLUMN uploaded INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN customerId INTEGER")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN kitchenReadyAt INTEGER")
+                connection.execSQL("ALTER TABLE products ADD COLUMN remoteId INTEGER")
+                connection.execSQL("ALTER TABLE categories ADD COLUMN remoteId INTEGER")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `customers` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`phone` TEXT NOT NULL, `email` TEXT NOT NULL, `note` TEXT NOT NULL, `discountPercent` INTEGER NOT NULL, " +
+                        "`points` INTEGER NOT NULL, `cardCode` TEXT, `createdAt` INTEGER NOT NULL)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_customers_name` ON `customers` (`name`)")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_customers_cardCode` ON `customers` (`cardCode`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
     }
 }

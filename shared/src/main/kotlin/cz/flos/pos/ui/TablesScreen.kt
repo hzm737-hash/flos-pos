@@ -73,7 +73,8 @@ fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
                         val minutes = Duration.ofMillis(now - (bills.minOf { it.sale.openedAt ?: it.sale.createdAt })).toMinutes()
                         Column {
                             Text(Money.format(bills.sumOf { it.sale.total }), fontWeight = FontWeight.Bold)
-                            Text(tr("otevřeno %d min", minutes) + if (bills.size > 1) " · " + tr("%d účty", bills.size) else "",
+                            Text(tr("otevřeno %d min", minutes) + (if (bills.size > 1) " · " + tr("%d účty", bills.size) else "") +
+                                (if (bills.all { it.sale.kitchenReadyAt != null }) " · " + tr("kuchyně hotovo") else ""),
                                 style = MaterialTheme.typography.labelSmall)
                         }
                     } else Text(tr("Volný"), style = MaterialTheme.typography.labelMedium)

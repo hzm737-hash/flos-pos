@@ -1,0 +1,124 @@
+package cz.flos.core.backoffice
+
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.security.MessageDigest
+import java.util.Base64
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
+
+// The till's side of the back office API (/api/v1/device/...). Field names match the server DTOs.
+
+@Serializable data class BoOrg(val id: Long = 0, val name: String = "", val ico: String = "", val dic: String = "", val vatPayer: Boolean = false, val address: String = "")
+@Serializable data class BoBranch(val id: Long = 0, val name: String = "", val address: String = "", val eetIdJednotky: Int? = null)
+@Serializable data class BoStaff(val id: Long, val name: String, val role: String = "CASHIER", val pinHash: String? = null)
+@Serializable data class BoConfig(
+    val deviceId: Long, val deviceName: String = "", val eetIdPokl: String = "", val org: BoOrg = BoOrg(), val branch: BoBranch = BoBranch(),
+    val staff: List<BoStaff> = emptyList(),
+)
+@Serializable data class BoCategory(val id: Long, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0, val deleted: Boolean = false)
+@Serializable data class BoProduct(
+    val id: Long, val categoryId: Long? = null, val name: String, val price: Long, val vatPercent: Int = 21, val barcode: String = "",
+    val sellable: Boolean = true, val sortOrder: Int = 0, val active: Boolean = true,
+)
+@Serializable data class BoCatalog(val serverTime: Long, val categories: List<BoCategory> = emptyList(), val products: List<BoProduct> = emptyList())
+@Serializable data class BoSaleItem(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Int, val discountPercent: Int = 0)
+@Serializable data class BoSale(
+    val number: String, val createdAt: Long, val total: Long, val received: Long, val payment: String, val cashier: String = "",
+    val discountPercent: Int = 0, val cancelled: Boolean = false, val stornoNumber: String? = null, val eetStatus: String? = null,
+    val eetPok: String? = null, val items: List<BoSaleItem> = emptyList(),
+)
+@Serializable data class BoUploadResult(val accepted: Int = 0, val updated: Int = 0, val serverTime: Long = 0)
+@Serializable data class BoClock(val userId: Long, val name: String, val action: String, val time: Long)
+
+@Serializable private data class PairRequest(val code: String, val appVersion: String)
+@Serializable private data class PairResponse(val token: String, val config: BoConfig)
+@Serializable private data class SalesUpload(val sales: List<BoSale>)
+@Serializable private data class ClockRequest(val pin: String, val time: Long? = null)
+
+class BackOfficeException(message: String, val status: Int = 0) : IOException(message)
+
+/**
+ * Talks to the Flos back office. [baseUrl] is what the owner types ("https://flos.example.cz");
+ * [token] is the device token received when pairing.
+ */
+class BackOfficeClient(baseUrl: String, private val token: String? = null, private val timeoutMs: Int = 15_000) {
+    private val api = normalize(baseUrl) + "/api/v1"
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    /** Pairs this till with the 8-character code from the back office (Tills → Pair). Returns the device token and configuration. */
+    fun pair(code: String, appVersion: String): Pair<String, BoConfig> {
+        val r = request("POST", "/device/pair", json.encodeToString(PairRequest.serializer(), PairRequest(code.trim().uppercase(), appVersion)), PairResponse.serializer(), auth = false)
+        return r.token to r.config
+    }
+
+    fun config(): BoConfig = request("GET", "/device/config", null, BoConfig.serializer())
+
+    /** Categories and products changed since [since] (server time of the previous call; 0 = everything). */
+    fun catalog(since: Long): BoCatalog = request("GET", "/device/catalog?since=$since", null, BoCatalog.serializer())
+
+    fun uploadSales(sales: List<BoSale>): BoUploadResult =
+        request("POST", "/device/sales", json.encodeToString(SalesUpload.serializer(), SalesUpload(sales)), BoUploadResult.serializer())
+
+    /** Clocks a staff member in or out with their PIN (attendance). */
+    fun clock(pin: String): BoClock = request("POST", "/device/clock", json.encodeToString(ClockRequest.serializer(), ClockRequest(pin)), BoClock.serializer())
+
+    private fun <T> request(method: String, path: String, body: String?, serializer: KSerializer<T>, auth: Boolean = true): T {
+        val conn = URI(api + path).toURL().openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = method
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.setRequestProperty("Accept", "application/json")
+            if (auth) conn.setRequestProperty("Authorization", "Bearer " + (token ?: throw BackOfficeException("Pokladna není spárovaná")))
+            if (body != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
+            val status = conn.responseCode
+            val text = (if (status in 200..299) conn.inputStream else conn.errorStream)?.use { String(it.readBytes(), Charsets.UTF_8) }.orEmpty()
+            if (status !in 200..299) {
+                val message = runCatching { json.parseToJsonElement(text).jsonObject["error"]?.jsonPrimitive?.content }.getOrNull()
+                throw BackOfficeException(message ?: "HTTP $status", status)
+            }
+            return json.decodeFromString(serializer, text)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    companion object {
+        fun normalize(url: String): String {
+            var u = url.trim().trimEnd('/')
+            if (u.endsWith("/api/v1")) u = u.removeSuffix("/api/v1")
+            if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://$u"
+            return u
+        }
+
+        /** Checks a staff PIN against the hash the back office sent ("pbkdf2$iterations$salt$hash"), without a network call. */
+        fun verifyPin(pin: String, stored: String?): Boolean {
+            val parts = stored?.split('$') ?: return false
+            if (parts.size != 4 || parts[0] != "pbkdf2") return false
+            val d = Base64.getDecoder()
+            val salt = runCatching { d.decode(parts[2]) }.getOrNull() ?: return false
+            val expected = runCatching { d.decode(parts[3]) }.getOrNull() ?: return false
+            val iterations = parts[1].toIntOrNull() ?: return false
+            val actual = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(PBEKeySpec(pin.toCharArray(), salt, iterations, expected.size * 8)).encoded
+            return MessageDigest.isEqual(expected, actual)
+        }
+
+        private val listJson = Json { ignoreUnknownKeys = true }
+        fun staffToJson(staff: List<BoStaff>): String = listJson.encodeToString(ListSerializer(BoStaff.serializer()), staff)
+        fun staffFromJson(text: String): List<BoStaff> =
+            if (text.isBlank()) emptyList() else runCatching { listJson.decodeFromString(ListSerializer(BoStaff.serializer()), text) }.getOrDefault(emptyList())
+    }
+}

@@ -1,6 +1,8 @@
 package cz.flos.desktop
 
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -10,6 +12,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import cz.flos.pos.FlosContainer
 import cz.flos.pos.data.FlosDatabase
 import cz.flos.pos.data.FlosDatabase_Impl
+import cz.flos.pos.ui.CustomerDisplay
 import cz.flos.pos.ui.FlosScreen
 import cz.flos.pos.ui.PosViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -54,6 +57,17 @@ fun main() {
             state = rememberWindowState(width = 1280.dp, height = 820.dp),
         ) {
             FlosScreen(vm)
+        }
+        // Customer display: a second window to drag onto the monitor that faces the customer.
+        val settings by vm.settings.collectAsState()
+        if (settings.customerDisplay) {
+            Window(
+                onCloseRequest = { vm.updateSettings { it.copy(customerDisplay = false) } },
+                title = "Flos – zákazník",
+                state = rememberWindowState(width = 1024.dp, height = 600.dp),
+            ) {
+                CustomerDisplay(vm)
+            }
         }
     }
 }

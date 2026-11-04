@@ -32,6 +32,12 @@ interface CatalogDao {
     @Query("UPDATE products SET active = 0 WHERE id = :id")
     suspend fun deactivateProduct(id: Long)
 
+    @Query("SELECT * FROM products WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun productByRemote(remoteId: Long): ProductEntity?
+
+    @Query("SELECT * FROM categories WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun categoryByRemote(remoteId: Long): CategoryEntity?
+
     /** Every product, also hidden ones, so statistics can name the category of old sales. */
     @Query("SELECT * FROM products")
     suspend fun allProducts(): List<ProductEntity>
@@ -97,6 +103,14 @@ interface SalesDao {
         deleteItems(sale.id)
         insertItems(items.map { it.copy(id = 0, saleId = sale.id) })
     }
+
+    /** Paid sales for the back office: not yet sent, or recent enough that they may have changed (storno, EET). */
+    @Transaction
+    @Query("SELECT * FROM sales WHERE status = 'PAID' AND (uploaded = 0 OR createdAt > :recent) ORDER BY createdAt LIMIT 500")
+    suspend fun toUpload(recent: Long): List<SaleWithItems>
+
+    @Query("UPDATE sales SET uploaded = 1 WHERE id IN (:ids)")
+    suspend fun markUploaded(ids: List<Long>)
 
     /** Refunds already made for a receipt, so the same item cannot be returned twice. */
     @Transaction

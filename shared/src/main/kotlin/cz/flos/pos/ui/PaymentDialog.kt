@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -121,6 +122,7 @@ fun PaymentDialog(
                             val e = epc
                             when {
                                 e != null -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    DisposableEffect(e) { vm.showOnDisplay(e.first); onDispose { vm.showOnDisplay(null) } }
                                     QrImage(e.first)
                                     Spacer(Modifier.height(8.dp))
                                     Text(Money.format(e.first.amount, "EUR"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -136,6 +138,7 @@ fun PaymentDialog(
                             Hint(tr("Pro QR platbu zadejte číslo účtu v Nastavení."), error = true)
                         } else {
                             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                DisposableEffect(qr) { vm.showOnDisplay(qr); onDispose { vm.showOnDisplay(null) } }
                                 QrImage(qr)
                                 Spacer(Modifier.height(8.dp))
                                 Text(tr("Zákazník naskenuje kód v bankovní aplikaci."), style = MaterialTheme.typography.bodySmall)
