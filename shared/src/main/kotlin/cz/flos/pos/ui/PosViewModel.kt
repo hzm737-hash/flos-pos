@@ -106,6 +106,27 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** History of a period (epoch millis, end exclusive); open orders are always included. */
     fun history(from: Long, to: Long): Flow<List<SaleWithItems>> = salesDao.history(from, to)
 
+    /** Receipts matching [text] (number, amount, item, note, table, cashier, customer) in a period. */
+    fun searchHistory(text: String, from: Long, to: Long): Flow<List<SaleWithItems>> {
+        val t = text.trim()
+        val amount = if (t.any(Char::isDigit) && t.all { it.isDigit() || it == ',' || it == '.' || it == ' ' }) Money.parse(t) else null
+        return salesDao.search(t, amount, from, to)
+    }
+
+    /** The receipt a refund belongs to, and the refunds made from this receipt. */
+    suspend fun relatedReceipts(sw: SaleWithItems): Pair<SaleWithItems?, List<SaleWithItems>> =
+        (sw.sale.refundOf?.let { salesDao.get(it) }) to salesDao.refundsOf(sw.sale.id)
+
+    suspend fun customerName(id: Long?): String? = id?.let { customerDao.get(it)?.name }
+
+    /** Puts the items of an old receipt into the cart again (the same order once more). */
+    fun repeatSale(sw: SaleWithItems) {
+        clearCart()
+        _cart.value = sw.toCart().let { c -> c.copy(items = c.items.filter { it.quantity > 0 }) }
+        sw.sale.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
+        _messages.tryEmit(tr("Položky účtenky %s jsou v košíku", sw.sale.number))
+    }
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val messages: SharedFlow<String> = _messages
 

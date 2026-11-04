@@ -120,4 +120,21 @@ interface SalesDao {
     @Transaction
     @Query("SELECT * FROM sales WHERE id = :id")
     suspend fun get(id: Long): SaleWithItems?
+
+    /**
+     * Finds receipts in a period by receipt or order number, amount (in haléře), variable symbol, item name,
+     * note, table, cashier or customer. Newest first, at most [limit].
+     */
+    @Transaction
+    @Query(
+        """SELECT * FROM sales WHERE createdAt >= :from AND createdAt < :to AND (
+            number LIKE '%' || :text || '%' OR stornoNumber LIKE '%' || :text || '%'
+            OR CAST(orderNumber AS TEXT) = :text OR variableSymbol LIKE '%' || :text || '%'
+            OR note LIKE '%' || :text || '%' OR cashier LIKE '%' || :text || '%' OR tableName LIKE '%' || :text || '%'
+            OR (:amount IS NOT NULL AND (received = :amount OR total = :amount OR received = -:amount))
+            OR id IN (SELECT saleId FROM sale_items WHERE name LIKE '%' || :text || '%')
+            OR customerId IN (SELECT id FROM customers WHERE name LIKE '%' || :text || '%' OR phone LIKE '%' || :text || '%' OR cardCode = :text)
+        ) ORDER BY createdAt DESC LIMIT :limit"""
+    )
+    fun search(text: String, amount: Long?, from: Long, to: Long, limit: Int = 500): Flow<List<SaleWithItems>>
 }
