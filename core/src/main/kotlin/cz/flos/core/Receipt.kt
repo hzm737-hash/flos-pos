@@ -112,6 +112,8 @@ sealed interface ReceiptBlock {
     data object Separator : ReceiptBlock
     data class Qr(val content: String, val caption: String? = null) : ReceiptBlock
     data class Feed(val lines: Int) : ReceiptBlock
+    /** A one-dimensional barcode (EAN or CODE 128) with its digits underneath, e.g. on price labels. */
+    data class Barcode(val code: String) : ReceiptBlock
 }
 
 /** Lays out a receipt as printer-independent blocks for a paper width in characters (32 for 58 mm, 48 for 80 mm). */
@@ -293,6 +295,7 @@ class ReceiptLayout(private val width: Int) {
                 ReceiptBlock.Separator -> appendLine("-".repeat(width))
                 is ReceiptBlock.Qr -> appendLine("[QR] ${b.content}")
                 is ReceiptBlock.Feed -> repeat(b.lines) { appendLine() }
+                is ReceiptBlock.Barcode -> appendLine("[|||] ${b.code}")
             }
         }
     }

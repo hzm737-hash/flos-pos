@@ -1168,6 +1168,100 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         return true
     }
 
+    // ---- Products: Excel import/export, bulk edit, labels ----
+    /** All products (also hidden ones) as table rows, for Excel. */
+    suspend fun productTable(): List<List<Any?>> {
+        val cats = categories.value.associate { it.id to it.name }
+        return cz.flos.core.ProductSheet.export(catalog.allProducts().sortedBy { it.name.lowercase() }.map { it.toRow(cats) })
+    }
+
+    private fun ProductEntity.toRow(cats: Map<Long, String>) = cz.flos.core.ProductRow(
+        name, price, vatPercent, categoryId?.let { cats[it] }.orEmpty(), barcode.orEmpty(), active, options.orEmpty(), prices.orEmpty(),
+    )
+
+    suspend fun exportProducts(xlsx: Boolean): ByteArray {
+        val table = productTable()
+        return if (xlsx) cz.flos.core.Xlsx.write("Produkty", table) else cz.flos.core.Csv.write(table)
+    }
+
+    /** What importing [bytes] (xlsx or csv) would do; nothing is changed yet. */
+    suspend fun previewImport(bytes: ByteArray): Pair<cz.flos.core.ImportPlan<Long>, List<String>> {
+        val sheet = runCatching { cz.flos.core.ProductSheet.parse(cz.flos.core.Spreadsheet.read(bytes)) }
+            .getOrElse { cz.flos.core.SheetResult(emptyList(), listOf(tr("Soubor se nepodařilo přečíst: %s", it.message ?: ""))) }
+        val cats = categories.value.associate { it.id to it.name }
+        val plan = cz.flos.core.ProductSheet.plan(catalog.allProducts().map { it.id to it.toRow(cats) }, sheet.rows)
+        return plan to sheet.errors
+    }
+
+    /** Adds the new products and updates the changed ones; icons, order and back office links stay. */
+    fun applyImport(plan: cz.flos.core.ImportPlan<Long>) = viewModelScope.launch {
+        val cats = categories.value.associateBy { cz.flos.core.Pricing.key(it.name) }.toMutableMap()
+        suspend fun categoryId(name: String): Long? {
+            if (name.isBlank()) return null
+            cats[cz.flos.core.Pricing.key(name)]?.let { return it.id }
+            val c = CategoryEntity(name = name.trim(), sortOrder = cats.size)
+            val id = catalog.upsertCategory(c)
+            cats[cz.flos.core.Pricing.key(name)] = c.copy(id = id)
+            return id
+        }
+        val existing = catalog.allProducts().associateBy { it.id }
+        plan.added.forEach { r ->
+            catalog.upsertProduct(ProductEntity(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+        }
+        plan.changed.forEach { (id, r) ->
+            val p = existing[id] ?: return@forEach
+            catalog.upsertProduct(p.copy(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+        }
+        _messages.tryEmit(tr("Import hotový: %d nových, %d změněných", plan.added.size, plan.changed.size))
+    }
+
+    /** All products, also the hidden ones, for bulk edit. */
+    suspend fun allProducts(): List<ProductEntity> = catalog.allProducts()
+
+    /** Applies [change] to the products with [ids]. */
+    fun bulkEdit(ids: Set<Long>, label: String, change: (ProductEntity) -> ProductEntity) = viewModelScope.launch {
+        val list = catalog.allProducts().filter { it.id in ids }
+        list.forEach { catalog.upsertProduct(change(it)) }
+        _messages.tryEmit(tr("%s: upraveno %d produktů", label, list.size))
+    }
+
+    /** Prints price labels on the receipt printer. */
+    fun printLabels(products: List<ProductEntity>, copies: Int, unitNote: String, withShop: Boolean) {
+        val s = settings.value
+        val blocks = products.flatMap { p ->
+            cz.flos.core.Labels.layout(cz.flos.core.PriceLabel(p.name, p.price, p.barcode, unitNote.trim(), if (withShop) s.businessName else ""), copies)
+        }
+        if (blocks.isNotEmpty()) printBlocks(blocks, tr("Vytištěno štítků: %d", products.size * copies.coerceIn(1, 100)))
+    }
+
+    // ---- Notes and documents ----
+    private val noteDao = flos.database.notes()
+    private val attachmentsDir get() = java.io.File(platform.dataDir, "attachments").apply { mkdirs() }
+
+    fun notes(target: cz.flos.pos.data.NoteTarget, id: Long?): Flow<List<cz.flos.pos.data.NoteEntity>> = noteDao.of(target.name, id)
+    val allNotes = noteDao.all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Saves a note; [file] is an attached document with the name to show. */
+    fun addNote(target: cz.flos.pos.data.NoteTarget, id: Long?, text: String, file: Pair<String, ByteArray>?) = viewModelScope.launch {
+        val stored = file?.let { (title, bytes) ->
+            val name = "${System.currentTimeMillis()}-" + title.filter { it.isLetterOrDigit() || it in "._-" }.ifBlank { "soubor" }.take(60)
+            withContext(Dispatchers.IO) { java.io.File(attachmentsDir, name).writeBytes(bytes) }
+            name
+        }
+        noteDao.upsert(cz.flos.pos.data.NoteEntity(target = target.name, targetId = id, text = text.trim(), createdAt = System.currentTimeMillis(),
+            author = settings.value.cashier, fileName = stored, fileTitle = file?.first))
+    }
+
+    fun deleteNote(n: cz.flos.pos.data.NoteEntity) = viewModelScope.launch {
+        n.fileName?.let { withContext(Dispatchers.IO) { java.io.File(attachmentsDir, it).delete() } }
+        noteDao.delete(n.id)
+    }
+
+    suspend fun attachment(n: cz.flos.pos.data.NoteEntity): ByteArray? =
+        n.fileName?.let { withContext(Dispatchers.IO) { java.io.File(attachmentsDir, it).takeIf { f -> f.exists() }?.readBytes() } }
+
     // ---- Waiters ----
     /** Everyone who can serve: back office staff, names from Settings, and whoever has open bills. */
     fun waiterNames(): List<String> {

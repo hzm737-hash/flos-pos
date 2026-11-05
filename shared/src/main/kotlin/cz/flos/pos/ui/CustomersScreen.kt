@@ -134,6 +134,10 @@ internal fun CustomerDialog(vm: PosViewModel, initial: CustomerEntity, onDismiss
                     )
                 }
                 Field(tr("Poznámka"), c.note) { v -> c = c.copy(note = v) }
+                if (initial.id != 0L) {
+                    Text(tr("Poznámky a dokumenty"), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    NotesPanel(vm, cz.flos.pos.data.NoteTarget.CUSTOMER, initial.id)
+                }
                 if (initial.id != 0L) TextButton(onClick = { confirmDelete = true }) {
                     Text(tr("Smazat zákazníka"), color = MaterialTheme.colorScheme.error)
                 }

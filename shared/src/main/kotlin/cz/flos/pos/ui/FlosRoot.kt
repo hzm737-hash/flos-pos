@@ -11,6 +11,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.EventSeat
 import androidx.compose.material.icons.rounded.RequestQuote
 import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.TableView
 import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.SoupKitchen
 import androidx.compose.foundation.rememberScrollState
@@ -70,6 +71,7 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     RESERVATIONS("Rezervace", Icons.Rounded.EventSeat, false),
     DOCUMENTS("Nabídky a zakázky", Icons.Rounded.RequestQuote, false),
     WAITERS("Obsluha", Icons.Rounded.Badge, false),
+    PRODUCT_TOOLS("Excel a štítky", Icons.Rounded.TableView, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
 }
 
@@ -181,6 +183,7 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.RESERVATIONS -> ReservationsScreen(vm, onSeat = { screen = Screen.SELL })
                 Screen.DOCUMENTS -> DocumentsScreen(vm, onSell = { screen = Screen.SELL })
                 Screen.WAITERS -> WaitersScreen(vm)
+                Screen.PRODUCT_TOOLS -> ProductToolsScreen(vm)
             }
         }
         }

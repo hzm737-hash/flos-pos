@@ -107,5 +107,16 @@ class DesktopPlatform(override val dataDir: File) : Platform {
     }
 
     @Composable
+    override fun rememberFileSaver(mime: String, onDone: (Boolean) -> Unit): (String, ByteArray) -> Unit = remember(mime, onDone) {
+        { name, bytes ->
+            val dialog = FileDialog(null as Frame?, tr("Uložit soubor"), FileDialog.SAVE)
+            dialog.file = name
+            dialog.isVisible = true
+            val file = dialog.file?.let { File(dialog.directory, it) }
+            onDone(file != null && runCatching { file.writeBytes(bytes) }.isSuccess)
+        }
+    }
+
+    @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit = onGranted
 }

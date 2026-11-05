@@ -43,6 +43,7 @@ class EscPosEncoder(
             ReceiptBlock.Separator -> { align(Align.LEFT); text("-".repeat(paper.chars)); lf() }
             is ReceiptBlock.Qr -> qr(b.content)
             is ReceiptBlock.Feed -> cmd(ESC, 'd'.code, b.lines.coerceIn(0, 255))
+            is ReceiptBlock.Barcode -> barcode(b.code)
         }
         if (cut) cmd(GS, 'V'.code, 66, 0) // feed and partial cut; ignored by printers without a cutter
         return out.toByteArray()
@@ -63,6 +64,22 @@ class EscPosEncoder(
         align(Align.LEFT)
         raster(qrImage(matrix))
         lf()
+    }
+
+    private fun barcode(code: String) {
+        val bars = runCatching { Labels.bars(code) }.getOrNull() ?: return
+        align(Align.LEFT)
+        raster(barcodeImage(bars))
+        align(Align.CENTER)
+        text(code); lf()
+    }
+
+    /** Bars scaled to whole dots (at most 3 per module), centred, 80 dots high. */
+    internal fun barcodeImage(m: BitMatrix, height: Int = 80): Array<BooleanArray> {
+        val scale = (paper.dots / m.width).coerceIn(1, 3)
+        val left = ((paper.dots - m.width * scale) / 2).coerceAtLeast(0)
+        val row = BooleanArray(paper.dots) { x -> val mx = (x - left) / scale; x >= left && mx in 0 until m.width && m[mx, 0] }
+        return Array(height) { row }
     }
 
     /** Scales the QR modules to whole dots and centres the code on a paper-wide 1-bit image. */

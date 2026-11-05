@@ -12,8 +12,8 @@ import androidx.sqlite.execSQL
  */
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class,
-        DocumentEntity::class, ReservationEntity::class],
-    version = 8,
+        DocumentEntity::class, ReservationEntity::class, NoteEntity::class],
+    version = 9,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -25,6 +25,7 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun customers(): CustomerDao
     abstract fun documents(): DocumentDao
     abstract fun reservations(): ReservationDao
+    abstract fun notes(): NoteDao
 
     companion object {
         const val FILE_NAME = "flos.db"
@@ -145,6 +146,17 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+        /** 8 → 9: notes and attached documents for customers, products and the business. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `target` TEXT NOT NULL, `targetId` INTEGER, " +
+                        "`text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `author` TEXT NOT NULL, `fileName` TEXT, `fileTitle` TEXT)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_target_targetId` ON `notes` (`target`, `targetId`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
     }
 }
