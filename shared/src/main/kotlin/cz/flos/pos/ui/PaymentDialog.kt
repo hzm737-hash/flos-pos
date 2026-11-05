@@ -49,10 +49,23 @@ fun PaymentDialog(
     total: Long,
     title: String = tr("Platba"),
     onDismiss: () -> Unit,
+    /** When set, the dialog also offers a mixed payment (vouchers, card and the rest in cash). */
+    onMixed: ((List<cz.flos.core.PaymentPart>, Long?) -> Unit)? = null,
     onConfirm: (PaymentMethod, Long?) -> Unit,
 ) {
     val s by vm.settings.collectAsState()
     var method by remember { mutableStateOf(PaymentMethod.CASH) }
+    var mixed by remember { mutableStateOf(false) }
+    var cardPart by remember { mutableStateOf("") }
+    var voucherPart by remember { mutableStateOf("") }
+    val cardHaler = Money.parse(cardPart) ?: 0L
+    val voucherHaler = Money.parse(voucherPart) ?: 0L
+    val cashPart = total - cardHaler - voucherHaler
+    val mixedParts = listOf(
+        cz.flos.core.PaymentPart(PaymentMethod.MEAL_VOUCHER, voucherHaler),
+        cz.flos.core.PaymentPart(PaymentMethod.CARD, cardHaler),
+        cz.flos.core.PaymentPart(PaymentMethod.CASH, cashPart),
+    ).filter { it.amount > 0 }
     var given by remember { mutableStateOf("") }
     val qr = remember(total) { vm.preparePaymentQr(total) }
     LaunchedEffect(Unit) { vm.setForeignTransfer(false) }
@@ -62,16 +75,37 @@ fun PaymentDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title + " " + Money.format(if (method == PaymentMethod.CASH) cashDue else total)) },
+        title = { Text(title + " " + Money.format(if (method == PaymentMethod.CASH && !mixed) cashDue else total)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     PaymentMethod.entries.forEach { m ->
-                        FilterChip(selected = method == m, onClick = { method = m },
+                        FilterChip(selected = method == m && !mixed, onClick = { method = m; mixed = false },
                             label = { Text(tr(m.label)) }, leadingIcon = { Icon(m.icon, null) })
                     }
+                    if (onMixed != null) FilterChip(selected = mixed, onClick = { mixed = true }, label = { Text(tr("Kombinovaná")) })
                 }
-                when (method) {
+                if (mixed) {
+                    Hint(tr("Zadejte, kolik zákazník platí stravenkami a kartou. Zbytek zaplatí hotově."))
+                    OutlinedTextField(voucherPart, { voucherPart = it }, label = { Text(tr("Stravenky (Kč)")) }, singleLine = true,
+                        isError = voucherPart.isNotBlank() && Money.parse(voucherPart) == null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(cardPart, { cardPart = it }, label = { Text(tr("Kartou (Kč)")) }, singleLine = true,
+                        isError = cardPart.isNotBlank() && Money.parse(cardPart) == null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                    Text(if (cashPart >= 0) tr("Hotově: %s", Money.format(cashPart)) else tr("Zadáno víc, než je k úhradě: %s", Money.format(-cashPart)),
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        color = if (cashPart >= 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
+                    if (cashPart > 0) {
+                        OutlinedTextField(given, { given = it }, label = { Text(tr("Přijato hotově od zákazníka (Kč)")) }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                        givenHaler?.let { g ->
+                            Text(if (g >= cashPart) tr("Vrátit: %s", Money.format(g - cashPart)) else tr("Chybí: %s", Money.format(cashPart - g)),
+                                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                                color = if (g >= cashPart) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else when (method) {
                     PaymentMethod.CASH -> {
                         OutlinedTextField(
                             value = given,
@@ -150,6 +184,12 @@ fun PaymentDialog(
             }
         },
         confirmButton = {
+            if (mixed) {
+                val ok = cashPart >= 0 && mixedParts.size >= 2 && (givenHaler == null || cashPart <= 0 || givenHaler >= cashPart)
+                Button(enabled = ok, onClick = { onMixed?.invoke(mixedParts, givenHaler.takeIf { cashPart > 0 }) }, modifier = Modifier.padding(start = 8.dp)) {
+                    Text(tr("Dokončit"))
+                }
+            } else {
             val enabled = when (method) {
                 PaymentMethod.CASH -> change == null || change >= 0
                 PaymentMethod.QR_TRANSFER, PaymentMethod.BANK_TRANSFER -> s.iban != null
@@ -160,6 +200,7 @@ fun PaymentDialog(
                 onClick = { onConfirm(method, if (method == PaymentMethod.CASH) givenHaler else null) },
                 modifier = Modifier.padding(start = 8.dp),
             ) { Text(if (method == PaymentMethod.QR_TRANSFER) tr("Vytisknout účtenku s QR") else tr("Dokončit")) }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zpět")) } },
     )

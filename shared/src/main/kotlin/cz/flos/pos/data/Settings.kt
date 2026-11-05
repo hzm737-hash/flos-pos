@@ -87,7 +87,23 @@ data class AppSettings(
     val loyaltyCrownsPerPoint: Int = 100,
     /** Show the cart and total to the customer on a second screen. */
     val customerDisplay: Boolean = false,
+
+    // ---- Prices, discounts and scale labels ----
+    /** Service types, one per line ("Rozvoz: +10 %, ceník Rozvoz"), see cz.flos.core.Pricing; empty = none. */
+    val serviceTypes: String = "",
+    /** Automatic discounts, one rule per line ("Happy hour: 20 %, 15:00-17:00, Po-Pá, kategorie Nápoje"). */
+    val discountRules: String = "",
+    /** Highest discount in percent a cashier may give by hand; managers and owners are not limited. 100 = no limit. */
+    val maxCashierDiscount: Int = 100,
+    /** EAN prefixes of scale labels with the weight ("28") and with the price ("29"). */
+    val scaleWeightPrefixes: String = "",
+    val scalePricePrefixes: String = "",
+    val scalePluDigits: Int = 5,
 ) {
+    val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
+    val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
+    val discountRuleList: List<cz.flos.core.DiscountRule> get() = cz.flos.core.Pricing.parseRules(discountRules)
+
     val paired: Boolean get() = boToken.isNotBlank() && boUrl.isNotBlank()
 
     val tableList: List<String> get() = tables.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -182,6 +198,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
             boLastSync = prefs.get("boLastSync")?.toLongOrNull() ?: d.boLastSync,
             loyaltyCrownsPerPoint = int("loyaltyCrownsPerPoint", d.loyaltyCrownsPerPoint),
             customerDisplay = bool("customerDisplay", d.customerDisplay),
+            serviceTypes = str("serviceTypes", d.serviceTypes),
+            discountRules = str("discountRules", d.discountRules),
+            maxCashierDiscount = int("maxCashierDiscount", d.maxCashierDiscount),
+            scaleWeightPrefixes = str("scaleWeightPrefixes", d.scaleWeightPrefixes),
+            scalePricePrefixes = str("scalePricePrefixes", d.scalePricePrefixes),
+            scalePluDigits = int("scalePluDigits", d.scalePluDigits),
         )
     }
 
@@ -236,6 +258,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "boLastSync" to s.boLastSync.toString(),
                 "loyaltyCrownsPerPoint" to s.loyaltyCrownsPerPoint.toString(),
                 "customerDisplay" to s.customerDisplay.toString(),
+                "serviceTypes" to s.serviceTypes,
+                "discountRules" to s.discountRules,
+                "maxCashierDiscount" to s.maxCashierDiscount.toString(),
+                "scaleWeightPrefixes" to s.scaleWeightPrefixes,
+                "scalePricePrefixes" to s.scalePricePrefixes,
+                "scalePluDigits" to s.scalePluDigits.toString(),
             ),
         )
         _state.value = s

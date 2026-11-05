@@ -12,7 +12,7 @@ import androidx.sqlite.execSQL
  */
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -113,6 +113,16 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+        /** 6 → 7: price lists on products; mixed payments and the service type (na místě, s sebou, rozvoz) on sales. */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE products ADD COLUMN prices TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN paymentParts TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN cashPart INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN serviceType TEXT")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
     }
 }

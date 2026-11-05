@@ -155,6 +155,7 @@ fun SellScreen(vm: PosViewModel) {
             vm, cart.total,
             title = order?.orderNumber?.let { tr("Objednávka č. %d", it) } ?: tr("Platba"),
             onDismiss = { paying = false },
+            onMixed = { parts, given -> vm.checkoutMixed(parts, given) { paying = false; showCartOnPhone = false } },
         ) { method, given ->
             vm.checkout(method, given) { paying = false; showCartOnPhone = false }
         }
@@ -320,6 +321,7 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                 label = { Text(tr("½ porce"), fontWeight = FontWeight.Bold) },
             )
         }
+        PricingChips(vm)
         LazyRow(
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -588,4 +590,35 @@ private fun DiscountDialog(current: Int, onDismiss: () -> Unit, onSet: (Int) -> 
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Zavřít")) } },
     )
+}
+
+/** Service type (na místě, s sebou, rozvoz) and price list of the cart; hidden when none are set up. */
+@Composable
+private fun PricingChips(vm: PosViewModel) {
+    val s by vm.settings.collectAsState()
+    val products by vm.products.collectAsState()
+    val service by vm.serviceType.collectAsState()
+    val list by vm.priceList.collectAsState()
+    val types = s.serviceTypeList
+    val lists = remember(products, s.serviceTypes) { vm.priceListNames() }
+    if (types.isEmpty() && lists.isEmpty()) return
+    LazyRow(
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(types, key = { "t" + it.name }) { t ->
+            val on = service != null && cz.flos.core.Pricing.key(service!!) == cz.flos.core.Pricing.key(t.name)
+            FilterChip(
+                selected = on, onClick = { vm.setPricing(if (on) null else t.name, list) }, shape = RoundedCornerShape(50),
+                label = { Text(t.name + if (t.percent != 0.0) " " + (if (t.percent > 0) "+" else "") + Qty.format(t.percent) + " %" else "") },
+            )
+        }
+        items(lists, key = { "l$it" }) { name ->
+            val on = list != null && cz.flos.core.Pricing.key(list!!) == cz.flos.core.Pricing.key(name)
+            FilterChip(
+                selected = on, onClick = { vm.setPricing(service, if (on) null else name) }, shape = RoundedCornerShape(50),
+                label = { Text(tr("Ceník %s", name)) },
+            )
+        }
+    }
 }

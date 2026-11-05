@@ -31,6 +31,7 @@ fun BankSettings(vm: PosViewModel, s: AppSettings) {
         tr("Flos čte příchozí platby a páruje je s účtenkami placenými QR kódem nebo převodem podle variabilního symbolu. Co zákazník pošle navíc, uloží jako spropitné."),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    BankGuide(vm, s)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BankSource.entries.forEach { b ->
             FilterChip(selected = s.bankSource == b, onClick = { vm.updateSettings { it.copy(bankSource = b) } }, label = { Text(tr(b.label)) })

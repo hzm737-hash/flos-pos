@@ -289,10 +289,77 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Quantity for the product being added: 0,5 once after "½ porce", otherwise 1. */
     private fun nextQty(): Double = if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
 
-    fun addToCart(p: ProductEntity) { val q = nextQty(); _cart.update { it.add(p.id, p.name, p.price, p.vatRate, q) } }
+    fun addToCart(p: ProductEntity) {
+        val q = nextQty()
+        val (unit, auto) = priced(p)
+        _cart.update { it.add(p.id, p.name, unit, p.vatRate, q, auto) }
+    }
 
     /** Adds a product with the variants and extras chosen for it ("Pizza (Velká, Sýr)"). */
-    fun addToCart(p: ProductEntity, name: String, price: Long) { val q = nextQty(); _cart.update { it.add(p.id, name, price, p.vatRate, q) } }
+    fun addToCart(p: ProductEntity, name: String, price: Long) {
+        val q = nextQty()
+        val (unit, auto) = priced(p, extras = price - p.price)
+        _cart.update { it.add(p.id, name, unit, p.vatRate, q, auto) }
+    }
+
+    // ---- Service types, price lists and automatic discounts ----
+    private val _serviceType = MutableStateFlow<String?>(null)
+    /** Service type of the cart ("Na místě", "S sebou", "Rozvoz"); null = none chosen. */
+    val serviceType: StateFlow<String?> = _serviceType.asStateFlow()
+
+    private val _priceList = MutableStateFlow<String?>(null)
+    /** Price list chosen by hand for the cart; null = the service type's list or the normal prices. */
+    val priceList: StateFlow<String?> = _priceList.asStateFlow()
+
+    /** Price lists the products and service types use, for the choice on the sell screen. */
+    fun priceListNames(): List<String> = cz.flos.core.Pricing.priceListNames(products.value.map { it.prices }, settings.value.serviceTypeList)
+
+    private fun serviceNamed(name: String?): cz.flos.core.ServiceType? =
+        name?.let { n -> settings.value.serviceTypeList.firstOrNull { cz.flos.core.Pricing.key(it.name) == cz.flos.core.Pricing.key(n) } }
+
+    /** Unit price and automatic discount (percent) of [p] for a service type and price list; [extras] = variants and extras. */
+    private fun priced(p: ProductEntity, extras: Long = 0, service: String? = _serviceType.value, list: String? = _priceList.value): Pair<Long, Int> {
+        val svc = serviceNamed(service)
+        val listed = cz.flos.core.Pricing.unitPrice(p.price, p.prices, list ?: svc?.priceList, null) + extras
+        val unit = if (svc == null || svc.percent == 0.0) listed else Math.round(listed * (1 + svc.percent / 100.0)).coerceAtLeast(0)
+        val category = p.categoryId?.let { id -> categories.value.firstOrNull { it.id == id }?.name }
+        val rule = cz.flos.core.Pricing.discount(settings.value.discountRuleList, p.name, category, svc?.name, LocalDateTime.now())
+        return unit to (rule?.percent ?: 0)
+    }
+
+    /** Switches the service type and price list; the lines already in the cart get the new prices. */
+    fun setPricing(service: String?, list: String?) {
+        val oldService = _serviceType.value
+        val oldList = _priceList.value
+        _serviceType.value = service
+        _priceList.value = list
+        val byId = products.value.associateBy { it.id }
+        _cart.update { cart ->
+            cart.copy(items = cart.items.map { item ->
+                val p = byId[item.productId] ?: return@map item
+                val (oldBase, oldAuto) = priced(p, 0, oldService, oldList)
+                val oldPct = serviceNamed(oldService)?.percent ?: 0.0
+                // Extras chosen with the product, as they were before the service type's surcharge.
+                val extras = Math.round(item.unitPrice / (1 + oldPct / 100.0)) - Math.round(oldBase / (1 + oldPct / 100.0))
+                val (unit, auto) = priced(p, extras, service, list)
+                item.copy(unitPrice = unit, discountPercent = if (item.discountPercent == oldAuto) auto else item.discountPercent)
+            })
+        }
+    }
+
+    /** Highest manual discount the current cashier may give (managers and owners: 100). */
+    fun discountLimit(): Int {
+        val s = settings.value
+        if (s.maxCashierDiscount >= 100) return 100
+        val staff = cz.flos.core.backoffice.BackOfficeClient.staffFromJson(s.boStaff).firstOrNull { it.name == s.cashier }
+        return if (staff?.role == "OWNER" || staff?.role == "MANAGER") 100 else s.maxCashierDiscount.coerceIn(0, 100)
+    }
+
+    private fun limited(percent: Int): Int {
+        val max = discountLimit()
+        if (percent > max) _messages.tryEmit(tr("Nejvyšší sleva pro pokladníka je %d %%", max))
+        return percent.coerceAtMost(max)
+    }
 
     // ---- Customers and loyalty ----
     val customers = customerDao.all().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -414,13 +481,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Table of the cart: the loaded order's table or the one just picked on the map. */
     val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
     fun setQuantity(index: Int, qty: Double) = _cart.update { it.setQuantity(index, qty) }
-    fun setLineDiscount(index: Int, percent: Int) = _cart.update { it.setLineDiscount(index, percent) }
-    fun setCartDiscount(percent: Int) = _cart.update { it.setDiscount(percent) }
+    fun setLineDiscount(index: Int, percent: Int) { val p = limited(percent); _cart.update { it.setLineDiscount(index, p) } }
+    fun setCartDiscount(percent: Int) { val p = limited(percent); _cart.update { it.setDiscount(p) } }
     fun clearCart() {
         _cart.update { it.clear() }
         _editingOrder.value = null
         _pendingTable.value = null
         _customer.value = null
+        _serviceType.value = null
+        _priceList.value = null
     }
 
     /** The QR payment for an amount, or null when no valid bank account is set. */
@@ -457,13 +526,39 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val table = currentTable
         val customer = _customer.value
         val foreign = _foreignTransfer.value && payment == PaymentMethod.QR_TRANSFER
+        val service = _serviceType.value
         _foreignTransfer.value = false
         _cart.value = Cart()
         _editingOrder.value = null
         _pendingTable.value = null
         _customer.value = null
+        _serviceType.value = null
+        _priceList.value = null
         onDone()
-        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign, table, customer) }
+        viewModelScope.launch { pay(order, cart, payment, cashGiven, foreign, table, customer, service = service) }
+    }
+
+    /**
+     * Pays the cart with several methods at once, e.g. meal vouchers and the rest in cash.
+     * [parts] must add up to the cart total; [cashGiven] is the cash handed over for the cash part.
+     */
+    fun checkoutMixed(parts: List<cz.flos.core.PaymentPart>, cashGiven: Long?, onDone: () -> Unit) {
+        val cart = _cart.value
+        val used = parts.filter { it.amount > 0 }
+        if (cart.isEmpty() || used.sumOf { it.amount } != cart.total) return
+        if (used.size < 2) return checkout(used.firstOrNull()?.method ?: PaymentMethod.CASH, cashGiven, onDone)
+        val order = _editingOrder.value
+        val table = currentTable
+        val customer = _customer.value
+        val service = _serviceType.value
+        _cart.value = Cart()
+        _editingOrder.value = null
+        _pendingTable.value = null
+        _customer.value = null
+        _serviceType.value = null
+        _priceList.value = null
+        onDone()
+        viewModelScope.launch { pay(order, cart, cz.flos.core.PaymentPart.main(used), cashGiven, false, table, customer, used, service) }
     }
 
     /**
@@ -516,8 +611,11 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private suspend fun pay(
         order: SaleEntity?, cart: Cart, payment: PaymentMethod, cashGiven: Long?, foreign: Boolean = false, table: String? = order?.tableName,
         customer: cz.flos.pos.data.CustomerEntity? = null,
+        parts: List<cz.flos.core.PaymentPart> = emptyList(),
+        service: String? = order?.serviceType,
     ) {
         val s = settings.value
+        val mixed = parts.size > 1
         val rate = if (foreign) eurRate() else null
         val now = LocalDateTime.now()
         val millis = nowMillis(now)
@@ -526,7 +624,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val epc = if (foreign && rate != null) s.eurIban?.let { epcFor(s, it, cart.total, rate, vs, number) } else null
         if (foreign && epc == null) _messages.tryEmit(tr("Kurz EUR není k dispozici, tisknu českou QR platbu"))
         val qr = if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
-        val received = if (payment == PaymentMethod.CASH) Money.roundToCrowns(cart.total) else cart.total
+        val received = if (payment == PaymentMethod.CASH && !mixed) Money.roundToCrowns(cart.total) else cart.total
         val sale = (order ?: SaleEntity(number = number, createdAt = millis, total = cart.total, payment = payment.name)).copy(
             number = number, createdAt = millis, total = cart.total, payment = payment.name, cashGiven = cashGiven,
             cashier = s.cashier, discountPercent = cart.discountPercent,
@@ -535,6 +633,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             bankStatus = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) TransferStatus.WAITING.name else null,
             payCurrency = epc?.let { "EUR" }, payAmount = epc?.amount, eurRate = epc?.let { rate },
             tableName = table, customerId = customer?.id ?: order?.customerId,
+            paymentParts = if (mixed) cz.flos.core.PaymentPart.format(parts) else null,
+            cashPart = if (mixed) parts.filter { it.method == PaymentMethod.CASH }.sumOf { it.amount } else 0,
+            serviceType = service,
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
@@ -546,13 +647,14 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val earned = if (buyer != null) pointsFor(received) else 0L
         if (buyer != null && earned > 0) customerDao.addPoints(buyer.id, earned)
         val note = listOfNotNull(
+            service,
             table?.let { tr("Stůl %s", it) },
             buyer?.let { "Zákazník: ${it.name}" + if (earned > 0) ", body +$earned (celkem ${it.points + earned})" else "" },
             sale.note.takeIf { it.isNotBlank() },
         ).joinToString(" · ")
         val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = note,
-            epc = epc, eurRate = epc?.let { rate })
-        val drawer = s.openDrawer && payment == PaymentMethod.CASH
+            epc = epc, eurRate = epc?.let { rate }, parts = if (mixed) parts else emptyList())
+        val drawer = s.openDrawer && (payment == PaymentMethod.CASH || sale.cashPart > 0)
         if (s.autoPrint) printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, receipt), tr("Účtenka %s vytištěna", number), drawer)
         else {
             if (drawer) openDrawer()
@@ -581,16 +683,19 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val existing = _editingOrder.value
         val table = currentTable
         val customer = _customer.value
+        val service = _serviceType.value
         _cart.value = Cart()
         _editingOrder.value = null
         _pendingTable.value = null
         _customer.value = null
+        _serviceType.value = null
+        _priceList.value = null
         viewModelScope.launch {
             val s = settings.value
             val now = LocalDateTime.now()
             val sale = if (existing != null) {
                 existing.copy(total = cart.total, received = cart.total, discountPercent = cart.discountPercent, note = note.trim(),
-                    kitchenReadyAt = null, customerId = customer?.id ?: existing.customerId)
+                    kitchenReadyAt = null, customerId = customer?.id ?: existing.customerId, serviceType = service)
                     .also { salesDao.replace(it, itemsOf(cart)) }
             } else {
                 val orderNo = flos.settings.nextOrderNumber()
@@ -599,6 +704,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                     number = "O-$millis", createdAt = millis, openedAt = millis, total = cart.total, received = cart.total,
                     payment = "", cashier = s.cashier, discountPercent = cart.discountPercent,
                     status = SaleStatus.OPEN.name, orderNumber = orderNo, note = note.trim(), tableName = table, customerId = customer?.id,
+                    serviceType = service,
                 ).let { it.copy(id = salesDao.insert(it, itemsOf(cart))) }
             }
             _messages.tryEmit(sale.tableName?.let { tr("Stůl %s uložen", it) } ?: tr("Objednávka č. %d uložena", sale.orderNumber ?: 0))
@@ -622,6 +728,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _editingOrder.value = sw.sale
         _pendingTable.value = null
         _customer.value = null
+        _serviceType.value = sw.sale.serviceType
+        _priceList.value = null
         sw.sale.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
     }
 
@@ -668,9 +776,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 note = sw.sale.note, kind = DocumentKind.ORDER)
         }
         val refundOf = sw.sale.refundOf?.let { salesDao.get(it)?.sale?.number }
-        val note = listOfNotNull(sw.sale.tableName?.let { tr("Stůl %s", it) }, sw.sale.note.takeIf { it.isNotBlank() }).joinToString(" · ")
+        val note = listOfNotNull(sw.sale.serviceType, sw.sale.tableName?.let { tr("Stůl %s", it) }, sw.sale.note.takeIf { it.isNotBlank() }).joinToString(" · ")
         return Receipt(sw.sale.number, created, sw.sale.cashier, sw.toCart(), payment, sw.sale.cashGiven, qr.takeIf { refundOf == null }, copy,
-            eet = record?.let(::eetInfo), note = note, epc = epc, eurRate = epc?.let { sw.sale.eurRate }, refundOf = refundOf)
+            eet = record?.let(::eetInfo), note = note, epc = epc, eurRate = epc?.let { sw.sale.eurRate }, refundOf = refundOf,
+            parts = if (sw.sale.isMixed) sw.sale.parts else emptyList())
     }
 
     suspend fun receiptPreview(sw: SaleWithItems): String {
@@ -939,8 +1048,14 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Looks up a product by its barcode and adds it to the cart. Returns false when no product has that code. */
     suspend fun addByBarcode(code: String): Boolean {
-        val p = salesDao.productByBarcode(code.trim()) ?: return false
-        addToCart(p)
+        salesDao.productByBarcode(code.trim())?.let { addToCart(it); return true }
+        // A label from the shop scale: product code + weight or price inside the EAN.
+        val label = cz.flos.core.ScaleBarcode.parse(code, settings.value.scale) ?: return false
+        val p = cz.flos.core.ScaleBarcode.pluCandidates(label).firstNotNullOfOrNull { salesDao.productByBarcode(it) } ?: return false
+        val (unit, auto) = priced(p)
+        val qty = cz.flos.core.ScaleBarcode.quantity(label, p.price)
+        if (qty < Qty.MIN) return false
+        _cart.update { it.add(p.id, p.name, unit, p.vatRate, qty, auto) }
         return true
     }
 
