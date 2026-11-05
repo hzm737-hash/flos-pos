@@ -87,7 +87,59 @@ data class AppSettings(
     val loyaltyCrownsPerPoint: Int = 100,
     /** Show the cart and total to the customer on a second screen. */
     val customerDisplay: Boolean = false,
+
+    // ---- Prices, discounts and scale labels ----
+    /** Service types, one per line ("Rozvoz: +10 %, ceník Rozvoz"), see cz.flos.core.Pricing; empty = none. */
+    val serviceTypes: String = "",
+    /** Automatic discounts, one rule per line ("Happy hour: 20 %, 15:00-17:00, Po-Pá, kategorie Nápoje"). */
+    val discountRules: String = "",
+    /** Highest discount in percent a cashier may give by hand; managers and owners are not limited. 100 = no limit. */
+    val maxCashierDiscount: Int = 100,
+    /** EAN prefixes of scale labels with the weight ("28") and with the price ("29"). */
+    val scaleWeightPrefixes: String = "",
+    val scalePricePrefixes: String = "",
+    val scalePluDigits: Int = 5,
+
+    // ---- Waiters and documents ----
+    /** Waiter names besides the back office staff, comma separated. */
+    val waiters: String = "",
+    /** Waiters who are not on shift now, one per line. */
+    val waitersAway: String = "",
+    /** Days a quotation is valid by default. */
+    val quoteValidDays: Int = 14,
+
+    // ---- Business details, receipt layout, roles ----
+    val phone: String = "",
+    val email: String = "",
+    val web: String = "",
+    /** Commercial/trade register entry printed at the bottom ("Zapsáno v OR …"). */
+    val registry: String = "",
+    /** Opening hours as text, one day or range per line ("Po-Pá 8:00-20:00"). */
+    val openingHours: String = "",
+    val receiptShowCashier: Boolean = true,
+    val receiptItemVat: Boolean = true,
+    val receiptBigTotal: Boolean = false,
+    val receiptExtraFooter: String = "",
+    /** Terms printed on quotations, pro forma invoices and customer orders. */
+    val documentTerms: String = "",
+    /** Roles of staff without the back office, one per line ("Eva: pokladní"). */
+    val staffRoles: String = "",
+    /** What roles may not do, see cz.flos.core.Permissions. Empty = everyone may do everything. */
+    val permissions: String = "",
+
+    // ---- Messages to customers and the QR menu ----
+    val msgReservation: String = cz.flos.core.Notify.RESERVATION,
+    val msgReminder: String = cz.flos.core.Notify.REMINDER,
+    val msgOrderReady: String = cz.flos.core.Notify.ORDER_READY,
+    val msgDocument: String = cz.flos.core.Notify.DOCUMENT,
+    /** Public address of the menu: from the back office or the owner's own web. */
+    val menuUrl: String = "",
+    val menuNote: String = "",
 ) {
+    val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
+    val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
+    val discountRuleList: List<cz.flos.core.DiscountRule> get() = cz.flos.core.Pricing.parseRules(discountRules)
+
     val paired: Boolean get() = boToken.isNotBlank() && boUrl.isNotBlank()
 
     val tableList: List<String> get() = tables.split(',', ';', '\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -107,6 +159,12 @@ data class AppSettings(
             dic = dic,
             vatPayer = vatPayer,
             footer = footer,
+            contacts = listOfNotNull(
+                listOf(phone.takeIf { it.isNotBlank() }?.let { "tel. $it" }, email.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ").ifBlank { null },
+                web.takeIf { it.isNotBlank() },
+            ),
+            registry = registry,
+            style = cz.flos.core.ReceiptStyle(receiptShowCashier, receiptItemVat, receiptBigTotal, receiptExtraFooter, documentTerms),
         )
 }
 
@@ -182,6 +240,33 @@ class SettingsStore(private val prefs: KeyValueStore) {
             boLastSync = prefs.get("boLastSync")?.toLongOrNull() ?: d.boLastSync,
             loyaltyCrownsPerPoint = int("loyaltyCrownsPerPoint", d.loyaltyCrownsPerPoint),
             customerDisplay = bool("customerDisplay", d.customerDisplay),
+            serviceTypes = str("serviceTypes", d.serviceTypes),
+            discountRules = str("discountRules", d.discountRules),
+            maxCashierDiscount = int("maxCashierDiscount", d.maxCashierDiscount),
+            scaleWeightPrefixes = str("scaleWeightPrefixes", d.scaleWeightPrefixes),
+            scalePricePrefixes = str("scalePricePrefixes", d.scalePricePrefixes),
+            scalePluDigits = int("scalePluDigits", d.scalePluDigits),
+            waiters = str("waiters", d.waiters),
+            waitersAway = str("waitersAway", d.waitersAway),
+            quoteValidDays = int("quoteValidDays", d.quoteValidDays),
+            phone = str("phone", d.phone),
+            email = str("email", d.email),
+            web = str("web", d.web),
+            registry = str("registry", d.registry),
+            openingHours = str("openingHours", d.openingHours),
+            receiptShowCashier = bool("receiptShowCashier", d.receiptShowCashier),
+            receiptItemVat = bool("receiptItemVat", d.receiptItemVat),
+            receiptBigTotal = bool("receiptBigTotal", d.receiptBigTotal),
+            receiptExtraFooter = str("receiptExtraFooter", d.receiptExtraFooter),
+            documentTerms = str("documentTerms", d.documentTerms),
+            staffRoles = str("staffRoles", d.staffRoles),
+            permissions = str("permissions", d.permissions),
+            msgReservation = str("msgReservation", d.msgReservation),
+            msgReminder = str("msgReminder", d.msgReminder),
+            msgOrderReady = str("msgOrderReady", d.msgOrderReady),
+            msgDocument = str("msgDocument", d.msgDocument),
+            menuUrl = str("menuUrl", d.menuUrl),
+            menuNote = str("menuNote", d.menuNote),
         )
     }
 
@@ -236,6 +321,33 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "boLastSync" to s.boLastSync.toString(),
                 "loyaltyCrownsPerPoint" to s.loyaltyCrownsPerPoint.toString(),
                 "customerDisplay" to s.customerDisplay.toString(),
+                "serviceTypes" to s.serviceTypes,
+                "discountRules" to s.discountRules,
+                "maxCashierDiscount" to s.maxCashierDiscount.toString(),
+                "scaleWeightPrefixes" to s.scaleWeightPrefixes,
+                "scalePricePrefixes" to s.scalePricePrefixes,
+                "scalePluDigits" to s.scalePluDigits.toString(),
+                "waiters" to s.waiters,
+                "waitersAway" to s.waitersAway,
+                "quoteValidDays" to s.quoteValidDays.toString(),
+                "phone" to s.phone,
+                "email" to s.email,
+                "web" to s.web,
+                "registry" to s.registry,
+                "openingHours" to s.openingHours,
+                "receiptShowCashier" to s.receiptShowCashier.toString(),
+                "receiptItemVat" to s.receiptItemVat.toString(),
+                "receiptBigTotal" to s.receiptBigTotal.toString(),
+                "receiptExtraFooter" to s.receiptExtraFooter,
+                "documentTerms" to s.documentTerms,
+                "staffRoles" to s.staffRoles,
+                "permissions" to s.permissions,
+                "msgReservation" to s.msgReservation,
+                "msgReminder" to s.msgReminder,
+                "msgOrderReady" to s.msgOrderReady,
+                "msgDocument" to s.msgDocument,
+                "menuUrl" to s.menuUrl,
+                "menuNote" to s.menuNote,
             ),
         )
         _state.value = s

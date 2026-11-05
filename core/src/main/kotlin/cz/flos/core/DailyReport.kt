@@ -10,6 +10,8 @@ data class SaleSummary(
     val cancelled: Boolean = false,
     /** Voluntary tip, outside the VAT base. */
     val tip: Long = 0,
+    /** Mixed payment split by method; empty = all of [total] by [payment]. */
+    val parts: List<PaymentPart> = emptyList(),
 )
 
 /**
@@ -92,7 +94,8 @@ data class DailyReport(
                 receiptCount = valid.size,
                 cancelledCount = sales.size - valid.size,
                 total = valid.sumOf { it.total },
-                byPayment = valid.groupBy { it.payment }.mapValues { (_, s) -> s.sumOf { it.total } },
+                byPayment = valid.flatMap { s -> if (s.parts.size > 1) s.parts.map { it.method to it.amount } else listOf(s.payment to s.total) }
+                    .groupBy({ it.first }, { it.second }).mapValues { (_, a) -> a.sum() },
                 byVat = vat,
                 tips = valid.sumOf { it.tip },
             )

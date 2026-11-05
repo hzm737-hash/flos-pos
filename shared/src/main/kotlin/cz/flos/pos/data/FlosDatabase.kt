@@ -11,8 +11,9 @@ import androidx.sqlite.execSQL
  * (see FlosApp and desktop Main), using [FlosDatabase.MIGRATIONS].
  */
 @Database(
-    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class],
-    version = 6,
+    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class,
+        DocumentEntity::class, ReservationEntity::class, NoteEntity::class],
+    version = 9,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -22,6 +23,9 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun cash(): CashDao
     abstract fun bank(): BankDao
     abstract fun customers(): CustomerDao
+    abstract fun documents(): DocumentDao
+    abstract fun reservations(): ReservationDao
+    abstract fun notes(): NoteDao
 
     companion object {
         const val FILE_NAME = "flos.db"
@@ -113,6 +117,46 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+        /** 6 → 7: price lists on products; mixed payments and the service type (na místě, s sebou, rozvoz) on sales. */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE products ADD COLUMN prices TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN paymentParts TEXT")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN cashPart INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE sales ADD COLUMN serviceType TEXT")
+            }
+        }
+
+        /** 7 → 8: quotations, pro forma invoices and customer orders; table reservations. */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `documents` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `kind` TEXT NOT NULL, " +
+                        "`number` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `customerId` INTEGER, `customerName` TEXT NOT NULL, " +
+                        "`items` TEXT NOT NULL, `total` INTEGER NOT NULL, `note` TEXT NOT NULL, `dueDay` INTEGER, `status` TEXT NOT NULL, `cashier` TEXT NOT NULL)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_kind` ON `documents` (`kind`)")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_createdAt` ON `documents` (`createdAt`)")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `reservations` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`phone` TEXT NOT NULL, `guests` INTEGER NOT NULL, `at` INTEGER NOT NULL, `minutes` INTEGER NOT NULL, `tableName` TEXT, " +
+                        "`note` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_reservations_at` ON `reservations` (`at`)")
+            }
+        }
+
+        /** 8 → 9: notes and attached documents for customers, products and the business. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `notes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `target` TEXT NOT NULL, `targetId` INTEGER, " +
+                        "`text` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `author` TEXT NOT NULL, `fileName` TEXT, `fileTitle` TEXT)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_target_targetId` ON `notes` (`target`, `targetId`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
     }
 }

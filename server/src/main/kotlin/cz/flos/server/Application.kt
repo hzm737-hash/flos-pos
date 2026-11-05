@@ -14,6 +14,7 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
+import io.ktor.http.withCharset
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -46,6 +47,16 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
     routing {
         staticResources("/", "static", index = "index.html")
         get("/health") { call.respondText("ok") }
+        /** Public digital menu (QR menu); rendered here from the till's data, so no foreign HTML is ever served. */
+        get("/menu/{slug}") {
+            val slug = call.parameters["slug"].orEmpty()
+            val data = db.tx { queryOne("SELECT data FROM menus WHERE slug = ?", slug) { it.getString(1) } }
+            val menu = data?.let { runCatching { FlosJson.decodeFromString(cz.flos.core.MenuData.serializer(), it) }.getOrNull() }
+                ?: return@get call.respondText("Menu nenalezeno", status = HttpStatusCode.NotFound)
+            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
+            call.response.headers.append("Cache-Control", "public, max-age=60")
+            call.respondText(cz.flos.core.MenuPage.html(menu), io.ktor.http.ContentType.Text.Html.withCharset(Charsets.UTF_8))
+        }
         route("/api/v1") {
             authRoutes(db, openSignup)
             orgRoutes(db)
@@ -568,6 +579,25 @@ private fun Route.deviceRoutes(db: Db) {
         call.respond(db.tx {
             query("SELECT product_id, qty_milli FROM stock_levels WHERE branch_id = ?", d.branchId) { DeviceStock(it.getLong(1), it.getLong(2).fromMilli()) }
         })
+    }
+    /** The till publishes the digital menu; the link stays the same for the company. */
+    put("/device/menu") {
+        val d = call.device(db)
+        val menu = call.receive<cz.flos.core.MenuData>()
+        if (menu.categories.sumOf { it.items.size } > 2000) throw ApiError(HttpStatusCode.BadRequest, "Menu je příliš velké")
+        val json = FlosJson.encodeToString(cz.flos.core.MenuData.serializer(), menu)
+        val slug = db.tx {
+            val existing = queryOne("SELECT slug FROM menus WHERE org_id = ?", d.orgId) { it.getString(1) }
+            if (existing != null) {
+                update("UPDATE menus SET data = ?, updated_at = ? WHERE org_id = ?", json, System.currentTimeMillis(), d.orgId)
+                existing
+            } else {
+                val slug = Tokens.new("").filter(Char::isLetterOrDigit).lowercase().take(12)
+                update("INSERT INTO menus (org_id, slug, data, updated_at) VALUES (?,?,?,?)", d.orgId, slug, json, System.currentTimeMillis())
+                slug
+            }
+        }
+        call.respond(MenuPublished("/menu/$slug"))
     }
     /** Staff clock in/out on the till with their PIN. */
     post("/device/clock") {

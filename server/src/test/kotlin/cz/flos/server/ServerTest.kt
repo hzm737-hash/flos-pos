@@ -218,4 +218,24 @@ class ServerTest {
         assertTrue(html.contains("Flos"))
         assertEquals("ok", client.get("/health").bodyAsText())
     }
+
+    @Test fun publishesQrMenu() = run { client ->
+        val token = client.register()
+        val branch = client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
+        val device = client.postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
+        val dt = client.postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>()
+        val menu = cz.flos.core.MenuData("Bistro <Flos>", categories = listOf(cz.flos.core.MenuCategory("Nápoje", listOf(cz.flos.core.MenuItem("Espresso", 5900)))))
+        val path = client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu) }.body<MenuPublished>().path
+        assertTrue(path.startsWith("/menu/"))
+        val page = client.get(path)
+        assertEquals(HttpStatusCode.OK, page.status)
+        val html = page.bodyAsText()
+        assertTrue(html.contains("Bistro &lt;Flos&gt;"))
+        assertTrue(html.contains("59,00 Kč"))
+        assertTrue(page.headers["Content-Security-Policy"]!!.contains("default-src 'none'"))
+        val again = client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu.copy(name = "Bistro")) }.body<MenuPublished>().path
+        assertEquals(path, again)
+        assertEquals(HttpStatusCode.NotFound, client.get("/menu/nic").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.put("/api/v1/device/menu") { contentType(ContentType.Application.Json); setBody(menu) }.status)
+    }
 }

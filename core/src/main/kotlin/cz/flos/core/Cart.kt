@@ -28,13 +28,14 @@ data class Cart(val items: List<CartItem> = emptyList(), val discountPercent: In
 
     fun isEmpty() = items.isEmpty()
 
-    fun add(productId: Long, name: String, unitPrice: Long, vatRate: VatRate, qty: Double = 1.0): Cart {
+    /** [discountPercent] is an automatic discount (happy hour); lines with a different discount stay separate. */
+    fun add(productId: Long, name: String, unitPrice: Long, vatRate: VatRate, qty: Double = 1.0, discountPercent: Int = 0): Cart {
         // Variants of one product ("Pizza (velká)") stay on separate lines.
-        val idx = items.indexOfFirst { it.productId == productId && it.name == name && it.unitPrice == unitPrice && it.discountPercent == 0 }
+        val idx = items.indexOfFirst { it.productId == productId && it.name == name && it.unitPrice == unitPrice && it.discountPercent == discountPercent }
         return if (idx >= 0) {
             copy(items = items.toMutableList().also { it[idx] = it[idx].copy(quantity = Qty.norm(it[idx].quantity + qty)) })
         } else {
-            copy(items = items + CartItem(productId, name, unitPrice, vatRate, qty))
+            copy(items = items + CartItem(productId, name, unitPrice, vatRate, qty, discountPercent.coerceIn(0, 100)))
         }
     }
 

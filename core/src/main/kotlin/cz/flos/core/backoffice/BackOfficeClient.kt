@@ -18,6 +18,7 @@ import javax.crypto.spec.PBEKeySpec
 
 @Serializable data class BoOrg(val id: Long = 0, val name: String = "", val ico: String = "", val dic: String = "", val vatPayer: Boolean = false, val address: String = "")
 @Serializable data class BoBranch(val id: Long = 0, val name: String = "", val address: String = "", val eetIdJednotky: Int? = null)
+@Serializable data class BoMenuPublished(val path: String)
 @Serializable data class BoStaff(val id: Long, val name: String, val role: String = "CASHIER", val pinHash: String? = null)
 @Serializable data class BoConfig(
     val deviceId: Long, val deviceName: String = "", val eetIdPokl: String = "", val org: BoOrg = BoOrg(), val branch: BoBranch = BoBranch(),
@@ -50,7 +51,8 @@ class BackOfficeException(message: String, val status: Int = 0) : IOException(me
  * [token] is the device token received when pairing.
  */
 class BackOfficeClient(baseUrl: String, private val token: String? = null, private val timeoutMs: Int = 15_000) {
-    private val api = normalize(baseUrl) + "/api/v1"
+    private val base = normalize(baseUrl)
+    private val api = base + "/api/v1"
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
     /** Pairs this till with the 8-character code from the back office (Tills → Pair). Returns the device token and configuration. */
@@ -69,6 +71,10 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
 
     /** Clocks a staff member in or out with their PIN (attendance). */
     fun clock(pin: String): BoClock = request("POST", "/device/clock", json.encodeToString(ClockRequest.serializer(), ClockRequest(pin)), BoClock.serializer())
+
+    /** Publishes the digital menu; returns its public address (e.g. https://flos.gnocco.cz/menu/ab12cd34ef). */
+    fun publishMenu(menu: cz.flos.core.MenuData): String =
+        base + request("PUT", "/device/menu", json.encodeToString(cz.flos.core.MenuData.serializer(), menu), BoMenuPublished.serializer()).path
 
     private fun <T> request(method: String, path: String, body: String?, serializer: KSerializer<T>, auth: Boolean = true): T {
         val conn = URI(api + path).toURL().openConnection() as HttpURLConnection

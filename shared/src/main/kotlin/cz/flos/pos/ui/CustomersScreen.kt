@@ -111,6 +111,8 @@ internal fun CustomerDialog(vm: PosViewModel, initial: CustomerEntity, onDismiss
     var c by remember(initial) { mutableStateOf(initial) }
     var totals by remember(initial.id) { mutableStateOf<CustomerTotals?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var messaging by remember { mutableStateOf(false) }
+    if (messaging) SendDialog(vm, initial.name, c.phone, c.email, "Dobrý den ${initial.name}, ", onDismiss = { messaging = false })
     LaunchedEffect(initial.id) { if (initial.id != 0L) totals = vm.customerTotals(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -134,6 +136,11 @@ internal fun CustomerDialog(vm: PosViewModel, initial: CustomerEntity, onDismiss
                     )
                 }
                 Field(tr("Poznámka"), c.note) { v -> c = c.copy(note = v) }
+                if (initial.id != 0L && (c.phone.isNotBlank() || c.email.isNotBlank())) TextButton(onClick = { messaging = true }) { Text(tr("Napsat zákazníkovi")) }
+                if (initial.id != 0L) {
+                    Text(tr("Poznámky a dokumenty"), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                    NotesPanel(vm, cz.flos.pos.data.NoteTarget.CUSTOMER, initial.id)
+                }
                 if (initial.id != 0L) TextButton(onClick = { confirmDelete = true }) {
                     Text(tr("Smazat zákazníka"), color = MaterialTheme.colorScheme.error)
                 }

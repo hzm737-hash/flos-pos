@@ -41,6 +41,8 @@ data class ProductEntity(
     val barcode: String? = null,
     /** Variants and extras as text, see cz.flos.core.ProductOptions ("Velikost: Malá, Velká +40"). */
     val options: String? = null,
+    /** Prices in other price lists as text, see cz.flos.core.Pricing ("Rozvoz: 89"). */
+    val prices: String? = null,
     /** Id in the back office when the product comes from there. */
     val remoteId: Long? = null,
 ) {
@@ -97,7 +99,15 @@ data class SaleEntity(
     val customerId: Long? = null,
     /** When the kitchen marked the order as ready; null while it is being prepared. */
     val kitchenReadyAt: Long? = null,
+    /** Mixed payment, see cz.flos.core.PaymentPart ("MEAL_VOUCHER:15000,CASH:4900"); null = all by [payment]. */
+    val paymentParts: String? = null,
+    /** Cash share of a mixed payment, for the drawer count. */
+    val cashPart: Long = 0,
+    /** Service type chosen at the till: "Na místě", "S sebou", "Rozvoz"… */
+    val serviceType: String? = null,
 ) {
+    val parts: List<cz.flos.core.PaymentPart> get() = cz.flos.core.PaymentPart.parse(paymentParts)
+    val isMixed: Boolean get() = parts.size > 1
     val isRefund: Boolean get() = refundOf != null
     val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
     /** Converts an amount in [payCurrency] to haléře. */
@@ -157,5 +167,6 @@ data class SaleWithItems(
         discountPercent = sale.discountPercent,
     )
 
-    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled, sale.tip)
+    fun toSummary(): SaleSummary = SaleSummary(sale.received, sale.paymentMethod ?: PaymentMethod.CASH, toCart().vatBreakdown(), sale.cancelled, sale.tip,
+        parts = if (sale.isMixed) sale.parts else emptyList())
 }

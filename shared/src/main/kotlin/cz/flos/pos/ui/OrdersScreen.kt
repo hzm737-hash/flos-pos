@@ -59,6 +59,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
     val orders by vm.openOrders.collectAsState()
     var paying by remember { mutableStateOf<SaleWithItems?>(null) }
     var cancelling by remember { mutableStateOf<SaleWithItems?>(null) }
+    var handing by remember { mutableStateOf<SaleWithItems?>(null) }
     val fmt = remember { SimpleDateFormat("d.M. HH:mm", Locale.forLanguageTag("cs-CZ")) }
 
     if (orders.isEmpty()) {
@@ -108,6 +109,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
                                 TextButton(onClick = { vm.editOrder(sw); onEdit() }) { Icon(Icons.Rounded.Edit, null); Text(tr(" Upravit")) }
                                 TextButton(onClick = { vm.reprintOrder(sw) }) { Icon(Icons.Rounded.Print, null); Text(tr(" Tisk")) }
                                 TextButton(onClick = { cancelling = sw }) { Icon(Icons.Rounded.Block, null); Text(tr(" Zrušit")) }
+                                TextButton(onClick = { handing = sw }) { Text(tr("Předat") + if (s.cashier.isNotBlank()) " (${s.cashier})" else "") }
                             }
                         }
                     }
@@ -121,6 +123,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
             vm.payOrder(sw, method, given); paying = null
         }
     }
+    handing?.let { sw -> HandOverOne(vm, sw, onDismiss = { handing = null }) }
     cancelling?.let { sw ->
         var reason by remember(sw) { mutableStateOf("") }
         AlertDialog(
