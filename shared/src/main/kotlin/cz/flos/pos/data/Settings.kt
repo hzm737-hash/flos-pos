@@ -99,6 +99,14 @@ data class AppSettings(
     val scaleWeightPrefixes: String = "",
     val scalePricePrefixes: String = "",
     val scalePluDigits: Int = 5,
+
+    // ---- Waiters and documents ----
+    /** Waiter names besides the back office staff, comma separated. */
+    val waiters: String = "",
+    /** Waiters who are not on shift now, one per line. */
+    val waitersAway: String = "",
+    /** Days a quotation is valid by default. */
+    val quoteValidDays: Int = 14,
 ) {
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
@@ -204,6 +212,9 @@ class SettingsStore(private val prefs: KeyValueStore) {
             scaleWeightPrefixes = str("scaleWeightPrefixes", d.scaleWeightPrefixes),
             scalePricePrefixes = str("scalePricePrefixes", d.scalePricePrefixes),
             scalePluDigits = int("scalePluDigits", d.scalePluDigits),
+            waiters = str("waiters", d.waiters),
+            waitersAway = str("waitersAway", d.waitersAway),
+            quoteValidDays = int("quoteValidDays", d.quoteValidDays),
         )
     }
 
@@ -264,6 +275,9 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "scaleWeightPrefixes" to s.scaleWeightPrefixes,
                 "scalePricePrefixes" to s.scalePricePrefixes,
                 "scalePluDigits" to s.scalePluDigits.toString(),
+                "waiters" to s.waiters,
+                "waitersAway" to s.waitersAway,
+                "quoteValidDays" to s.quoteValidDays.toString(),
             ),
         )
         _state.value = s

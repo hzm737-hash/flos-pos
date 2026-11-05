@@ -72,6 +72,8 @@ data class Receipt(
     val eurRate: Double? = null,
     /** Mixed payment (e.g. meal vouchers and the rest in cash): the amount of each method; empty = all by [payment]. */
     val parts: List<PaymentPart> = emptyList(),
+    /** Quote valid until, pro forma due date, or the date of a customer order. */
+    val validUntil: java.time.LocalDate? = null,
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
@@ -87,6 +89,12 @@ enum class DocumentKind {
     PRE_BILL,
     /** Ticket for an open order (delivery, takeaway) that has not been paid yet. Not a tax document. */
     ORDER,
+    /** Price quotation (cenová nabídka) for a customer. Not a tax document. */
+    QUOTE,
+    /** Pro forma invoice asking for payment in advance. Not a tax document. */
+    PROFORMA,
+    /** Customer order for a later date (dort, catering); paid when it is picked up. Not a tax document. */
+    SALES_ORDER,
 }
 
 data class EetReceiptInfo(
@@ -110,6 +118,7 @@ sealed interface ReceiptBlock {
 class ReceiptLayout(private val width: Int) {
 
     private val dateFmt = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm")
+    private val dayFmt = DateTimeFormatter.ofPattern("d.M.yyyy")
 
     fun layout(business: BusinessInfo, r: Receipt): List<ReceiptBlock> = buildList {
         add(ReceiptBlock.Line(business.name, Align.CENTER, bold = true, large = true))
@@ -123,6 +132,9 @@ class ReceiptLayout(private val width: Int) {
         val title = when {
             r.kind == DocumentKind.PRE_BILL -> "PŘEDBĚŽNÝ ÚČET"
             r.kind == DocumentKind.ORDER -> "OBJEDNÁVKA č. ${r.number}"
+            r.kind == DocumentKind.QUOTE -> "CENOVÁ NABÍDKA č. ${r.number}"
+            r.kind == DocumentKind.PROFORMA -> "ZÁLOHOVÁ FAKTURA č. ${r.number}"
+            r.kind == DocumentKind.SALES_ORDER -> "OBJEDNÁVKA ZÁKAZNÍKA č. ${r.number}"
             r.stornoOf != null -> "STORNO účtenky ${r.stornoOf}"
             r.refundOf != null -> "VRATKA k účtence ${r.refundOf}"
             business.vatPayer -> "Zjednodušený daňový doklad"
@@ -158,8 +170,22 @@ class ReceiptLayout(private val width: Int) {
         }
         if (!fiscal) {
             add(ReceiptBlock.Separator)
-            add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
-            add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
+            when (r.kind) {
+                DocumentKind.QUOTE -> add(ReceiptBlock.Line("Ceny platí do: ${r.validUntil?.format(dayFmt) ?: "dle dohody"}", Align.CENTER, bold = true))
+                DocumentKind.PROFORMA -> {
+                    add(ReceiptBlock.Line("K úhradě předem", Align.CENTER, bold = true))
+                    r.validUntil?.let { add(ReceiptBlock.Line("Splatnost: ${it.format(dayFmt)}", Align.CENTER)) }
+                    r.qr?.let { qr ->
+                        add(ReceiptBlock.Line("QR Platba", Align.CENTER, bold = true))
+                        add(ReceiptBlock.Qr(qr.toSpayd()))
+                        add(ReceiptBlock.Line(CzechBankAccount.fromIban(qr.iban)?.toString() ?: CzechBankAccount.formatIban(qr.iban), Align.CENTER))
+                        qr.variableSymbol?.let { add(ReceiptBlock.Line("VS: $it", Align.CENTER)) }
+                    }
+                }
+                DocumentKind.SALES_ORDER -> r.validUntil?.let { add(ReceiptBlock.Line("Termín: ${it.format(dayFmt)}", Align.CENTER, bold = true)) }
+                else -> add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+            }
+            if (r.kind != DocumentKind.QUOTE) add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
             add(ReceiptBlock.Feed(3))
             return@buildList
         }

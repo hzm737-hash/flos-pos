@@ -1070,6 +1070,127 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = flos.settings.update(transform)
 
+    // ---- Quotations, pro forma invoices, customer orders ----
+    private val documentDao = flos.database.documents()
+    val documents = documentDao.all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Saves the cart as a quotation, pro forma invoice or customer order and empties the cart.
+     * Nothing is stored as a sale and nothing goes to EET.
+     */
+    fun saveDocument(kind: DocumentKind, note: String, due: LocalDate?, print: Boolean) {
+        val cart = _cart.value
+        if (cart.isEmpty()) return
+        val customer = _customer.value
+        clearCart()
+        viewModelScope.launch {
+            val now = LocalDateTime.now()
+            val number = cz.flos.core.DocumentNumbers.next(kind, now.year, documentDao.numbers(kind.name))
+            val doc = cz.flos.pos.data.DocumentEntity(
+                kind = kind.name, number = number, createdAt = nowMillis(now), customerId = customer?.id, customerName = customer?.name.orEmpty(),
+                items = cz.flos.core.CartText.encode(cart), total = cart.total, note = note.trim(), dueDay = due?.toEpochDay(), cashier = settings.value.cashier,
+            )
+            val id = documentDao.upsert(doc)
+            _messages.tryEmit(tr("Doklad %s uložen", number))
+            if (print) printDocument(doc.copy(id = id))
+        }
+    }
+
+    fun documentReceipt(d: cz.flos.pos.data.DocumentEntity): Receipt {
+        val s = settings.value
+        val created = LocalDateTime.ofInstant(Instant.ofEpochMilli(d.createdAt), ZoneId.systemDefault())
+        val qr = if (d.docKind == DocumentKind.PROFORMA) qrFor(d.total, cz.flos.core.DocumentNumbers.variableSymbol(d.number), "${s.businessName} ${d.number}") else null
+        val note = listOf(d.customerName.takeIf { it.isNotBlank() }?.let { "Zákazník: $it" }, d.note.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
+        return Receipt(d.number, created, d.cashier, d.cart(), PaymentMethod.QR_TRANSFER, qr = qr, note = note, kind = d.docKind, validUntil = d.due)
+    }
+
+    fun documentPreview(d: cz.flos.pos.data.DocumentEntity): String {
+        val s = settings.value
+        return ReceiptLayout.toPlainText(ReceiptLayout(s.paperWidth.chars).layout(s.business, documentReceipt(d)), s.paperWidth.chars)
+    }
+
+    fun printDocument(d: cz.flos.pos.data.DocumentEntity) {
+        val s = settings.value
+        printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, documentReceipt(d)), tr("Doklad %s vytištěn", d.number))
+    }
+
+    /** Puts the document's items into the cart to be sold, and marks the document as done. */
+    fun sellDocument(d: cz.flos.pos.data.DocumentEntity) {
+        clearCart()
+        _cart.value = d.cart()
+        d.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
+        viewModelScope.launch { documentDao.setStatus(d.id, cz.flos.pos.data.DocStatus.DONE.name) }
+        _messages.tryEmit(tr("Položky dokladu %s jsou v košíku", d.number))
+    }
+
+    /** Puts the items into the cart without closing the document (to make a new version). */
+    fun copyDocument(d: cz.flos.pos.data.DocumentEntity) {
+        clearCart()
+        _cart.value = d.cart()
+        d.customerId?.let { id -> viewModelScope.launch { _customer.value = customerDao.get(id) } }
+        _messages.tryEmit(tr("Položky dokladu %s jsou v košíku", d.number))
+    }
+
+    fun setDocumentStatus(d: cz.flos.pos.data.DocumentEntity, status: cz.flos.pos.data.DocStatus) =
+        viewModelScope.launch { documentDao.setStatus(d.id, status.name) }
+
+    fun deleteDocument(d: cz.flos.pos.data.DocumentEntity) = viewModelScope.launch { documentDao.delete(d.id) }
+
+    // ---- Table reservations ----
+    private val reservationDao = flos.database.reservations()
+    /** Reservations from yesterday on. */
+    val reservations = reservationDao.from(nowMillis(LocalDate.now().minusDays(1).atStartOfDay()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun saveReservation(r: cz.flos.pos.data.ReservationEntity) = viewModelScope.launch {
+        reservationDao.upsert(if (r.createdAt == 0L) r.copy(createdAt = System.currentTimeMillis()) else r)
+        _messages.tryEmit(tr("Rezervace %s uložena", r.name))
+    }
+
+    fun setReservationStatus(r: cz.flos.pos.data.ReservationEntity, status: cz.flos.pos.data.BookingStatus) =
+        viewModelScope.launch { reservationDao.setStatus(r.id, status.name) }
+
+    fun deleteReservation(r: cz.flos.pos.data.ReservationEntity) = viewModelScope.launch { reservationDao.delete(r.id) }
+
+    /** Other reservations of the same table at the same time. */
+    fun reservationClashes(r: cz.flos.pos.data.ReservationEntity): List<cz.flos.pos.data.ReservationEntity> {
+        val all = reservations.value
+        val ids = cz.flos.core.Bookings.conflicts(r.booking().copy(active = true), all.map { it.booking() }).map { it.id }.toSet()
+        return all.filter { it.id in ids }
+    }
+
+    /** Guests arrived: the reservation is marked seated and a new bill starts for its table. */
+    fun seatReservation(r: cz.flos.pos.data.ReservationEntity): Boolean {
+        setReservationStatus(r, cz.flos.pos.data.BookingStatus.SEATED)
+        val table = r.tableName ?: return false
+        val open = openOrders.value.firstOrNull { it.sale.tableName == table }
+        if (open != null) editOrder(open) else startTable(table)
+        return true
+    }
+
+    // ---- Waiters ----
+    /** Everyone who can serve: back office staff, names from Settings, and whoever has open bills. */
+    fun waiterNames(): List<String> {
+        val s = settings.value
+        val staff = cz.flos.core.backoffice.BackOfficeClient.staffFromJson(s.boStaff).map { it.name }
+        return cz.flos.core.Waiters.names(staff + listOf(s.cashier), s.waiters, openOrders.value.map { it.sale.cashier })
+    }
+
+    fun setWaiterAway(name: String, away: Boolean) = flos.settings.update { it.copy(waitersAway = cz.flos.core.Waiters.setAway(it.waitersAway, name, away)) }
+
+    /** Gives an open bill to another waiter. */
+    fun handOver(sw: SaleWithItems, to: String) = viewModelScope.launch {
+        salesDao.update(sw.sale.copy(cashier = to))
+        _messages.tryEmit(tr("Účet předán: %s", to))
+    }
+
+    /** Gives all open bills of [from] to [to], e.g. when a waiter ends their shift. */
+    fun handOverAll(from: String, to: String) = viewModelScope.launch {
+        val bills = openOrders.value.filter { it.sale.cashier == from }
+        bills.forEach { salesDao.update(it.sale.copy(cashier = to)) }
+        _messages.tryEmit(tr("%d účtů předáno: %s", bills.size, to))
+    }
+
     private suspend fun seedDemoData() {
         val drinks = catalog.upsertCategory(CategoryEntity(name = "Nápoje", color = 0xFF6C5CE7L, sortOrder = 0, icon = "cafe"))
         val food = catalog.upsertCategory(CategoryEntity(name = "Jídlo", color = 0xFFFF6B5AL, sortOrder = 1, icon = "meal"))

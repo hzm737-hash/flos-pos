@@ -11,8 +11,9 @@ import androidx.sqlite.execSQL
  * (see FlosApp and desktop Main), using [FlosDatabase.MIGRATIONS].
  */
 @Database(
-    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class],
-    version = 7,
+    entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class,
+        DocumentEntity::class, ReservationEntity::class],
+    version = 8,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -22,6 +23,8 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun cash(): CashDao
     abstract fun bank(): BankDao
     abstract fun customers(): CustomerDao
+    abstract fun documents(): DocumentDao
+    abstract fun reservations(): ReservationDao
 
     companion object {
         const val FILE_NAME = "flos.db"
@@ -123,6 +126,25 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        /** 7 → 8: quotations, pro forma invoices and customer orders; table reservations. */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `documents` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `kind` TEXT NOT NULL, " +
+                        "`number` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `customerId` INTEGER, `customerName` TEXT NOT NULL, " +
+                        "`items` TEXT NOT NULL, `total` INTEGER NOT NULL, `note` TEXT NOT NULL, `dueDay` INTEGER, `status` TEXT NOT NULL, `cashier` TEXT NOT NULL)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_kind` ON `documents` (`kind`)")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_createdAt` ON `documents` (`createdAt`)")
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `reservations` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`phone` TEXT NOT NULL, `guests` INTEGER NOT NULL, `at` INTEGER NOT NULL, `minutes` INTEGER NOT NULL, `tableName` TEXT, " +
+                        "`note` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)",
+                )
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_reservations_at` ON `reservations` (`at`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
     }
 }

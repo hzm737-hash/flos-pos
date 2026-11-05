@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.EventSeat
+import androidx.compose.material.icons.rounded.RequestQuote
+import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.QueryStats
 import androidx.compose.material.icons.rounded.SoupKitchen
 import androidx.compose.foundation.rememberScrollState
@@ -64,6 +67,9 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     RECEIPT_STATS("Statistiky účtenek", Icons.Rounded.QueryStats, false),
     KITCHEN("Kuchyně", Icons.Rounded.SoupKitchen, false),
     CUSTOMERS("Zákazníci", Icons.Rounded.Groups, false),
+    RESERVATIONS("Rezervace", Icons.Rounded.EventSeat, false),
+    DOCUMENTS("Nabídky a zakázky", Icons.Rounded.RequestQuote, false),
+    WAITERS("Obsluha", Icons.Rounded.Badge, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
 }
 
@@ -172,6 +178,9 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.SETTINGS -> SettingsScreen(vm)
                 Screen.KITCHEN -> KitchenScreen(vm)
                 Screen.CUSTOMERS -> CustomersScreen(vm)
+                Screen.RESERVATIONS -> ReservationsScreen(vm, onSeat = { screen = Screen.SELL })
+                Screen.DOCUMENTS -> DocumentsScreen(vm, onSell = { screen = Screen.SELL })
+                Screen.WAITERS -> WaitersScreen(vm)
             }
         }
         }
