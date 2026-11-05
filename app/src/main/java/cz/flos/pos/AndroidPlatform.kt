@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import cz.flos.pos.eet.EetRetryWorker
 import cz.flos.pos.print.BluetoothPrinter
@@ -45,6 +46,24 @@ class AndroidPlatform(private val context: Context) : Platform {
         }
         return { launcher.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }
     }
+
+    @Composable
+    override fun rememberFileSaver(mime: String, onDone: (Boolean) -> Unit): (String, ByteArray) -> Unit {
+        val ctx = LocalContext.current
+        val pending = remember { arrayOfNulls<ByteArray>(1) }
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(mime)) { uri ->
+            val bytes = pending[0]
+            pending[0] = null
+            if (uri == null || bytes == null) { onDone(false); return@rememberLauncherForActivityResult }
+            val ok = runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null }.getOrDefault(false)
+            onDone(ok)
+        }
+        return { name, bytes -> pending[0] = bytes; launcher.launch(name) }
+    }
+
+    override fun openUrl(url: String): Boolean = runCatching {
+        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.isSuccess
 
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit {

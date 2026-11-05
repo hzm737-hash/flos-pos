@@ -37,6 +37,9 @@ fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
     val orders by vm.openOrders.collectAsState()
     val tables = settings.tableList
     val byTable = orders.filter { it.sale.tableName != null }.groupBy { it.sale.tableName!! }
+    val reservations by vm.reservations.collectAsState()
+    val bookings = reservations.map { it.booking() }
+    val booked = reservations.associateBy { it.id }
 
     if (tables.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -77,7 +80,12 @@ fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
                                 (if (bills.all { it.sale.kitchenReadyAt != null }) " · " + tr("kuchyně hotovo") else ""),
                                 style = MaterialTheme.typography.labelSmall)
                         }
-                    } else Text(tr("Volný"), style = MaterialTheme.typography.labelMedium)
+                    } else {
+                        val next = cz.flos.core.Bookings.upcoming(name, bookings, java.time.LocalDateTime.now())?.let { booked[it.id] }
+                        if (next != null) Text(tr("Rezervace %s", next.start.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))) + " · " + next.name,
+                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = FlosViolet, maxLines = 2)
+                        else Text(tr("Volný"), style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

@@ -19,6 +19,22 @@ enum class PaymentMethod(val label: String, val eet: Boolean = true) {
     INVOICE("Na fakturu", eet = false),
 }
 
+/** One method of a mixed payment and the amount paid by it (haléře). */
+data class PaymentPart(val method: PaymentMethod, val amount: Long) {
+    companion object {
+        /** "CASH:12000,MEAL_VOUCHER:15000" as stored with the sale. */
+        fun format(parts: List<PaymentPart>): String = parts.joinToString(",") { "${it.method.name}:${it.amount}" }
+
+        fun parse(text: String?): List<PaymentPart> = text.orEmpty().split(',').mapNotNull { t ->
+            val m = PaymentMethod.entries.firstOrNull { it.name == t.substringBefore(':').trim() } ?: return@mapNotNull null
+            t.substringAfter(':', "").trim().toLongOrNull()?.let { PaymentPart(m, it) }
+        }
+
+        /** The method shown as the sale's payment type: the one with the biggest share. */
+        fun main(parts: List<PaymentPart>): PaymentMethod = parts.maxByOrNull { it.amount }?.method ?: PaymentMethod.CASH
+    }
+}
+
 data class BusinessInfo(
     val name: String,
     val addressLines: List<String> = emptyList(),
@@ -27,6 +43,24 @@ data class BusinessInfo(
     val vatPayer: Boolean = false,
     val headerNote: String = "",
     val footer: String = "Děkujeme za nákup!",
+    /** Phone, e-mail and web, printed under the address when set. */
+    val contacts: List<String> = emptyList(),
+    /** Entry in the commercial or trade register ("Zapsáno v OR vedeném KS v Praze, oddíl C, vložka 123"). */
+    val registry: String = "",
+    val style: ReceiptStyle = ReceiptStyle(),
+)
+
+/** How receipts and documents look. The defaults print exactly the classic Flos receipt. */
+data class ReceiptStyle(
+    val showCashier: Boolean = true,
+    /** VAT letter next to each item (for VAT payers). */
+    val showItemVat: Boolean = true,
+    /** The total in double size. */
+    val bigTotal: Boolean = false,
+    /** Second footer line, e.g. "Sledujte nás na Instagramu @bistro". */
+    val extraFooter: String = "",
+    /** Printed on quotations and pro forma invoices, e.g. payment terms. */
+    val documentTerms: String = "",
 )
 
 data class Receipt(
@@ -54,10 +88,14 @@ data class Receipt(
     val epc: EpcQr? = null,
     /** CZK per 1 EUR used for [epc]. */
     val eurRate: Double? = null,
+    /** Mixed payment (e.g. meal vouchers and the rest in cash): the amount of each method; empty = all by [payment]. */
+    val parts: List<PaymentPart> = emptyList(),
+    /** Quote valid until, pro forma due date, or the date of a customer order. */
+    val validUntil: java.time.LocalDate? = null,
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
-    val cashDue: Long get() = if (payment == PaymentMethod.CASH) Money.roundToCrowns(total) else total
+    val cashDue: Long get() = if (payment == PaymentMethod.CASH && parts.size <= 1) Money.roundToCrowns(total) else total
     val rounding: Long get() = cashDue - total
     val change: Long? get() = cashGiven?.let { it - cashDue }
 }
@@ -69,6 +107,12 @@ enum class DocumentKind {
     PRE_BILL,
     /** Ticket for an open order (delivery, takeaway) that has not been paid yet. Not a tax document. */
     ORDER,
+    /** Price quotation (cenová nabídka) for a customer. Not a tax document. */
+    QUOTE,
+    /** Pro forma invoice asking for payment in advance. Not a tax document. */
+    PROFORMA,
+    /** Customer order for a later date (dort, catering); paid when it is picked up. Not a tax document. */
+    SALES_ORDER,
 }
 
 data class EetReceiptInfo(
@@ -86,18 +130,22 @@ sealed interface ReceiptBlock {
     data object Separator : ReceiptBlock
     data class Qr(val content: String, val caption: String? = null) : ReceiptBlock
     data class Feed(val lines: Int) : ReceiptBlock
+    /** A one-dimensional barcode (EAN or CODE 128) with its digits underneath, e.g. on price labels. */
+    data class Barcode(val code: String) : ReceiptBlock
 }
 
 /** Lays out a receipt as printer-independent blocks for a paper width in characters (32 for 58 mm, 48 for 80 mm). */
 class ReceiptLayout(private val width: Int) {
 
     private val dateFmt = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm")
+    private val dayFmt = DateTimeFormatter.ofPattern("d.M.yyyy")
 
     fun layout(business: BusinessInfo, r: Receipt): List<ReceiptBlock> = buildList {
         add(ReceiptBlock.Line(business.name, Align.CENTER, bold = true, large = true))
         business.addressLines.filter { it.isNotBlank() }.forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         if (business.ico.isNotBlank()) add(ReceiptBlock.Line("IČO: ${business.ico}", Align.CENTER))
         if (business.dic.isNotBlank()) add(ReceiptBlock.Line("DIČ: ${business.dic}", Align.CENTER))
+        business.contacts.filter { it.isNotBlank() }.forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         if (business.headerNote.isNotBlank()) add(ReceiptBlock.Line(business.headerNote, Align.CENTER))
         add(ReceiptBlock.Separator)
 
@@ -105,6 +153,9 @@ class ReceiptLayout(private val width: Int) {
         val title = when {
             r.kind == DocumentKind.PRE_BILL -> "PŘEDBĚŽNÝ ÚČET"
             r.kind == DocumentKind.ORDER -> "OBJEDNÁVKA č. ${r.number}"
+            r.kind == DocumentKind.QUOTE -> "CENOVÁ NABÍDKA č. ${r.number}"
+            r.kind == DocumentKind.PROFORMA -> "ZÁLOHOVÁ FAKTURA č. ${r.number}"
+            r.kind == DocumentKind.SALES_ORDER -> "OBJEDNÁVKA ZÁKAZNÍKA č. ${r.number}"
             r.stornoOf != null -> "STORNO účtenky ${r.stornoOf}"
             r.refundOf != null -> "VRATKA k účtence ${r.refundOf}"
             business.vatPayer -> "Zjednodušený daňový doklad"
@@ -114,14 +165,14 @@ class ReceiptLayout(private val width: Int) {
         if (!fiscal) add(ReceiptBlock.Line("Není daňový doklad", Align.CENTER))
         if (fiscal) add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
         else add(ReceiptBlock.Line(r.createdAt.format(dateFmt), Align.CENTER))
-        if (r.cashier.isNotBlank()) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
+        if (r.cashier.isNotBlank() && business.style.showCashier) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
         if (r.note.isNotBlank()) wrap(r.note, width).forEach { add(ReceiptBlock.Line(it, bold = !fiscal)) }
         add(ReceiptBlock.Separator)
 
         for (item in r.cart.items) {
             wrap(item.name, width).forEach { add(ReceiptBlock.Line(it)) }
             val qtyText = "  ${Qty.format(item.quantity)} x ${Money.format(item.unitPrice, "")}" +
-                if (business.vatPayer) "  ${item.vatRate.label}" else ""
+                if (business.vatPayer && business.style.showItemVat) "  ${item.vatRate.label}" else ""
             add(ReceiptBlock.Line(twoCol(qtyText, Money.format(item.gross, ""))))
             if (item.discount > 0) {
                 add(ReceiptBlock.Line(twoCol("  Sleva ${item.discountPercent} %", Money.format(-item.discount, ""))))
@@ -133,20 +184,47 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Line(twoCol("Sleva ${r.cart.discountPercent} %", Money.format(-r.cart.cartDiscount))))
         }
         val sign = if (r.stornoOf != null) -1 else 1
-        add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(sign * r.total)), bold = true))
+        if (business.style.bigTotal) add(ReceiptBlock.Line("CELKEM " + Money.format(sign * r.total), Align.CENTER, bold = true, large = true))
+        else add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(sign * r.total)), bold = true))
         if (r.rounding != 0L) {
             add(ReceiptBlock.Line(twoCol("Zaokrouhlení", Money.format(r.rounding))))
             add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(r.cashDue)), bold = true))
         }
         if (!fiscal) {
             add(ReceiptBlock.Separator)
-            add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
-            add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
+            when (r.kind) {
+                DocumentKind.QUOTE -> add(ReceiptBlock.Line("Ceny platí do: ${r.validUntil?.format(dayFmt) ?: "dle dohody"}", Align.CENTER, bold = true))
+                DocumentKind.PROFORMA -> {
+                    add(ReceiptBlock.Line("K úhradě předem", Align.CENTER, bold = true))
+                    r.validUntil?.let { add(ReceiptBlock.Line("Splatnost: ${it.format(dayFmt)}", Align.CENTER)) }
+                    r.qr?.let { qr ->
+                        add(ReceiptBlock.Line("QR Platba", Align.CENTER, bold = true))
+                        add(ReceiptBlock.Qr(qr.toSpayd()))
+                        add(ReceiptBlock.Line(CzechBankAccount.fromIban(qr.iban)?.toString() ?: CzechBankAccount.formatIban(qr.iban), Align.CENTER))
+                        qr.variableSymbol?.let { add(ReceiptBlock.Line("VS: $it", Align.CENTER)) }
+                    }
+                }
+                DocumentKind.SALES_ORDER -> r.validUntil?.let { add(ReceiptBlock.Line("Termín: ${it.format(dayFmt)}", Align.CENTER, bold = true)) }
+                else -> add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+            }
+            if (r.kind != DocumentKind.QUOTE) add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
+            if ((r.kind == DocumentKind.QUOTE || r.kind == DocumentKind.PROFORMA || r.kind == DocumentKind.SALES_ORDER) && business.style.documentTerms.isNotBlank()) {
+                wrap(business.style.documentTerms, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
+            }
+            if (r.kind == DocumentKind.PROFORMA && business.registry.isNotBlank()) wrap(business.registry, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
             add(ReceiptBlock.Feed(3))
             return@buildList
         }
-        add(ReceiptBlock.Line(twoCol("Platba", r.payment.label)))
-        if (r.payment == PaymentMethod.CASH && r.cashGiven != null) {
+        if (r.parts.size > 1) {
+            add(ReceiptBlock.Line("Platba kombinovaná:"))
+            r.parts.forEach { add(ReceiptBlock.Line(twoCol("  " + it.method.label, Money.format(it.amount)))) }
+            val cashPart = r.parts.filter { it.method == PaymentMethod.CASH }.sumOf { it.amount }
+            if (cashPart > 0 && r.cashGiven != null) {
+                add(ReceiptBlock.Line(twoCol("Přijato hotově", Money.format(r.cashGiven))))
+                add(ReceiptBlock.Line(twoCol("Vráceno", Money.format((r.cashGiven - cashPart).coerceAtLeast(0)))))
+            }
+        } else add(ReceiptBlock.Line(twoCol("Platba", r.payment.label)))
+        if (r.parts.size <= 1 && r.payment == PaymentMethod.CASH && r.cashGiven != null) {
             add(ReceiptBlock.Line(twoCol("Přijato", Money.format(r.cashGiven))))
             add(ReceiptBlock.Line(twoCol("Vráceno", Money.format(r.change ?: 0))))
         }
@@ -194,6 +272,8 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Separator)
             wrap(business.footer, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         }
+        if (business.style.extraFooter.isNotBlank()) wrap(business.style.extraFooter, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
+        if (business.registry.isNotBlank()) wrap(business.registry, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         add(ReceiptBlock.Feed(3))
     }
 
@@ -241,6 +321,7 @@ class ReceiptLayout(private val width: Int) {
                 ReceiptBlock.Separator -> appendLine("-".repeat(width))
                 is ReceiptBlock.Qr -> appendLine("[QR] ${b.content}")
                 is ReceiptBlock.Feed -> repeat(b.lines) { appendLine() }
+                is ReceiptBlock.Barcode -> appendLine("[|||] ${b.code}")
             }
         }
     }

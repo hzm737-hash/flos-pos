@@ -163,6 +163,7 @@ private fun ProductDialog(
     var icon by remember { mutableStateOf(initial.icon) }
     var barcode by remember { mutableStateOf(initial.barcode.orEmpty()) }
     var options by remember { mutableStateOf(initial.options.orEmpty()) }
+    var prices by remember { mutableStateOf(initial.prices.orEmpty()) }
     val parsed = Money.parse(price)
     val valid = name.isNotBlank() && parsed != null && parsed >= 0
 
@@ -208,12 +209,23 @@ private fun ProductDialog(
                             else tr("Skupin: %d · voleb: %d", groups.size, groups.sumOf { it.choices.size }))
                     },
                 )
+                Text(tr("Ceny v jiných cenících"), style = MaterialTheme.typography.labelLarge)
+                OutlinedTextField(
+                    prices, { prices = it }, minLines = 1, modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Rozvoz: 89\nZaměstnanci: 45") },
+                    supportingText = {
+                        val n = cz.flos.core.Pricing.parsePrices(prices).size
+                        Text(if (prices.isBlank()) tr("Každý řádek jeden ceník: název, dvojtečka a cena v Kč. Ceník se vybere na prodeji nebo podle typu služby.")
+                            else tr("Ceníků: %d", n))
+                    },
+                )
             }
         },
         confirmButton = {
             Button(enabled = valid, onClick = {
                 onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon,
-                    barcode = barcode.trim().ifEmpty { null }, options = options.trim().ifEmpty { null }))
+                    barcode = barcode.trim().ifEmpty { null }, options = options.trim().ifEmpty { null },
+                    prices = prices.trim().ifEmpty { null }))
             }) { Text(tr("Uložit")) }
         },
         dismissButton = {
