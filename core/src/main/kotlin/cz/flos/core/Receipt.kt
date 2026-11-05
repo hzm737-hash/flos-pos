@@ -19,6 +19,22 @@ enum class PaymentMethod(val label: String, val eet: Boolean = true) {
     INVOICE("Na fakturu", eet = false),
 }
 
+/** One method of a mixed payment and the amount paid by it (haléře). */
+data class PaymentPart(val method: PaymentMethod, val amount: Long) {
+    companion object {
+        /** "CASH:12000,MEAL_VOUCHER:15000" as stored with the sale. */
+        fun format(parts: List<PaymentPart>): String = parts.joinToString(",") { "${it.method.name}:${it.amount}" }
+
+        fun parse(text: String?): List<PaymentPart> = text.orEmpty().split(',').mapNotNull { t ->
+            val m = PaymentMethod.entries.firstOrNull { it.name == t.substringBefore(':').trim() } ?: return@mapNotNull null
+            t.substringAfter(':', "").trim().toLongOrNull()?.let { PaymentPart(m, it) }
+        }
+
+        /** The method shown as the sale's payment type: the one with the biggest share. */
+        fun main(parts: List<PaymentPart>): PaymentMethod = parts.maxByOrNull { it.amount }?.method ?: PaymentMethod.CASH
+    }
+}
+
 data class BusinessInfo(
     val name: String,
     val addressLines: List<String> = emptyList(),
@@ -54,10 +70,12 @@ data class Receipt(
     val epc: EpcQr? = null,
     /** CZK per 1 EUR used for [epc]. */
     val eurRate: Double? = null,
+    /** Mixed payment (e.g. meal vouchers and the rest in cash): the amount of each method; empty = all by [payment]. */
+    val parts: List<PaymentPart> = emptyList(),
 ) {
     val total: Long get() = cart.total
     /** Amount actually due in cash, rounded to whole crowns. */
-    val cashDue: Long get() = if (payment == PaymentMethod.CASH) Money.roundToCrowns(total) else total
+    val cashDue: Long get() = if (payment == PaymentMethod.CASH && parts.size <= 1) Money.roundToCrowns(total) else total
     val rounding: Long get() = cashDue - total
     val change: Long? get() = cashGiven?.let { it - cashDue }
 }
@@ -145,8 +163,16 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Feed(3))
             return@buildList
         }
-        add(ReceiptBlock.Line(twoCol("Platba", r.payment.label)))
-        if (r.payment == PaymentMethod.CASH && r.cashGiven != null) {
+        if (r.parts.size > 1) {
+            add(ReceiptBlock.Line("Platba kombinovaná:"))
+            r.parts.forEach { add(ReceiptBlock.Line(twoCol("  " + it.method.label, Money.format(it.amount)))) }
+            val cashPart = r.parts.filter { it.method == PaymentMethod.CASH }.sumOf { it.amount }
+            if (cashPart > 0 && r.cashGiven != null) {
+                add(ReceiptBlock.Line(twoCol("Přijato hotově", Money.format(r.cashGiven))))
+                add(ReceiptBlock.Line(twoCol("Vráceno", Money.format((r.cashGiven - cashPart).coerceAtLeast(0)))))
+            }
+        } else add(ReceiptBlock.Line(twoCol("Platba", r.payment.label)))
+        if (r.parts.size <= 1 && r.payment == PaymentMethod.CASH && r.cashGiven != null) {
             add(ReceiptBlock.Line(twoCol("Přijato", Money.format(r.cashGiven))))
             add(ReceiptBlock.Line(twoCol("Vráceno", Money.format(r.change ?: 0))))
         }
