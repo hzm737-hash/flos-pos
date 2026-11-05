@@ -30,6 +30,13 @@ fun QrImage(qr: cz.flos.core.EpcQr, size: Dp = 240.dp, modifier: Modifier = Modi
     QrMatrix(matrix, size, modifier)
 }
 
+/** Shows a QR code for any text, e.g. the link to the digital menu. */
+@Composable
+fun QrText(text: String, size: Dp = 200.dp, modifier: Modifier = Modifier) {
+    val matrix = remember(text) { QrPlatba.qrMatrix(text) }
+    QrMatrix(matrix, size, modifier)
+}
+
 @Composable
 private fun QrMatrix(matrix: com.google.zxing.common.BitMatrix, size: Dp, modifier: Modifier) {
     val description = tr("QR Platba")

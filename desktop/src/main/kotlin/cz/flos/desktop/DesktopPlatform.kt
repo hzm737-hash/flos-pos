@@ -117,6 +117,16 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         }
     }
 
+    override fun openUrl(url: String): Boolean = runCatching {
+        val d = java.awt.Desktop.getDesktop()
+        val uri = java.net.URI(url)
+        when {
+            url.startsWith("mailto:") && d.isSupported(java.awt.Desktop.Action.MAIL) -> d.mail(uri)
+            url.startsWith("http") && d.isSupported(java.awt.Desktop.Action.BROWSE) -> d.browse(uri)
+            else -> error("Nepodporováno")
+        }
+    }.isSuccess
+
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit = onGranted
 }

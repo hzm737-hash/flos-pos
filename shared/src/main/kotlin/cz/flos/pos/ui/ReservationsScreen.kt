@@ -73,6 +73,7 @@ fun ReservationsScreen(vm: PosViewModel, onSeat: () -> Unit) {
     val all by vm.reservations.collectAsState()
     var editing by remember { mutableStateOf<ReservationEntity?>(null) }
     var showDone by remember { mutableStateOf(false) }
+    var messaging by remember { mutableStateOf<ReservationEntity?>(null) }
     val now = LocalDateTime.now()
     Scaffold(
         floatingActionButton = {
@@ -119,6 +120,7 @@ fun ReservationsScreen(vm: PosViewModel, onSeat: () -> Unit) {
                                     Button(onClick = { if (vm.seatReservation(r)) onSeat() }) { Icon(Icons.Rounded.EventSeat, null); Text(tr(" Usadit")) }
                                     TextButton(onClick = { vm.setReservationStatus(r, BookingStatus.NO_SHOW) }) { Text(tr("Nepřišli")) }
                                     TextButton(onClick = { vm.setReservationStatus(r, BookingStatus.CANCELLED) }) { Text(tr("Zrušit")) }
+                                    TextButton(onClick = { messaging = r }) { Text(tr("Zpráva")) }
                                 }
                             }
                         }
@@ -128,6 +130,14 @@ fun ReservationsScreen(vm: PosViewModel, onSeat: () -> Unit) {
         }
     }
     editing?.let { r -> ReservationDialog(vm, r, onDismiss = { editing = null }) }
+    messaging?.let { r ->
+        SendDialog(vm, tr("Zpráva pro %s", r.name), r.phone, "", vm.reservationMessage(r, reminder = false), onDismiss = { messaging = null }) { set ->
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = false, onClick = { set(vm.reservationMessage(r, reminder = false)) }, label = { Text(tr("Potvrzení")) })
+                FilterChip(selected = false, onClick = { set(vm.reservationMessage(r, reminder = true)) }, label = { Text(tr("Připomínka")) })
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)

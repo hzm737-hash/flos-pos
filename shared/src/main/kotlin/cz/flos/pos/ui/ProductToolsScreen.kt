@@ -70,7 +70,7 @@ private const val XLSX = "application/vnd.openxmlformats-officedocument.spreadsh
 @Composable
 fun ProductToolsScreen(vm: PosViewModel) {
     var tab by remember { mutableStateOf(0) }
-    val tabs = listOf(tr("Excel"), tr("Hromadné úpravy"), tr("Štítky"), tr("Poznámky a dokumenty"))
+    val tabs = listOf(tr("Excel"), tr("Hromadné úpravy"), tr("Štítky"), tr("Poznámky a dokumenty"), tr("QR menu"))
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(selectedTabIndex = tab) {
             tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) }
@@ -79,6 +79,7 @@ fun ProductToolsScreen(vm: PosViewModel) {
             0 -> ExcelTab(vm)
             1 -> BulkTab(vm)
             2 -> LabelsTab(vm)
+            4 -> QrMenuTab(vm)
             else -> Column(Modifier.fillMaxSize().padding(16.dp)) { NotesPanel(vm, NoteTarget.GENERAL, null, Modifier.fillMaxSize()) }
         }
     }
@@ -324,4 +325,36 @@ private fun guessExtension(b: ByteArray): String = when {
     b.size > 4 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() -> ".png"
     b.size > 4 && b[0] == 'P'.code.toByte() && b[1] == 'K'.code.toByte() -> ".docx"
     else -> ""
+}
+
+/** The digital menu for guests: published on the back office or saved as a page for the shop's own web, and a QR poster. */
+@Composable
+private fun QrMenuTab(vm: PosViewModel) {
+    val s by vm.settings.collectAsState()
+    val products by vm.products.collectAsState()
+    val platform = LocalPlatform.current
+    val save = platform.rememberFileSaver("text/html") { ok -> vm.notify(if (ok) tr("Soubor uložen") else tr("Soubor nebyl uložen")) }
+    var copies by remember { mutableStateOf(1) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(tr("QR menu"), style = MaterialTheme.typography.titleLarge)
+        Text(tr("Hosté naskenují QR kód na stole a uvidí menu s cenami v telefonu. Menu se skládá z produktů v prodeji (%d), kategorií, kontaktů a otevírací doby z Nastavení.", products.count { it.active }),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Field(tr("Poznámka pod menu (alergeny, ceny vč. DPH…)"), s.menuNote) { v -> vm.updateSettings { it.copy(menuNote = v) } }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { vm.publishMenu() }) { Icon(Icons.Rounded.Upload, null); Text(tr(" Zveřejnit / aktualizovat")) }
+            FilledTonalButton(onClick = { save("menu.html", vm.menuHtml()) }) { Icon(Icons.Rounded.Download, null); Text(tr(" Uložit jako web")) }
+        }
+        Text(if (s.paired) tr("Zveřejní se na back office, odkaz zůstává stejný. Po změně cen menu znovu aktualizujte.")
+            else tr("Pokladna není spárovaná s back office: menu uložte jako stránku, nahrajte ji na svůj web a adresu zadejte níže."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Field(tr("Adresa menu (odkaz v QR kódu)"), s.menuUrl) { v -> vm.updateSettings { it.copy(menuUrl = v.trim()) } }
+        if (s.menuUrl.isNotBlank()) {
+            QrText(s.menuUrl, modifier = Modifier.padding(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                NumberField(tr("Kusů"), copies, 1..50, Modifier.weight(1f)) { copies = it }
+                Button(onClick = { vm.printMenuPoster(copies) }) { Icon(Icons.Rounded.Print, null); Text(tr(" Tisknout QR na stoly")) }
+                TextButton(onClick = { if (!platform.openUrl(s.menuUrl)) vm.notify(tr("Odkaz nelze otevřít")) }) { Text(tr("Otevřít")) }
+            }
+        }
+    }
 }

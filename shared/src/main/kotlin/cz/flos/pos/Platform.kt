@@ -47,6 +47,9 @@ interface Platform {
     @Composable
     fun rememberFileSaver(mime: String, onDone: (Boolean) -> Unit): (String, ByteArray) -> Unit
 
+    /** Opens a link in the matching app (WhatsApp, SMS, e-mail, browser); false when nothing can open it. */
+    fun openUrl(url: String): Boolean
+
     /** Returns a function that asks for the permission needed by [canUsePrinters], then calls [onGranted]. */
     @Composable
     fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit

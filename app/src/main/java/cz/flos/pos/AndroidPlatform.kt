@@ -61,6 +61,10 @@ class AndroidPlatform(private val context: Context) : Platform {
         return { name, bytes -> pending[0] = bytes; launcher.launch(name) }
     }
 
+    override fun openUrl(url: String): Boolean = runCatching {
+        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.isSuccess
+
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit {
         val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->

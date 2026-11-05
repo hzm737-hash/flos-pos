@@ -71,6 +71,18 @@ fun AdminSettings(vm: PosViewModel, s: AppSettings) {
         }
     }
 
+    Section(tr("Zprávy zákazníkům (WhatsApp, SMS, e-mail)"))
+    Text(tr("Proměnné: {jmeno} {datum} {cas} {hoste} {stul} {cislo} {castka} {ucet} {vs} {provozovna} {telefon}"),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    listOf<Triple<String, String, (AppSettings, String) -> AppSettings>>(
+        Triple(tr("Potvrzení rezervace"), s.msgReservation) { a, v -> a.copy(msgReservation = v) },
+        Triple(tr("Připomínka rezervace"), s.msgReminder) { a, v -> a.copy(msgReminder = v) },
+        Triple(tr("Objednávka připravena"), s.msgOrderReady) { a, v -> a.copy(msgOrderReady = v) },
+        Triple(tr("Nabídka / zálohová faktura"), s.msgDocument) { a, v -> a.copy(msgDocument = v) },
+    ).forEach { (label, value, set) ->
+        OutlinedTextField(value = value, onValueChange = { v -> vm.updateSettings { set(it, v) } }, label = { Text(label) }, minLines = 2, modifier = Modifier.fillMaxWidth())
+    }
+
     Section(tr("Role a oprávnění"))
     Text(tr("Majitel smí vždy vše. Zaškrtnuté = role smí. Role se berou z back office (PINy), jinak ze seznamu níže. Bez nastavení smí každý vše, jako dosud."),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

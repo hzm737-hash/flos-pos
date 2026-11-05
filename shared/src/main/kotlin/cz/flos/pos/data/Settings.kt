@@ -126,6 +126,15 @@ data class AppSettings(
     val staffRoles: String = "",
     /** What roles may not do, see cz.flos.core.Permissions. Empty = everyone may do everything. */
     val permissions: String = "",
+
+    // ---- Messages to customers and the QR menu ----
+    val msgReservation: String = cz.flos.core.Notify.RESERVATION,
+    val msgReminder: String = cz.flos.core.Notify.REMINDER,
+    val msgOrderReady: String = cz.flos.core.Notify.ORDER_READY,
+    val msgDocument: String = cz.flos.core.Notify.DOCUMENT,
+    /** Public address of the menu: from the back office or the owner's own web. */
+    val menuUrl: String = "",
+    val menuNote: String = "",
 ) {
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
@@ -252,6 +261,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
             documentTerms = str("documentTerms", d.documentTerms),
             staffRoles = str("staffRoles", d.staffRoles),
             permissions = str("permissions", d.permissions),
+            msgReservation = str("msgReservation", d.msgReservation),
+            msgReminder = str("msgReminder", d.msgReminder),
+            msgOrderReady = str("msgOrderReady", d.msgOrderReady),
+            msgDocument = str("msgDocument", d.msgDocument),
+            menuUrl = str("menuUrl", d.menuUrl),
+            menuNote = str("menuNote", d.menuNote),
         )
     }
 
@@ -327,6 +342,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "documentTerms" to s.documentTerms,
                 "staffRoles" to s.staffRoles,
                 "permissions" to s.permissions,
+                "msgReservation" to s.msgReservation,
+                "msgReminder" to s.msgReminder,
+                "msgOrderReady" to s.msgOrderReady,
+                "msgDocument" to s.msgDocument,
+                "menuUrl" to s.menuUrl,
+                "menuNote" to s.menuNote,
             ),
         )
         _state.value = s

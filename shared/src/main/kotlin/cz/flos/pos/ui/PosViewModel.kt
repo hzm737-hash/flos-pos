@@ -1289,6 +1289,90 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     suspend fun attachment(n: cz.flos.pos.data.NoteEntity): ByteArray? =
         n.fileName?.let { withContext(Dispatchers.IO) { java.io.File(attachmentsDir, it).takeIf { f -> f.exists() }?.readBytes() } }
 
+    // ---- Messages to customers ----
+    private fun baseValues(): Map<String, String> {
+        val s = settings.value
+        return mapOf("provozovna" to s.businessName, "telefon" to s.phone)
+    }
+
+    fun reservationMessage(r: cz.flos.pos.data.ReservationEntity, reminder: Boolean): String {
+        val s = settings.value
+        val at = r.start
+        return cz.flos.core.Notify.fill(if (reminder) s.msgReminder else s.msgReservation, baseValues() + mapOf(
+            "jmeno" to r.name, "datum" to at.toLocalDate().format(java.time.format.DateTimeFormatter.ofPattern("d.M.yyyy")),
+            "cas" to at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm")), "hoste" to r.guests.toString(), "stul" to r.tableName.orEmpty(),
+        ))
+    }
+
+    /** Text for a quotation / pro forma / customer order; a ready customer order gets the "ready for pick-up" text. */
+    fun documentMessage(d: cz.flos.pos.data.DocumentEntity, ready: Boolean = false): String {
+        val s = settings.value
+        val account = s.iban?.let { cz.flos.core.CzechBankAccount.fromIban(it)?.toString() ?: it }.orEmpty()
+        val title = kindLabelCs(d.docKind) + " " + d.number
+        return cz.flos.core.Notify.fill(if (ready) s.msgOrderReady else s.msgDocument, baseValues() + mapOf(
+            "jmeno" to d.customerName, "cislo" to if (ready) d.number else title, "castka" to Money.format(d.total),
+            "ucet" to account, "vs" to cz.flos.core.DocumentNumbers.variableSymbol(d.number),
+            "datum" to d.due?.format(java.time.format.DateTimeFormatter.ofPattern("d.M.yyyy")).orEmpty(),
+        ))
+    }
+
+    private fun kindLabelCs(k: DocumentKind) = when (k) {
+        DocumentKind.QUOTE -> "cenovou nabídku"
+        DocumentKind.PROFORMA -> "zálohovou fakturu"
+        DocumentKind.SALES_ORDER -> "objednávku"
+        else -> "doklad"
+    }
+
+    suspend fun customerContact(id: Long?): cz.flos.pos.data.CustomerEntity? = id?.let { customerDao.get(it) }
+
+    /**
+     * Opens WhatsApp, SMS or e-mail with [text] ready to send. Returns false when there is no valid
+     * number or address, or no app can open it (the caller then offers to copy the text).
+     */
+    fun sendMessage(channel: String, contact: String, text: String, subject: String = settings.value.businessName): Boolean {
+        val url = when (channel) {
+            "whatsapp" -> cz.flos.core.Notify.whatsapp(contact, text)
+            "sms" -> cz.flos.core.Notify.sms(contact, text)
+            else -> cz.flos.core.Notify.email(contact, subject, text)
+        }
+        if (url == null) { _messages.tryEmit(tr("Chybí platné telefonní číslo nebo e-mail")); return false }
+        return platform.openUrl(url)
+    }
+
+    // ---- QR menu ----
+    fun menuData(): cz.flos.core.MenuData {
+        val s = settings.value
+        val prods = products.value.filter { it.active }
+        val byCat = prods.groupBy { it.categoryId }
+        val cats = categories.value.map { c -> cz.flos.core.MenuCategory(c.name, byCat[c.id].orEmpty().map { it.menuItem() }) } +
+            listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
+        return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
+            s.business.contacts, s.openingHours, cats, s.menuNote)
+    }
+
+    private fun ProductEntity.menuItem() = cz.flos.core.MenuItem(name, price,
+        options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · "))
+
+    fun menuHtml(): ByteArray = cz.flos.core.MenuPage.html(menuData()).toByteArray(Charsets.UTF_8)
+
+    /** Publishes the menu on the back office; the link is kept in Settings. */
+    fun publishMenu() = viewModelScope.launch {
+        val s = settings.value
+        if (!s.paired) { _messages.tryEmit(tr("Pro zveřejnění spárujte pokladnu s back office, nebo menu uložte a nahrajte na svůj web.")); return@launch }
+        _busy.value = tr("Zveřejňuji menu…")
+        try {
+            runCatching { withContext(Dispatchers.IO) { cz.flos.core.backoffice.BackOfficeClient(s.boUrl, s.boToken).publishMenu(menuData()) } }
+                .onSuccess { url -> flos.settings.update { it.copy(menuUrl = url) }; _messages.tryEmit(tr("Menu je zveřejněné: %s", url)) }
+                .onFailure { _messages.tryEmit(tr("Zveřejnění se nezdařilo: %s", it.message ?: it.javaClass.simpleName)) }
+        } finally { _busy.value = null }
+    }
+
+    fun printMenuPoster(copies: Int) {
+        val s = settings.value
+        if (s.menuUrl.isBlank()) return
+        printBlocks((1..copies.coerceIn(1, 50)).flatMap { cz.flos.core.MenuPage.poster(s.businessName, s.menuUrl) }, tr("QR menu vytištěno"))
+    }
+
     // ---- Waiters ----
     /** Everyone who can serve: back office staff, names from Settings, and whoever has open bills. */
     fun waiterNames(): List<String> {

@@ -195,6 +195,9 @@ private fun NewDocumentDialog(vm: PosViewModel, kind: DocumentKind, onDismiss: (
 @Composable
 private fun DocumentDialog(vm: PosViewModel, d: DocumentEntity, onDismiss: () -> Unit, onSell: () -> Unit, onCopy: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var sending by remember { mutableStateOf(false) }
+    var contact by remember(d) { mutableStateOf<cz.flos.pos.data.CustomerEntity?>(null) }
+    androidx.compose.runtime.LaunchedEffect(d.customerId) { contact = vm.customerContact(d.customerId) }
     val preview = remember(d) { vm.documentPreview(d) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -208,6 +211,7 @@ private fun DocumentDialog(vm: PosViewModel, d: DocumentEntity, onDismiss: () ->
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     TextButton(onClick = { vm.printDocument(d) }) { Icon(Icons.Rounded.Print, null); Text(tr(" Tisk")) }
                     TextButton(onClick = onCopy) { Text(tr("Kopírovat do košíku")) }
+                    TextButton(onClick = { sending = true }) { Text(tr("Poslat zákazníkovi")) }
                     if (d.docStatus == DocStatus.OPEN) TextButton(onClick = { vm.setDocumentStatus(d, DocStatus.CANCELLED); onDismiss() }) { Text(tr("Zrušit doklad")) }
                     else TextButton(onClick = { vm.setDocumentStatus(d, DocStatus.OPEN); onDismiss() }) { Text(tr("Znovu otevřít")) }
                     TextButton(onClick = { confirmDelete = true }) { Text(tr("Smazat"), color = MaterialTheme.colorScheme.error) }
@@ -220,6 +224,13 @@ private fun DocumentDialog(vm: PosViewModel, d: DocumentEntity, onDismiss: () ->
         },
         dismissButton = { if (d.docStatus == DocStatus.OPEN) TextButton(onClick = onDismiss) { Text(tr("Zavřít")) } },
     )
+    if (sending) SendDialog(vm, tr("Poslat %s", d.number), contact?.phone.orEmpty(), contact?.email.orEmpty(), vm.documentMessage(d),
+        onDismiss = { sending = false }) { set ->
+            if (d.docKind == DocumentKind.SALES_ORDER) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = false, onClick = { set(vm.documentMessage(d)) }, label = { Text(tr("Potvrzení objednávky")) })
+                FilterChip(selected = false, onClick = { set(vm.documentMessage(d, ready = true)) }, label = { Text(tr("Připraveno k vyzvednutí")) })
+            }
+        }
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text(tr("Smazat doklad %s?", d.number)) },
