@@ -107,6 +107,25 @@ data class AppSettings(
     val waitersAway: String = "",
     /** Days a quotation is valid by default. */
     val quoteValidDays: Int = 14,
+
+    // ---- Business details, receipt layout, roles ----
+    val phone: String = "",
+    val email: String = "",
+    val web: String = "",
+    /** Commercial/trade register entry printed at the bottom ("Zapsáno v OR …"). */
+    val registry: String = "",
+    /** Opening hours as text, one day or range per line ("Po-Pá 8:00-20:00"). */
+    val openingHours: String = "",
+    val receiptShowCashier: Boolean = true,
+    val receiptItemVat: Boolean = true,
+    val receiptBigTotal: Boolean = false,
+    val receiptExtraFooter: String = "",
+    /** Terms printed on quotations, pro forma invoices and customer orders. */
+    val documentTerms: String = "",
+    /** Roles of staff without the back office, one per line ("Eva: pokladní"). */
+    val staffRoles: String = "",
+    /** What roles may not do, see cz.flos.core.Permissions. Empty = everyone may do everything. */
+    val permissions: String = "",
 ) {
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
@@ -131,6 +150,12 @@ data class AppSettings(
             dic = dic,
             vatPayer = vatPayer,
             footer = footer,
+            contacts = listOfNotNull(
+                listOf(phone.takeIf { it.isNotBlank() }?.let { "tel. $it" }, email.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ").ifBlank { null },
+                web.takeIf { it.isNotBlank() },
+            ),
+            registry = registry,
+            style = cz.flos.core.ReceiptStyle(receiptShowCashier, receiptItemVat, receiptBigTotal, receiptExtraFooter, documentTerms),
         )
 }
 
@@ -215,6 +240,18 @@ class SettingsStore(private val prefs: KeyValueStore) {
             waiters = str("waiters", d.waiters),
             waitersAway = str("waitersAway", d.waitersAway),
             quoteValidDays = int("quoteValidDays", d.quoteValidDays),
+            phone = str("phone", d.phone),
+            email = str("email", d.email),
+            web = str("web", d.web),
+            registry = str("registry", d.registry),
+            openingHours = str("openingHours", d.openingHours),
+            receiptShowCashier = bool("receiptShowCashier", d.receiptShowCashier),
+            receiptItemVat = bool("receiptItemVat", d.receiptItemVat),
+            receiptBigTotal = bool("receiptBigTotal", d.receiptBigTotal),
+            receiptExtraFooter = str("receiptExtraFooter", d.receiptExtraFooter),
+            documentTerms = str("documentTerms", d.documentTerms),
+            staffRoles = str("staffRoles", d.staffRoles),
+            permissions = str("permissions", d.permissions),
         )
     }
 
@@ -278,6 +315,18 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "waiters" to s.waiters,
                 "waitersAway" to s.waitersAway,
                 "quoteValidDays" to s.quoteValidDays.toString(),
+                "phone" to s.phone,
+                "email" to s.email,
+                "web" to s.web,
+                "registry" to s.registry,
+                "openingHours" to s.openingHours,
+                "receiptShowCashier" to s.receiptShowCashier.toString(),
+                "receiptItemVat" to s.receiptItemVat.toString(),
+                "receiptBigTotal" to s.receiptBigTotal.toString(),
+                "receiptExtraFooter" to s.receiptExtraFooter,
+                "documentTerms" to s.documentTerms,
+                "staffRoles" to s.staffRoles,
+                "permissions" to s.permissions,
             ),
         )
         _state.value = s

@@ -50,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.CompositionLocalProvider
@@ -168,6 +169,15 @@ private fun FlosRoot(vm: PosViewModel) {
                     )
                 }
             }
+            val needs = when (screen) {
+                Screen.SETTINGS -> cz.flos.core.Permission.SETTINGS
+                Screen.PRODUCTS, Screen.PRODUCT_TOOLS -> cz.flos.core.Permission.PRODUCTS
+                Screen.STATS, Screen.RECEIPT_STATS -> cz.flos.core.Permission.STATISTICS
+                Screen.REPORT -> cz.flos.core.Permission.CLOSE_SHIFT
+                Screen.DOCUMENTS -> cz.flos.core.Permission.DOCUMENTS
+                else -> null
+            }
+            if (needs != null && settings.permissions.isNotEmpty() && !vm.can(needs)) NoPermission(tr(needs.label)) else
             when (screen) {
                 Screen.SELL -> SellScreen(vm)
                 Screen.TABLES -> TablesScreen(vm, onOpen = { screen = Screen.SELL })
@@ -189,4 +199,13 @@ private fun FlosRoot(vm: PosViewModel) {
         }
     }
 }
+}
+
+/** Shown instead of a screen the current role may not open. */
+@Composable
+private fun NoPermission(what: String) {
+    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Text(tr("Nemáte oprávnění: %s. Přepněte obsluhu na vedoucího nebo majitele (PIN).", what), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

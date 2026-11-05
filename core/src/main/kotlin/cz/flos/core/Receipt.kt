@@ -43,6 +43,24 @@ data class BusinessInfo(
     val vatPayer: Boolean = false,
     val headerNote: String = "",
     val footer: String = "Děkujeme za nákup!",
+    /** Phone, e-mail and web, printed under the address when set. */
+    val contacts: List<String> = emptyList(),
+    /** Entry in the commercial or trade register ("Zapsáno v OR vedeném KS v Praze, oddíl C, vložka 123"). */
+    val registry: String = "",
+    val style: ReceiptStyle = ReceiptStyle(),
+)
+
+/** How receipts and documents look. The defaults print exactly the classic Flos receipt. */
+data class ReceiptStyle(
+    val showCashier: Boolean = true,
+    /** VAT letter next to each item (for VAT payers). */
+    val showItemVat: Boolean = true,
+    /** The total in double size. */
+    val bigTotal: Boolean = false,
+    /** Second footer line, e.g. "Sledujte nás na Instagramu @bistro". */
+    val extraFooter: String = "",
+    /** Printed on quotations and pro forma invoices, e.g. payment terms. */
+    val documentTerms: String = "",
 )
 
 data class Receipt(
@@ -127,6 +145,7 @@ class ReceiptLayout(private val width: Int) {
         business.addressLines.filter { it.isNotBlank() }.forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         if (business.ico.isNotBlank()) add(ReceiptBlock.Line("IČO: ${business.ico}", Align.CENTER))
         if (business.dic.isNotBlank()) add(ReceiptBlock.Line("DIČ: ${business.dic}", Align.CENTER))
+        business.contacts.filter { it.isNotBlank() }.forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         if (business.headerNote.isNotBlank()) add(ReceiptBlock.Line(business.headerNote, Align.CENTER))
         add(ReceiptBlock.Separator)
 
@@ -146,14 +165,14 @@ class ReceiptLayout(private val width: Int) {
         if (!fiscal) add(ReceiptBlock.Line("Není daňový doklad", Align.CENTER))
         if (fiscal) add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
         else add(ReceiptBlock.Line(r.createdAt.format(dateFmt), Align.CENTER))
-        if (r.cashier.isNotBlank()) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
+        if (r.cashier.isNotBlank() && business.style.showCashier) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
         if (r.note.isNotBlank()) wrap(r.note, width).forEach { add(ReceiptBlock.Line(it, bold = !fiscal)) }
         add(ReceiptBlock.Separator)
 
         for (item in r.cart.items) {
             wrap(item.name, width).forEach { add(ReceiptBlock.Line(it)) }
             val qtyText = "  ${Qty.format(item.quantity)} x ${Money.format(item.unitPrice, "")}" +
-                if (business.vatPayer) "  ${item.vatRate.label}" else ""
+                if (business.vatPayer && business.style.showItemVat) "  ${item.vatRate.label}" else ""
             add(ReceiptBlock.Line(twoCol(qtyText, Money.format(item.gross, ""))))
             if (item.discount > 0) {
                 add(ReceiptBlock.Line(twoCol("  Sleva ${item.discountPercent} %", Money.format(-item.discount, ""))))
@@ -165,7 +184,8 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Line(twoCol("Sleva ${r.cart.discountPercent} %", Money.format(-r.cart.cartDiscount))))
         }
         val sign = if (r.stornoOf != null) -1 else 1
-        add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(sign * r.total)), bold = true))
+        if (business.style.bigTotal) add(ReceiptBlock.Line("CELKEM " + Money.format(sign * r.total), Align.CENTER, bold = true, large = true))
+        else add(ReceiptBlock.Line(twoCol("CELKEM", Money.format(sign * r.total)), bold = true))
         if (r.rounding != 0L) {
             add(ReceiptBlock.Line(twoCol("Zaokrouhlení", Money.format(r.rounding))))
             add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(r.cashDue)), bold = true))
@@ -188,6 +208,10 @@ class ReceiptLayout(private val width: Int) {
                 else -> add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
             }
             if (r.kind != DocumentKind.QUOTE) add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
+            if ((r.kind == DocumentKind.QUOTE || r.kind == DocumentKind.PROFORMA || r.kind == DocumentKind.SALES_ORDER) && business.style.documentTerms.isNotBlank()) {
+                wrap(business.style.documentTerms, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
+            }
+            if (r.kind == DocumentKind.PROFORMA && business.registry.isNotBlank()) wrap(business.registry, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
             add(ReceiptBlock.Feed(3))
             return@buildList
         }
@@ -248,6 +272,8 @@ class ReceiptLayout(private val width: Int) {
             add(ReceiptBlock.Separator)
             wrap(business.footer, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         }
+        if (business.style.extraFooter.isNotBlank()) wrap(business.style.extraFooter, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
+        if (business.registry.isNotBlank()) wrap(business.registry, width).forEach { add(ReceiptBlock.Line(it, Align.CENTER)) }
         add(ReceiptBlock.Feed(3))
     }
 

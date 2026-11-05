@@ -347,6 +347,23 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         }
     }
 
+    // ---- Roles and permissions ----
+    /** Role of whoever is at the till now (owner when staff roles are not set up). */
+    fun currentRole(): cz.flos.core.StaffRole {
+        val s = settings.value
+        val staff = cz.flos.core.backoffice.BackOfficeClient.staffFromJson(s.boStaff).map { it.name to it.role }
+        return cz.flos.core.Permissions.roleOf(s.cashier, staff, s.staffRoles)
+    }
+
+    fun can(p: cz.flos.core.Permission): Boolean = cz.flos.core.Permissions.parse(settings.value.permissions).allowed(currentRole(), p)
+
+    /** True when allowed; otherwise tells the cashier why nothing happened. */
+    private fun allow(p: cz.flos.core.Permission): Boolean {
+        if (can(p)) return true
+        _messages.tryEmit(tr("Nemáte oprávnění: %s. Přepněte obsluhu na vedoucího.", tr(p.label)))
+        return false
+    }
+
     /** Highest manual discount the current cashier may give (managers and owners: 100). */
     fun discountLimit(): Int {
         val s = settings.value
@@ -375,6 +392,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Saves a customer; [select] also picks them for the cart (a new customer made at the till). */
     fun saveCustomer(c: cz.flos.pos.data.CustomerEntity, select: Boolean = false) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.CUSTOMERS)) return@launch
         val rowId = customerDao.upsert(if (c.createdAt == 0L) c.copy(createdAt = System.currentTimeMillis()) else c)
         val id = if (c.id != 0L) c.id else rowId
         if (select || (_customer.value?.id == id && id != 0L)) customerDao.get(id)?.let { selectCustomer(it) }
@@ -382,6 +400,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     fun deleteCustomer(c: cz.flos.pos.data.CustomerEntity) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.CUSTOMERS)) return@launch
         customerDao.delete(c.id)
         if (_customer.value?.id == c.id) _customer.value = null
     }
@@ -481,8 +500,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Table of the cart: the loaded order's table or the one just picked on the map. */
     val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
     fun setQuantity(index: Int, qty: Double) = _cart.update { it.setQuantity(index, qty) }
-    fun setLineDiscount(index: Int, percent: Int) { val p = limited(percent); _cart.update { it.setLineDiscount(index, p) } }
-    fun setCartDiscount(percent: Int) { val p = limited(percent); _cart.update { it.setDiscount(p) } }
+    fun setLineDiscount(index: Int, percent: Int) { if (percent > 0 && !allow(cz.flos.core.Permission.DISCOUNT)) return; val p = limited(percent); _cart.update { it.setLineDiscount(index, p) } }
+    fun setCartDiscount(percent: Int) { if (percent > 0 && !allow(cz.flos.core.Permission.DISCOUNT)) return; val p = limited(percent); _cart.update { it.setDiscount(p) } }
     fun clearCart() {
         _cart.update { it.clear() }
         _editingOrder.value = null
@@ -735,6 +754,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Cancels an unpaid order. It stays in history as cancelled; nothing is sent to EET. */
     fun cancelOrder(sw: SaleWithItems, reason: String) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.CANCEL_ORDER)) return@launch
         val note = listOf(sw.sale.note, reason.trim().takeIf { it.isNotEmpty() }?.let { tr("Zrušeno: %s", it) })
             .filterNot { it.isNullOrBlank() }.joinToString(" · ")
         salesDao.update(sw.sale.copy(status = SaleStatus.VOID.name, note = note, createdAt = System.currentTimeMillis()))
@@ -800,6 +820,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * document with its own number and a negative amount is recorded in EET and printed.
      */
     fun cancelSale(sw: SaleWithItems) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.STORNO)) return@launch
         val s = settings.value
         val now = LocalDateTime.now()
         val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -836,6 +857,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * way it was paid.
      */
     fun refund(sw: SaleWithItems, quantities: Map<Int, Double>) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.REFUND)) return@launch
         if (!sw.sale.isPaid || sw.sale.cancelled || sw.sale.isRefund) return@launch
         val left = refundable(sw)
         val items = sw.items.mapIndexedNotNull { i, item ->
@@ -1001,6 +1023,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     // ---- Cash drawer and shifts ----
     fun cashMovement(kind: CashKind, amount: Long, note: String) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.CASH_MOVES)) return@launch
         if (amount <= 0) return@launch
         cashDao.insert(CashMovementEntity(at = System.currentTimeMillis(), kind = kind.name, amount = amount, note = note.trim(),
             cashier = settings.value.cashier))
@@ -1013,6 +1036,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * report and, when [leaveFloat] is above zero, starts the next shift with that change money.
      */
     fun closeShift(counted: Long, leaveFloat: Long) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.CLOSE_SHIFT)) return@launch
         val s = settings.value
         val state = cashState.value
         val now = System.currentTimeMillis()
@@ -1060,10 +1084,11 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     // ---- Catalogue ----
-    fun saveProduct(p: ProductEntity) = viewModelScope.launch { catalog.upsertProduct(p) }
-    fun deleteProduct(p: ProductEntity) = viewModelScope.launch { catalog.deactivateProduct(p.id) }
-    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { catalog.upsertCategory(c) }
+    fun saveProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertProduct(p) }
+    fun deleteProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.deactivateProduct(p.id) }
+    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertCategory(c) }
     fun deleteCategory(c: CategoryEntity) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         catalog.clearCategory(c.id)
         catalog.deleteCategory(c.id)
     }
@@ -1080,7 +1105,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      */
     fun saveDocument(kind: DocumentKind, note: String, due: LocalDate?, print: Boolean) {
         val cart = _cart.value
-        if (cart.isEmpty()) return
+        if (cart.isEmpty() || !allow(cz.flos.core.Permission.DOCUMENTS)) return
         val customer = _customer.value
         clearCart()
         viewModelScope.launch {
@@ -1195,6 +1220,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Adds the new products and updates the changed ones; icons, order and back office links stay. */
     fun applyImport(plan: cz.flos.core.ImportPlan<Long>) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         val cats = categories.value.associateBy { cz.flos.core.Pricing.key(it.name) }.toMutableMap()
         suspend fun categoryId(name: String): Long? {
             if (name.isBlank()) return null
@@ -1222,6 +1248,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Applies [change] to the products with [ids]. */
     fun bulkEdit(ids: Set<Long>, label: String, change: (ProductEntity) -> ProductEntity) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         val list = catalog.allProducts().filter { it.id in ids }
         list.forEach { catalog.upsertProduct(change(it)) }
         _messages.tryEmit(tr("%s: upraveno %d produktů", label, list.size))

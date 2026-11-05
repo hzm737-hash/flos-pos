@@ -80,6 +80,8 @@ fun SettingsScreen(vm: PosViewModel) {
 
             PricingSettings(vm, s)
 
+            AdminSettings(vm, s)
+
             Section(tr("QR platba"))
             val iban = s.iban
             OutlinedTextField(
