@@ -29,8 +29,8 @@ object Reports {
         }.groupBy { it.first.productId ?: -it.first.name.hashCode().toLong() }
             .map { (_, rows) ->
                 val first = rows.first().first
-                val qty = rows.sumOf { it.second }
-                ProductRow(first.productId, first.name, qty, rows.sumOf { it.third }, (first.productId?.let { costs[it] } ?: 0) * qty)
+                val qty = cz.flos.core.Qty.norm(rows.sumOf { it.second })
+                ProductRow(first.productId, first.name, qty, rows.sumOf { it.third }, Math.round((first.productId?.let { costs[it] } ?: 0) * qty))
             }.sortedByDescending { it.revenue }
 
         val costKnown = products.isNotEmpty() && products.all { it.productId != null && (costs[it.productId] ?: 0) > 0 }
@@ -87,7 +87,7 @@ object Reports {
         val fmt = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm:ss").withZone(ZONE)
         for (s in sales.sortedBy { it.createdAt }) {
             Sales.cartOf(s).items.forEach { i ->
-                appendLine(listOf(fmt.format(Instant.ofEpochMilli(s.createdAt)), s.number, i.name, i.quantity.toString(), csvMoney(i.unitPrice),
+                appendLine(listOf(fmt.format(Instant.ofEpochMilli(s.createdAt)), s.number, i.name, cz.flos.core.Qty.format(i.quantity), csvMoney(i.unitPrice),
                     i.discountPercent.toString(), i.vatRate.percent.toString(), csvMoney(i.total), if (s.cancelled) "ano" else "").joinToString(";") { csv(it) })
             }
         }
@@ -119,10 +119,10 @@ object Reports {
             appendLine("""      <pro:prodejkaDetail>""")
             val factor = if (cart.subtotal == 0L) 1.0 else cart.total.toDouble() / cart.subtotal
             for (i in cart.items) {
-                val unit = Math.round(i.total * factor) / i.quantity.toDouble() / 100.0
+                val unit = Math.round(i.total * factor) / i.quantity / 100.0
                 appendLine("""        <pro:prodejkaItem>""")
                 appendLine("""          <pro:text>${xml(i.name.take(90))}</pro:text>""")
-                appendLine("""          <pro:quantity>${i.quantity}</pro:quantity>""")
+                appendLine("""          <pro:quantity>${cz.flos.core.Qty.format(i.quantity).replace(',', '.')}</pro:quantity>""")
                 appendLine("""          <pro:payVAT>true</pro:payVAT>""")
                 appendLine("""          <pro:rateVAT>${pohodaRate(i.vatRate.percent)}</pro:rateVAT>""")
                 appendLine("""          <pro:homeCurrency><typ:unitPrice>${"%.2f".format(java.util.Locale.ROOT, unit)}</typ:unitPrice></pro:homeCurrency>""")

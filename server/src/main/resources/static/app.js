@@ -4,6 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kc = (h) => (Number(h || 0) / 100).toLocaleString(LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (LANG === 'en' ? ' CZK' : ' Kč');
+const qty = (q) => Number(q || 0).toLocaleString(LOCALE, { maximumFractionDigits: 3 });
 const toHaler = (s) => Math.round(parseFloat(String(s).replace(/\s/g, '').replace(',', '.')) * 100) || 0;
 const fromHaler = (h) => (Number(h || 0) / 100).toFixed(2).replace('.', ',');
 const dt = (ms) => ms ? new Date(ms).toLocaleString(LOCALE) : '–';
@@ -153,7 +154,7 @@ pages.dashboard = async (main) => {
       ${r.byVat.map((v) => `<tr><td>${v.rate} %</td><td class="num">${kc(v.base)}</td><td class="num">${kc(v.vat)}</td><td class="num">${kc(v.gross)}</td></tr>`).join('')}</table>
       <h2>Nejprodávanější produkty</h2>
       <table><tr><th>Produkt</th><th class="num">Ks</th><th class="num">Tržba</th><th class="num">Náklad</th></tr>
-      ${r.topProducts.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${p.quantity}</td><td class="num">${kc(p.revenue)}</td><td class="num">${p.cost ? kc(p.cost) : '–'}</td></tr>`).join('')}</table>
+      ${r.topProducts.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${qty(p.quantity)}</td><td class="num">${kc(p.revenue)}</td><td class="num">${p.cost ? kc(p.cost) : '–'}</td></tr>`).join('')}</table>
       <h2>Podle obsluhy</h2>${bars(r.byCashier)}`;
   };
   $('#range').addEventListener('submit', (e) => { e.preventDefault(); load(); });
@@ -174,7 +175,7 @@ pages.sales = async (main) => {
     document.querySelectorAll('tr[data-i]').forEach((tr) => tr.addEventListener('click', () => {
       const s = sales[tr.dataset.i]; const d = $('#dlg');
       d.innerHTML = `<form method="dialog"><h2>Účtenka ${esc(s.number)}</h2><p class="muted">${dt(s.createdAt)} · ${PAYMENT[s.payment] || ''} · ${esc(s.cashier)}</p>
-        <table><tr><th>Položka</th><th class="num">Ks</th><th class="num">Cena</th></tr>${s.items.map((i) => `<tr><td>${esc(i.name)}${i.discountPercent ? ` (−${i.discountPercent} %)` : ''}</td><td class="num">${i.quantity}</td><td class="num">${kc(i.unitPrice * i.quantity)}</td></tr>`).join('')}</table>
+        <table><tr><th>Položka</th><th class="num">Ks</th><th class="num">Cena</th></tr>${s.items.map((i) => `<tr><td>${esc(i.name)}${i.discountPercent ? ` (−${i.discountPercent} %)` : ''}</td><td class="num">${qty(i.quantity)}</td><td class="num">${kc(Math.round(i.unitPrice * i.quantity))}</td></tr>`).join('')}</table>
         <p><b>Celkem ${kc(s.received)}</b>${s.cancelled ? ` · <span class="badge bad">Storno ${esc(s.stornoNumber || '')}</span>` : ''}</p>
         <p class="muted">EET: ${eetBadge(s.eetStatus)} ${s.eetPok ? 'POK ' + esc(s.eetPok) : ''}</p><div class="actions"><button>Zavřít</button></div></form>`;
       d.showModal();

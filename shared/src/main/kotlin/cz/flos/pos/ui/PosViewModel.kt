@@ -13,6 +13,7 @@ import cz.flos.core.EscPosEncoder
 import cz.flos.core.Money
 import cz.flos.core.PaymentMethod
 import cz.flos.core.QrPlatba
+import cz.flos.core.Qty
 import cz.flos.core.Receipt
 import cz.flos.core.ReceiptBlock
 import cz.flos.core.ReceiptLayout
@@ -280,10 +281,18 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     // ---- Cart ----
-    fun addToCart(p: ProductEntity) = _cart.update { it.add(p.id, p.name, p.price, p.vatRate) }
+    private val _halfPortion = MutableStateFlow(false)
+    /** "½ porce" switched on: the next product tapped is added as a half portion (0,5). */
+    val halfPortion: StateFlow<Boolean> = _halfPortion.asStateFlow()
+    fun toggleHalfPortion() { _halfPortion.value = !_halfPortion.value }
+
+    /** Quantity for the product being added: 0,5 once after "½ porce", otherwise 1. */
+    private fun nextQty(): Double = if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
+
+    fun addToCart(p: ProductEntity) { val q = nextQty(); _cart.update { it.add(p.id, p.name, p.price, p.vatRate, q) } }
 
     /** Adds a product with the variants and extras chosen for it ("Pizza (Velká, Sýr)"). */
-    fun addToCart(p: ProductEntity, name: String, price: Long) = _cart.update { it.add(p.id, name, price, p.vatRate) }
+    fun addToCart(p: ProductEntity, name: String, price: Long) { val q = nextQty(); _cart.update { it.add(p.id, name, price, p.vatRate, q) } }
 
     // ---- Customers and loyalty ----
     val customers = customerDao.all().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -404,7 +413,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     /** Table of the cart: the loaded order's table or the one just picked on the map. */
     val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
-    fun setQuantity(index: Int, qty: Int) = _cart.update { it.setQuantity(index, qty) }
+    fun setQuantity(index: Int, qty: Double) = _cart.update { it.setQuantity(index, qty) }
     fun setLineDiscount(index: Int, percent: Int) = _cart.update { it.setLineDiscount(index, percent) }
     fun setCartDiscount(percent: Int) = _cart.update { it.setDiscount(percent) }
     fun clearCart() {
@@ -462,16 +471,16 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * quantity) as a receipt of its own. The rest stays in the cart, and on the open order or
      * table when one is loaded, for the next guest.
      */
-    fun payPart(selected: Map<Int, Int>, payment: PaymentMethod, cashGiven: Long?, onDone: () -> Unit) {
+    fun payPart(selected: Map<Int, Double>, payment: PaymentMethod, cashGiven: Long?, onDone: () -> Unit) {
         val cart = _cart.value
         val partItems = cart.items.mapIndexedNotNull { i, item ->
-            val q = (selected[i] ?: 0).coerceIn(0, item.quantity)
-            if (q > 0) item.copy(quantity = q) else null
+            val q = Qty.norm((selected[i] ?: 0.0).coerceIn(0.0, item.quantity))
+            if (q >= Qty.MIN) item.copy(quantity = q) else null
         }
         if (partItems.isEmpty()) return
         val restItems = cart.items.mapIndexedNotNull { i, item ->
-            val q = item.quantity - (selected[i] ?: 0).coerceIn(0, item.quantity)
-            if (q > 0) item.copy(quantity = q) else null
+            val q = Qty.norm(item.quantity - (selected[i] ?: 0.0).coerceIn(0.0, item.quantity))
+            if (q >= Qty.MIN) item.copy(quantity = q) else null
         }
         if (restItems.isEmpty()) return checkout(payment, cashGiven, onDone)
         val part = Cart(partItems, cart.discountPercent)
@@ -703,11 +712,11 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     // ---- Refunds of single items ----
 
     /** How many of each line of [sw] can still be returned (lines already returned are subtracted). */
-    suspend fun refundable(sw: SaleWithItems): List<Int> {
+    suspend fun refundable(sw: SaleWithItems): List<Double> {
         val done = salesDao.refundsOf(sw.sale.id).flatMap { it.items }
         return sw.items.map { item ->
             val returned = done.filter { it.productId == item.productId && it.name == item.name && it.unitPrice == item.unitPrice }.sumOf { -it.quantity }
-            (item.quantity - returned).coerceAtLeast(0)
+            Qty.norm(item.quantity - returned).coerceAtLeast(0.0)
         }
     }
 
@@ -717,12 +726,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * with a negative amount when the original was, and printed. The money goes back the same
      * way it was paid.
      */
-    fun refund(sw: SaleWithItems, quantities: Map<Int, Int>) = viewModelScope.launch {
+    fun refund(sw: SaleWithItems, quantities: Map<Int, Double>) = viewModelScope.launch {
         if (!sw.sale.isPaid || sw.sale.cancelled || sw.sale.isRefund) return@launch
         val left = refundable(sw)
         val items = sw.items.mapIndexedNotNull { i, item ->
-            val q = (quantities[i] ?: 0).coerceIn(0, left.getOrElse(i) { 0 })
-            if (q > 0) item.copy(id = 0, quantity = -q) else null
+            val q = Qty.norm((quantities[i] ?: 0.0).coerceIn(0.0, left.getOrElse(i) { 0.0 }))
+            if (q >= Qty.MIN) item.copy(id = 0, quantity = -q) else null
         }
         if (items.isEmpty()) return@launch
         val s = settings.value

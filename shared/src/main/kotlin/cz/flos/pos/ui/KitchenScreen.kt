@@ -97,7 +97,7 @@ fun KitchenScreen(vm: PosViewModel) {
                         HorizontalDivider()
                         sw.items.forEach { item ->
                             Row {
-                                Text("${item.quantity}×", fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
+                                Text("${cz.flos.core.Qty.format(item.quantity)}×", fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
                                 Text(item.name, style = MaterialTheme.typography.bodyLarge)
                             }
                         }

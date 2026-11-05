@@ -85,7 +85,7 @@ private fun CustomerDisplayContent(vm: PosViewModel) {
                     LazyColumn(Modifier.weight(1f)) {
                         items(cart.items) { item ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("${item.quantity}×", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp))
+                                Text("${cz.flos.core.Qty.format(item.quantity)}×", fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp))
                                 Text(item.name, fontSize = 24.sp, modifier = Modifier.weight(1f))
                                 Text(Money.format(item.total), fontSize = 24.sp)
                             }

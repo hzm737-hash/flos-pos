@@ -29,17 +29,17 @@ class Round3Test {
         val c = Cart().add(1, "Pizza (Malá)", 18900, VatRate.REDUCED).add(1, "Pizza (Velká)", 18900, VatRate.REDUCED)
             .add(1, "Pizza (Malá)", 18900, VatRate.REDUCED)
         assertEquals(2, c.items.size)
-        assertEquals(2, c.items[0].quantity)
+        assertEquals(2.0, c.items[0].quantity, 1e-9)
     }
 
     @Test fun statistics() {
         val zone = ZoneId.of("Europe/Prague")
         fun at(d: Int, h: Int) = LocalDateTime.of(2026, 11, d, h, 0).atZone(zone).toInstant().toEpochMilli()
         val sales = listOf(
-            StatSale(at(2, 9), 10000, 0, PaymentMethod.CASH, "Eva", false, listOf(StatItem("Káva", "Nápoje", 2, 10000))),
-            StatSale(at(2, 12), 30000, 2000, PaymentMethod.CARD, "Jan", false, listOf(StatItem("Pizza", "Jídlo", 1, 20000), StatItem("Káva", "Nápoje", 2, 10000))),
-            StatSale(at(3, 12), 50000, 0, PaymentMethod.CARD, "Jan", true, listOf(StatItem("Pizza", "Jídlo", 2, 50000))),
-            StatSale(at(4, 12), -5000, 0, PaymentMethod.CASH, "Eva", false, listOf(StatItem("Káva", "Nápoje", -1, -5000)), refund = true),
+            StatSale(at(2, 9), 10000, 0, PaymentMethod.CASH, "Eva", false, listOf(StatItem("Káva", "Nápoje", 2.0, 10000))),
+            StatSale(at(2, 12), 30000, 2000, PaymentMethod.CARD, "Jan", false, listOf(StatItem("Pizza", "Jídlo", 1.0, 20000), StatItem("Káva", "Nápoje", 2.0, 10000))),
+            StatSale(at(3, 12), 50000, 0, PaymentMethod.CARD, "Jan", true, listOf(StatItem("Pizza", "Jídlo", 2.0, 50000))),
+            StatSale(at(4, 12), -5000, 0, PaymentMethod.CASH, "Eva", false, listOf(StatItem("Káva", "Nápoje", -1.0, -5000)), refund = true),
         )
         val s = Statistics.of(sales, LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 4), zone, previous = listOf(sales[0]))
         assertEquals(35000L, s.revenue)
@@ -51,15 +51,15 @@ class Round3Test {
         assertEquals(40000L, s.byDay[1].second)
         assertEquals(0L, s.byDay[0].second)
         assertEquals(25000L, s.byHour[12])
-        assertEquals(Ranked("Pizza", 1, 20000), s.topProducts[0])
-        assertEquals(Ranked("Káva", 3, 15000), s.topProducts[1])
+        assertEquals(Ranked("Pizza", 1.0, 20000), s.topProducts[0])
+        assertEquals(Ranked("Káva", 3.0, 15000), s.topProducts[1])
         assertEquals("Jan", s.byCashier[0].label)
         assertEquals(17500L, s.average)
         assertEquals(250.0, s.change!!, 0.01)
     }
 
     @Test fun refundReceipt() {
-        val cart = Cart(listOf(CartItem(1, "Káva", 5000, VatRate.REDUCED, -2)))
+        val cart = Cart(listOf(CartItem(1, "Káva", 5000, VatRate.REDUCED, -2.0)))
         val r = Receipt("2026-000010", LocalDateTime.of(2026, 11, 4, 10, 0), "", cart, PaymentMethod.CARD, refundOf = "2026-000007")
         val text = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(BusinessInfo("Test"), r), 32)
         assertTrue(text, text.contains("VRATKA k účtence 2026-000007"))

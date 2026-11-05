@@ -20,9 +20,10 @@ data class StatSale(
     val number: String = "",
 )
 
-data class StatItem(val name: String, val category: String, val quantity: Int, val total: Long)
+data class StatItem(val name: String, val category: String, val quantity: Double, val total: Long)
 
-data class Ranked(val label: String, val quantity: Int, val amount: Long)
+/** [quantity] is pieces sold (can be fractional) or, for payment types and cashiers, the number of receipts. */
+data class Ranked(val label: String, val quantity: Double, val amount: Long)
 
 data class Statistics(
     /** Received money minus refunds, without tips; stornoed receipts left out. */
@@ -31,7 +32,7 @@ data class Statistics(
     val refunds: Long,
     val stornoCount: Int,
     val tips: Long,
-    val itemsSold: Int,
+    val itemsSold: Double,
     /** Revenue per day of the period, every day present (also days with no sales). */
     val byDay: List<Pair<LocalDate, Long>>,
     /** Revenue per hour of the day, 0–23. */
@@ -60,22 +61,22 @@ data class Statistics(
             val hours = LongArray(24)
             valid.forEach { hours[dayOf(it).hour] += it.received }
             val items = valid.flatMap { it.items }
-            fun rank(groups: Map<String, List<StatItem>>) = groups.map { (k, l) -> Ranked(k, l.sumOf { it.quantity }, l.sumOf { it.total }) }
-                .filter { it.quantity != 0 || it.amount != 0L }.sortedByDescending { it.amount }
+            fun rank(groups: Map<String, List<StatItem>>) = groups.map { (k, l) -> Ranked(k, Qty.norm(l.sumOf { it.quantity }), l.sumOf { it.total }) }
+                .filter { it.quantity != 0.0 || it.amount != 0L }.sortedByDescending { it.amount }
             return Statistics(
                 revenue = valid.sumOf { it.received },
                 receipts = normal.size,
                 refunds = -valid.filter { it.refund }.sumOf { it.received },
                 stornoCount = sales.count { it.cancelled },
                 tips = valid.sumOf { it.tip },
-                itemsSold = items.sumOf { it.quantity },
+                itemsSold = Qty.norm(items.sumOf { it.quantity }),
                 byDay = days.map { it to (perDay[it] ?: 0L) },
                 byHour = hours.toList(),
                 byWeekday = DayOfWeek.entries.associateWith { d -> valid.filter { dayOf(it).dayOfWeek == d }.sumOf { it.received } },
                 topProducts = rank(items.groupBy { it.name }),
                 byCategory = rank(items.groupBy { it.category }),
-                byPayment = valid.groupBy { it.payment }.map { (p, l) -> Ranked(p.label, l.size, l.sumOf { it.received }) }.sortedByDescending { it.amount },
-                byCashier = valid.groupBy { it.cashier.ifBlank { "—" } }.map { (c, l) -> Ranked(c, l.size, l.sumOf { it.received }) }.sortedByDescending { it.amount },
+                byPayment = valid.groupBy { it.payment }.map { (p, l) -> Ranked(p.label, l.size.toDouble(), l.sumOf { it.received }) }.sortedByDescending { it.amount },
+                byCashier = valid.groupBy { it.cashier.ifBlank { "—" } }.map { (c, l) -> Ranked(c, l.size.toDouble(), l.sumOf { it.received }) }.sortedByDescending { it.amount },
                 previousRevenue = previous?.filter { !it.cancelled }?.sumOf { it.received },
             )
         }
@@ -86,7 +87,7 @@ data class Statistics(
 data class SizeBucket(val fromCrowns: Long, val toCrowns: Long?, val count: Long)
 
 /** One receipt in the receipt statistics. */
-data class ReceiptRow(val number: String, val at: Long, val amount: Long, val items: Int, val payment: PaymentMethod)
+data class ReceiptRow(val number: String, val at: Long, val amount: Long, val items: Double, val payment: PaymentMethod)
 
 /**
  * Statistics about the receipts themselves rather than the money: how many, how big, when they are issued,
@@ -144,7 +145,7 @@ data class ReceiptStatistics(
                 average = if (normal.isEmpty()) 0 else normal.sumOf { it.received } / normal.size,
                 median = median,
                 largest = normal.sortedByDescending { it.received }.take(10).map { s ->
-                    ReceiptRow(s.number, s.at, s.received, s.items.sumOf { it.quantity }, s.payment)
+                    ReceiptRow(s.number, s.at, s.received, Qty.norm(s.items.sumOf { it.quantity }), s.payment)
                 },
                 smallest = amounts.firstOrNull() ?: 0L,
                 itemsPerReceiptX10 = if (normal.isEmpty()) 0 else ((pieces * 10.0) / normal.size).roundToInt(),
@@ -154,8 +155,8 @@ data class ReceiptStatistics(
                 sizes = bounds.map { (low, high) ->
                     SizeBucket(low / 100, high?.let { it / 100 }, normal.count { it.received >= low && (high == null || it.received < high) }.toLong())
                 },
-                byPayment = normal.groupBy { it.payment }.map { (p, l) -> Ranked(p.label, l.size, l.sumOf { it.received }) }.sortedByDescending { it.quantity },
-                byCashier = normal.groupBy { it.cashier.ifBlank { "—" } }.map { (c, l) -> Ranked(c, l.size, l.sumOf { it.received }) }.sortedByDescending { it.quantity },
+                byPayment = normal.groupBy { it.payment }.map { (p, l) -> Ranked(p.label, l.size.toDouble(), l.sumOf { it.received }) }.sortedByDescending { it.quantity },
+                byCashier = normal.groupBy { it.cashier.ifBlank { "—" } }.map { (c, l) -> Ranked(c, l.size.toDouble(), l.sumOf { it.received }) }.sortedByDescending { it.quantity },
             )
         }
     }

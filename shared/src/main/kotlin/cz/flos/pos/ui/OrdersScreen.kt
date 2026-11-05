@@ -94,7 +94,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
                             }
                             if (s.note.isNotBlank()) Text(s.note, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             Text(
-                                sw.items.joinToString(", ") { "${it.quantity}× ${it.name}" },
+                                sw.items.joinToString(", ") { "${cz.flos.core.Qty.format(it.quantity)}× ${it.name}" },
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 3, overflow = TextOverflow.Ellipsis,
                             )

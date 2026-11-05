@@ -29,7 +29,7 @@ import javax.crypto.spec.PBEKeySpec
     val sellable: Boolean = true, val sortOrder: Int = 0, val active: Boolean = true,
 )
 @Serializable data class BoCatalog(val serverTime: Long, val categories: List<BoCategory> = emptyList(), val products: List<BoProduct> = emptyList())
-@Serializable data class BoSaleItem(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Int, val discountPercent: Int = 0)
+@Serializable data class BoSaleItem(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Double, val discountPercent: Int = 0)
 @Serializable data class BoSale(
     val number: String, val createdAt: Long, val total: Long, val received: Long, val payment: String, val cashier: String = "",
     val discountPercent: Int = 0, val cancelled: Boolean = false, val stornoNumber: String? = null, val eetStatus: String? = null,

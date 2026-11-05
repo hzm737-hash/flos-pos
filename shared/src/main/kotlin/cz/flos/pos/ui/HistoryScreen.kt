@@ -365,13 +365,13 @@ fun HistoryScreen(vm: PosViewModel, onEditOrder: () -> Unit) {
 /** Return some items of a paid receipt: a refund document (vratka) with negative quantities. */
 @Composable
 internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> Unit) {
-    var left by remember(sw) { mutableStateOf<List<Int>?>(null) }
+    var left by remember(sw) { mutableStateOf<List<Double>?>(null) }
     LaunchedEffect(sw) { left = vm.refundable(sw) }
-    var chosen by remember(sw) { mutableStateOf(mapOf<Int, Int>()) }
+    var chosen by remember(sw) { mutableStateOf(mapOf<Int, Double>()) }
     val cart = sw.toCart()
     val amount = sw.items.indices.sumOf { i ->
-        val q = chosen[i] ?: 0
-        if (q == 0) 0L else cart.items[i].copy(quantity = q).total
+        val q = chosen[i] ?: 0.0
+        if (q < cz.flos.core.Qty.MIN) 0L else cart.items[i].copy(quantity = q).total
     }.let { Math.round(it * (100 - sw.sale.discountPercent) / 100.0) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -384,20 +384,14 @@ internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> 
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LazyColumn(Modifier.heightIn(max = 340.dp)) {
                     itemsIndexed(sw.items) { i, item ->
-                        val q = chosen[i] ?: 0
-                        val max = l.getOrElse(i) { 0 }
+                        val q = chosen[i] ?: 0.0
+                        val max = l.getOrElse(i) { 0.0 }
                         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(item.name, fontWeight = FontWeight.Medium)
-                                Text(tr("lze vrátit %d z %d", max, item.quantity), style = MaterialTheme.typography.bodySmall)
+                                Text(tr("lze vrátit %s z %s", cz.flos.core.Qty.format(max), cz.flos.core.Qty.format(item.quantity)), style = MaterialTheme.typography.bodySmall)
                             }
-                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q - 1).coerceAtLeast(0)) }, enabled = q > 0, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Remove, tr("Méně"))
-                            }
-                            Text("$q", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(32.dp))
-                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q + 1).coerceAtMost(max)) }, enabled = q < max, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Add, tr("Více"))
-                            }
+                            QtyStepper(q, max) { chosen = chosen + (i to it) }
                         }
                     }
                 }
@@ -405,7 +399,7 @@ internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> 
             }
         },
         confirmButton = {
-            Button(onClick = { vm.refund(sw, chosen.filterValues { it > 0 }); onDismiss() }, enabled = amount > 0 || chosen.values.any { it > 0 }) {
+            Button(onClick = { vm.refund(sw, chosen.filterValues { it >= cz.flos.core.Qty.MIN }); onDismiss() }, enabled = amount > 0 || chosen.values.any { it >= cz.flos.core.Qty.MIN }) {
                 Text(tr("Vrátit"))
             }
         },

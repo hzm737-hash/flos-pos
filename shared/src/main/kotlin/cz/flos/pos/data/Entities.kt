@@ -143,7 +143,8 @@ data class SaleItemEntity(
     val name: String,
     val unitPrice: Long,
     val vatPercent: Int,
-    val quantity: Int,
+    /** Can be fractional, such as 0.5 for a half portion; negative on refunds. */
+    val quantity: Double,
     val discountPercent: Int = 0,
 )
 

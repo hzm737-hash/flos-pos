@@ -120,7 +120,7 @@ class ReceiptLayout(private val width: Int) {
 
         for (item in r.cart.items) {
             wrap(item.name, width).forEach { add(ReceiptBlock.Line(it)) }
-            val qtyText = "  ${item.quantity} x ${Money.format(item.unitPrice, "")}" +
+            val qtyText = "  ${Qty.format(item.quantity)} x ${Money.format(item.unitPrice, "")}" +
                 if (business.vatPayer) "  ${item.vatRate.label}" else ""
             add(ReceiptBlock.Line(twoCol(qtyText, Money.format(item.gross, ""))))
             if (item.discount > 0) {

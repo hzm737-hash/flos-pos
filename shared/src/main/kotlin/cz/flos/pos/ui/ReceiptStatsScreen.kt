@@ -133,7 +133,7 @@ private fun LargestCard(s: ReceiptStatistics, modifier: Modifier = Modifier) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(r.number, fontWeight = FontWeight.SemiBold)
-                        Text(fmt.format(Instant.ofEpochMilli(r.at).atZone(ZoneId.systemDefault())) + " · " + tr("%d ks", r.items) + " · " + tr(r.payment.label),
+                        Text(fmt.format(Instant.ofEpochMilli(r.at).atZone(ZoneId.systemDefault())) + " · " + tr("%s ks", cz.flos.core.Qty.format(r.items)) + " · " + tr(r.payment.label),
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(Money.format(r.amount), fontWeight = FontWeight.Bold)
