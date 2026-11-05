@@ -13,7 +13,7 @@ class ReceiptTest {
         dic = "CZ12345678",
         vatPayer = true,
     )
-    private val cart = Cart().add(1, "Espresso", 5900, VatRate.REDUCED, 2).add(2, "Croissant", 4550, VatRate.REDUCED)
+    private val cart = Cart().add(1, "Espresso", 5900, VatRate.REDUCED, 2.0).add(2, "Croissant", 4550, VatRate.REDUCED)
     private val receipt = Receipt(
         number = "2025-000001",
         createdAt = LocalDateTime.of(2025, 3, 1, 9, 30),

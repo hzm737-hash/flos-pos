@@ -64,9 +64,9 @@ object Stock {
             ) { Triple(it.getLong(1), it.getLong(2), it.getBoolean(3)) }
             val kind = if (sign < 0) "SALE" else "SALE_RETURN"
             if (recipe.isNotEmpty()) {
-                recipe.filter { it.third }.forEach { (ing, qty, _) -> move(c, orgId, branchId, ing, sign * qty * item.quantity, kind, ref = saleNumber) }
+                recipe.filter { it.third }.forEach { (ing, qty, _) -> move(c, orgId, branchId, ing, Math.round(sign * qty * item.quantity), kind, ref = saleNumber) }
             } else if (product.second) {
-                move(c, orgId, branchId, pid, sign * 1000L * item.quantity, kind, ref = saleNumber)
+                move(c, orgId, branchId, pid, Math.round(sign * 1000.0 * item.quantity), kind, ref = saleNumber)
             }
         }
     }

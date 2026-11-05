@@ -49,7 +49,7 @@ object Sales {
 
     fun items(c: Connection, saleId: Long): List<SaleItemDto> = c.query(
         "SELECT product_id, name, unit_price, vat_percent, quantity, discount_percent FROM sale_items WHERE sale_id = ? ORDER BY id", saleId,
-    ) { SaleItemDto(it.longOrNull("product_id"), it.getString("name"), it.getLong("unit_price"), it.getInt("vat_percent"), it.getInt("quantity"), it.getInt("discount_percent")) }
+    ) { SaleItemDto(it.longOrNull("product_id"), it.getString("name"), it.getLong("unit_price"), it.getInt("vat_percent"), it.getDouble("quantity"), it.getInt("discount_percent")) }
 
     fun list(c: Connection, orgId: Long, from: Long, to: Long, branchId: Long?, limit: Int = 100_000, withItems: Boolean = true): List<SaleDto> {
         val sales = c.query(
@@ -67,7 +67,7 @@ object Sales {
             "SELECT sale_id, product_id, name, unit_price, vat_percent, quantity, discount_percent FROM sale_items WHERE sale_id IN (${chunk.joinToString(",") { "?" }}) ORDER BY id",
             *chunk.toTypedArray(),
         ) {
-            it.getLong("sale_id") to SaleItemDto(it.longOrNull("product_id"), it.getString("name"), it.getLong("unit_price"), it.getInt("vat_percent"), it.getInt("quantity"), it.getInt("discount_percent"))
+            it.getLong("sale_id") to SaleItemDto(it.longOrNull("product_id"), it.getString("name"), it.getLong("unit_price"), it.getInt("vat_percent"), it.getDouble("quantity"), it.getInt("discount_percent"))
         }
     }.groupBy({ it.first }, { it.second })
 

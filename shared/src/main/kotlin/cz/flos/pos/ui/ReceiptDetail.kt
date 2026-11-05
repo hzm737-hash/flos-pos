@@ -172,7 +172,7 @@ internal fun ReceiptDetailDialog(
                     val cart = sw.toCart()
                     cart.items.forEach { item ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${item.quantity}×", fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp))
+                            Text("${cz.flos.core.Qty.format(item.quantity)}×", fontWeight = FontWeight.Bold, modifier = Modifier.width(44.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(item.name)
                                 Text(

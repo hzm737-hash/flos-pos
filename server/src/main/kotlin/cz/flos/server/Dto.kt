@@ -40,7 +40,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class StockMovementDto(val id: Long, val branchId: Long, val productId: Long, val productName: String, val qty: Double, val kind: String, val note: String, val ref: String, val createdAt: Long)
 
 // ---- Sales ----
-@Serializable data class SaleItemDto(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Int, val discountPercent: Int = 0)
+@Serializable data class SaleItemDto(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Double, val discountPercent: Int = 0)
 @Serializable data class SaleDto(
     val id: Long = 0, val branchId: Long = 0, val deviceId: Long = 0, val number: String, val createdAt: Long, val total: Long,
     val received: Long = total, val payment: String, val cashier: String = "", val discountPercent: Int = 0,
@@ -53,7 +53,7 @@ import kotlinx.serialization.Serializable
 // ---- Reports ----
 @Serializable data class Amount(val key: String, val amount: Long, val count: Int = 0)
 @Serializable data class VatRow(val rate: Int, val base: Long, val vat: Long, val gross: Long)
-@Serializable data class ProductRow(val productId: Long?, val name: String, val quantity: Int, val revenue: Long, val cost: Long)
+@Serializable data class ProductRow(val productId: Long?, val name: String, val quantity: Double, val revenue: Long, val cost: Long)
 @Serializable data class SummaryReport(
     val from: Long, val to: Long, val revenue: Long, val receipts: Int, val cancelled: Int, val averageReceipt: Long,
     val grossMargin: Long?, val byPayment: List<Amount>, val byVat: List<VatRow>, val byDay: List<Amount>, val byHour: List<Amount>,

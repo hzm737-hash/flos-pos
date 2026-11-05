@@ -5,11 +5,12 @@ data class CartItem(
     val name: String,
     val unitPrice: Long,
     val vatRate: VatRate,
-    val quantity: Int = 1,
+    /** Pieces or portions; can be fractional, such as 0.5 for a half portion. Negative on refunds. */
+    val quantity: Double = 1.0,
     /** Discount on this line in percent (0–100). */
     val discountPercent: Int = 0,
 ) {
-    val gross: Long get() = unitPrice * quantity
+    val gross: Long get() = Math.round(unitPrice * quantity)
     val discount: Long get() = Math.round(gross * discountPercent / 100.0)
     val total: Long get() = gross - discount
 }
@@ -23,23 +24,23 @@ data class Cart(val items: List<CartItem> = emptyList(), val discountPercent: In
 
     val total: Long get() = subtotal - cartDiscount
 
-    val itemCount: Int get() = items.sumOf { it.quantity }
+    val itemCount: Double get() = Qty.norm(items.sumOf { it.quantity })
 
     fun isEmpty() = items.isEmpty()
 
-    fun add(productId: Long, name: String, unitPrice: Long, vatRate: VatRate, qty: Int = 1): Cart {
+    fun add(productId: Long, name: String, unitPrice: Long, vatRate: VatRate, qty: Double = 1.0): Cart {
         // Variants of one product ("Pizza (velká)") stay on separate lines.
         val idx = items.indexOfFirst { it.productId == productId && it.name == name && it.unitPrice == unitPrice && it.discountPercent == 0 }
         return if (idx >= 0) {
-            copy(items = items.toMutableList().also { it[idx] = it[idx].copy(quantity = it[idx].quantity + qty) })
+            copy(items = items.toMutableList().also { it[idx] = it[idx].copy(quantity = Qty.norm(it[idx].quantity + qty)) })
         } else {
             copy(items = items + CartItem(productId, name, unitPrice, vatRate, qty))
         }
     }
 
-    fun setQuantity(index: Int, qty: Int): Cart =
-        if (qty <= 0) remove(index)
-        else copy(items = items.toMutableList().also { it[index] = it[index].copy(quantity = qty) })
+    fun setQuantity(index: Int, qty: Double): Cart =
+        if (Qty.norm(qty) < Qty.MIN) remove(index)
+        else copy(items = items.toMutableList().also { it[index] = it[index].copy(quantity = Qty.norm(qty)) })
 
     fun setLineDiscount(index: Int, percent: Int): Cart =
         copy(items = items.toMutableList().also { it[index] = it[index].copy(discountPercent = percent.coerceIn(0, 100)) })

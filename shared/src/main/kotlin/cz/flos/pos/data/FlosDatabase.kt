@@ -12,7 +12,7 @@ import androidx.sqlite.execSQL
  */
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -91,6 +91,28 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        /**
+         * 5 → 6: fractional item quantities (half portions). SQLite can't change a column type,
+         * so sale_items is rebuilt with quantity as REAL and the rows copied over.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sale_items_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `saleId` INTEGER NOT NULL, " +
+                        "`productId` INTEGER NOT NULL, `name` TEXT NOT NULL, `unitPrice` INTEGER NOT NULL, `vatPercent` INTEGER NOT NULL, " +
+                        "`quantity` REAL NOT NULL, `discountPercent` INTEGER NOT NULL, " +
+                        "FOREIGN KEY(`saleId`) REFERENCES `sales`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                connection.execSQL(
+                    "INSERT INTO `sale_items_new` (`id`, `saleId`, `productId`, `name`, `unitPrice`, `vatPercent`, `quantity`, `discountPercent`) " +
+                        "SELECT `id`, `saleId`, `productId`, `name`, `unitPrice`, `vatPercent`, CAST(`quantity` AS REAL), `discountPercent` FROM `sale_items`",
+                )
+                connection.execSQL("DROP TABLE `sale_items`")
+                connection.execSQL("ALTER TABLE `sale_items_new` RENAME TO `sale_items`")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS `index_sale_items_saleId` ON `sale_items` (`saleId`)")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
     }
 }

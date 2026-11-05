@@ -59,10 +59,10 @@ class TillClientTest {
             assertTrue(client.catalog(catalog.serverTime).products.isEmpty())
 
             val sale = BoSale("2027-000001", System.currentTimeMillis(), 11800, 11800, "CARD", "Eva",
-                items = listOf(BoSaleItem(espresso.id, "Espresso", 5900, 12, 2)), eetStatus = "CONFIRMED")
+                items = listOf(BoSaleItem(espresso.id, "Espresso", 5900, 12, 2.0)), eetStatus = "CONFIRMED")
             assertEquals(1, client.uploadSales(listOf(sale)).accepted)
             val refund = BoSale("2027-000002", System.currentTimeMillis(), -5900, -5900, "CARD", "Eva",
-                items = listOf(BoSaleItem(espresso.id, "Espresso", 5900, 12, -1)))
+                items = listOf(BoSaleItem(espresso.id, "Espresso", 5900, 12, -1.0)))
             val again = client.uploadSales(listOf(sale, refund))
             assertEquals(1, again.accepted)
             assertEquals(1, again.updated)

@@ -12,7 +12,7 @@ class ReceiptStatisticsTest {
     private fun at(day: Int, hour: Int) = LocalDate.of(2027, 3, day).atTime(hour, 15).atZone(zone).toInstant().toEpochMilli()
     private fun sale(number: String, day: Int, hour: Int, amount: Long, pieces: Int, payment: PaymentMethod = PaymentMethod.CASH,
                      cancelled: Boolean = false, refund: Boolean = false) =
-        StatSale(at(day, hour), amount, 0, payment, "Eva", cancelled, listOf(StatItem("X", "Y", pieces, amount)), refund, number)
+        StatSale(at(day, hour), amount, 0, payment, "Eva", cancelled, listOf(StatItem("X", "Y", pieces.toDouble(), amount)), refund, number)
 
     @Test fun countsSizesHoursAndLargest() {
         val sales = listOf(
@@ -40,7 +40,7 @@ class ReceiptStatisticsTest {
         assertEquals(listOf(1L, 1L, 0L, 1L, 0L, 1L), r.sizes.map { it.count })
         assertEquals(2000L, r.sizes.last().fromCrowns)
         assertNull(r.sizes.last().toCrowns)
-        assertEquals(2, r.byPayment.first { it.label == PaymentMethod.CARD.label }.quantity)
+        assertEquals(2.0, r.byPayment.first { it.label == PaymentMethod.CARD.label }.quantity, 1e-9)
     }
 
     @Test fun emptyPeriod() {

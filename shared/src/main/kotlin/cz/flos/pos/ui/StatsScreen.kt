@@ -92,7 +92,7 @@ fun StatsScreen(vm: PosViewModel) {
                     if ((change ?: 0.0) >= 0) FlosMint else FlosCoral)
                 Kpi(tr("Účtenek"), s.receipts.toString())
                 Kpi(tr("Průměrná účtenka"), Money.format(s.average))
-                Kpi(tr("Prodaných kusů"), s.itemsSold.toString())
+                Kpi(tr("Prodaných kusů"), cz.flos.core.Qty.format(s.itemsSold))
                 if (s.tips > 0) Kpi(tr("Spropitné"), Money.format(s.tips))
                 if (s.refunds > 0) Kpi(tr("Vratky"), Money.format(s.refunds))
                 if (s.stornoCount > 0) Kpi(tr("Storna"), s.stornoCount.toString())
@@ -201,7 +201,7 @@ internal fun RankCard(title: String, rows: List<Ranked>, modifier: Modifier = Mo
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(r.label, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text((if (units) "${r.quantity} ks · " else "${r.quantity}× · ") + Money.format(r.amount),
+                        Text((if (units) "${cz.flos.core.Qty.format(r.quantity)} ks · " else "${cz.flos.core.Qty.format(r.quantity)}× · ") + Money.format(r.amount),
                             style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(2.dp))

@@ -89,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cz.flos.core.Cart
 import cz.flos.core.Money
+import cz.flos.core.Qty
 import cz.flos.core.Text as CoreText
 import cz.flos.pos.data.ProductEntity
 
@@ -98,7 +99,7 @@ fun SellScreen(vm: PosViewModel) {
     var paying by remember { mutableStateOf(false) }
     var parking by remember { mutableStateOf(false) }
     var splitting by remember { mutableStateOf(false) }
-    var partToPay by remember { mutableStateOf<Map<Int, Int>?>(null) }
+    var partToPay by remember { mutableStateOf<Map<Int, Double>?>(null) }
     var showCartOnPhone by rememberSaveable { mutableStateOf(false) }
 
     if (isWide()) {
@@ -133,7 +134,7 @@ fun SellScreen(vm: PosViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(Icons.Rounded.ShoppingBag, null, tint = Color.White)
-                        Text("  ${cart.itemCount} ks", color = Color.White)
+                        Text("  ${Qty.format(cart.itemCount)} ks", color = Color.White)
                         Spacer(Modifier.weight(1f))
                         Text(Money.format(cart.total), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                         Spacer(Modifier.width(12.dp))
@@ -172,7 +173,7 @@ fun SellScreen(vm: PosViewModel) {
     }
     partToPay?.let { selection ->
         val part = cz.flos.core.Cart(
-            cart.items.mapIndexedNotNull { i, item -> (selection[i] ?: 0).takeIf { it > 0 }?.let { item.copy(quantity = it.coerceAtMost(item.quantity)) } },
+            cart.items.mapIndexedNotNull { i, item -> (selection[i] ?: 0.0).takeIf { it >= Qty.MIN }?.let { item.copy(quantity = it.coerceAtMost(item.quantity)) } },
             cart.discountPercent,
         )
         PaymentDialog(vm, part.total, title = tr("Platba části účtu"), onDismiss = { partToPay = null }) { method, given ->
@@ -183,10 +184,10 @@ fun SellScreen(vm: PosViewModel) {
 
 /** Split bill: choose how many of each line this guest pays; the rest stays open. */
 @Composable
-private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Int>) -> Unit) {
-    var chosen by remember { mutableStateOf(mapOf<Int, Int>()) }
+private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Double>) -> Unit) {
+    var chosen by remember { mutableStateOf(mapOf<Int, Double>()) }
     val part = cz.flos.core.Cart(
-        cart.items.mapIndexedNotNull { i, item -> (chosen[i] ?: 0).takeIf { it > 0 }?.let { item.copy(quantity = it) } },
+        cart.items.mapIndexedNotNull { i, item -> (chosen[i] ?: 0.0).takeIf { it >= Qty.MIN }?.let { item.copy(quantity = it) } },
         cart.discountPercent,
     )
     AlertDialog(
@@ -199,19 +200,13 @@ private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Int>
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
                     itemsIndexed(cart.items) { i, item ->
-                        val q = chosen[i] ?: 0
+                        val q = chosen[i] ?: 0.0
                         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(item.name, fontWeight = FontWeight.Medium)
-                                Text(tr("%d z %d", q, item.quantity) + " · " + Money.format(item.unitPrice), style = MaterialTheme.typography.bodySmall)
+                                Text(tr("%s z %s", Qty.format(q), Qty.format(item.quantity)) + " · " + Money.format(item.unitPrice), style = MaterialTheme.typography.bodySmall)
                             }
-                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q - 1).coerceAtLeast(0)) }, enabled = q > 0, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Remove, tr("Méně"))
-                            }
-                            Text("$q", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(32.dp))
-                            FilledTonalIconButton(onClick = { chosen = chosen + (i to (q + 1).coerceAtMost(item.quantity)) }, enabled = q < item.quantity, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Rounded.Add, tr("Více"))
-                            }
+                            QtyStepper(q, item.quantity) { chosen = chosen + (i to it) }
                         }
                     }
                 }
@@ -222,7 +217,7 @@ private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Int>
             }
         },
         confirmButton = {
-            Button(onClick = { onPay(chosen.filterValues { it > 0 }) }, enabled = !part.isEmpty()) {
+            Button(onClick = { onPay(chosen.filterValues { it >= Qty.MIN }) }, enabled = !part.isEmpty()) {
                 Text(tr("Zaplatit %s", Money.format(part.total)))
             }
         },
@@ -312,10 +307,17 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                 shape = RoundedCornerShape(50),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { submit() }, onDone = { submit() }),
-                modifier = Modifier.fillMaxWidth().onPreviewKeyEvent {
+                modifier = Modifier.weight(1f).onPreviewKeyEvent {
                     if ((it.key == Key.Enter || it.key == Key.NumPadEnter) && it.type == KeyEventType.KeyUp) { submit(); true }
                     else it.key == Key.Enter || it.key == Key.NumPadEnter
                 },
+            )
+            // Half portion: switch on, then tap the product; it is added as 0,5.
+            val half by vm.halfPortion.collectAsState()
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = half, onClick = { vm.toggleHalfPortion() }, shape = RoundedCornerShape(50),
+                label = { Text(tr("½ porce"), fontWeight = FontWeight.Bold) },
             )
         }
         LazyRow(
@@ -385,6 +387,7 @@ private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClic
 @Composable
 private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: () -> Unit, onSplit: () -> Unit, modifier: Modifier = Modifier) {
     var discountDialog by remember { mutableStateOf(false) }
+    var quantityOf by remember { mutableStateOf<Int?>(null) }
     val order by vm.editingOrder.collectAsState()
     val pendingTable by vm.pendingTable.collectAsState()
     Column(modifier.fillMaxHeight().padding(14.dp)) {
@@ -430,9 +433,14 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
                             )
                         }
                         FilledTonalIconButton(onClick = { vm.setQuantity(i, item.quantity - 1) }, modifier = Modifier.size(36.dp)) {
-                            Icon(if (item.quantity == 1) Icons.Rounded.DeleteOutline else Icons.Rounded.Remove, tr("Méně"))
+                            Icon(if (item.quantity <= 1.0) Icons.Rounded.DeleteOutline else Icons.Rounded.Remove, tr("Méně"))
                         }
-                        Text("${item.quantity}", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.width(32.dp))
+                        // Tap the number for a half portion or any other amount.
+                        Text(
+                            Qty.format(item.quantity), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                            color = if (Qty.isWhole(item.quantity)) Color.Unspecified else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.width(44.dp).clip(RoundedCornerShape(8.dp)).clickable { quantityOf = i }.padding(vertical = 8.dp),
+                        )
                         FilledTonalIconButton(onClick = { vm.setQuantity(i, item.quantity + 1) }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Rounded.Add, tr("Více"))
                         }
@@ -458,7 +466,7 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
             val w = Modifier.weight(1f)
             SmallAction(Icons.Rounded.ReceiptLong, tr("Předúčet"), enabled = !cart.isEmpty(), modifier = w) { vm.printPreBill() }
             SmallAction(Icons.Rounded.DeliveryDining, tr("Odložit"), enabled = !cart.isEmpty(), modifier = w, onClick = onPark)
-            SmallAction(Icons.Rounded.CallSplit, tr("Rozdělit"), enabled = cart.itemCount > 1, modifier = w, onClick = onSplit)
+            SmallAction(Icons.Rounded.CallSplit, tr("Rozdělit"), enabled = !cart.isEmpty(), modifier = w, onClick = onSplit)
             SmallAction(Icons.Rounded.Percent, tr("Sleva"), enabled = !cart.isEmpty(), modifier = w) { discountDialog = true }
             SmallAction(Icons.Rounded.DeleteOutline, tr("Vymazat"), enabled = !cart.isEmpty() || order != null || pendingTable != null, modifier = w) { vm.clearCart() }
         }
@@ -471,6 +479,13 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
         ) {
             Text(tr("Zaplatit") + "  " + Money.format(cart.total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
+    }
+    quantityOf?.let { i ->
+        cart.items.getOrNull(i)?.let { item ->
+            QuantityDialog(item.name, item.unitPrice, item.quantity, onDismiss = { quantityOf = null }) { q ->
+                vm.setQuantity(i, q); quantityOf = null
+            }
+        } ?: run { quantityOf = null }
     }
     if (discountDialog) {
         DiscountDialog(current = cart.discountPercent, onDismiss = { discountDialog = false }) {

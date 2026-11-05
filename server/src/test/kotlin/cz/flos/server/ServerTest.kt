@@ -122,9 +122,9 @@ class ServerTest {
         val now = System.currentTimeMillis()
         val sales = listOf(
             SaleDto(number = "2027-000001", createdAt = now, total = 15000, payment = "CASH", cashier = "Eva", eetStatus = "CONFIRMED",
-                eetPok = "a1b2c3d4-0000-4abc-8def-0123456789ab-01", items = listOf(SaleItemDto(capp.id, "Cappuccino", 7500, 12, 2))),
+                eetPok = "a1b2c3d4-0000-4abc-8def-0123456789ab-01", items = listOf(SaleItemDto(capp.id, "Cappuccino", 7500, 12, 2.0))),
             SaleDto(number = "2027-000002", createdAt = now, total = 11800, payment = "CARD", cashier = "Eva", eetStatus = "PENDING",
-                items = listOf(SaleItemDto(beer.id, "Pivo", 5900, 21, 2))),
+                items = listOf(SaleItemDto(beer.id, "Pivo", 5900, 21, 2.0))),
         )
         val up = client.postJson("/api/v1/device/sales", SalesUpload(sales), dt).body<UploadResult>()
         assertEquals(2, up.accepted)
@@ -167,6 +167,20 @@ class ServerTest {
         val eet = client.get("/api/v1/eet?from=$today") { bearerAuth(token) }.body<EetOverview>()
         assertEquals(1, eet.confirmed)
         assertEquals(1, eet.pending)
+
+        // Half a beer: stock, reports and exports keep the fraction.
+        val half = SaleDto(number = "2027-000004", createdAt = now, total = 2950, payment = "CASH", cashier = "Eva", eetStatus = "CONFIRMED",
+            items = listOf(SaleItemDto(beer.id, "Pivo", 5900, 21, 0.5)))
+        assertEquals(1, client.postJson("/api/v1/device/sales", SalesUpload(listOf(half)), dt).body<UploadResult>().accepted)
+        val beerLeft = client.get("/api/v1/stock?branchId=${branch.id}") { bearerAuth(token) }.body<List<StockLevelDto>>().first { it.productId == beer.id }
+        assertEquals(24.5, beerLeft.qty, 1e-9)
+        val report2 = client.get("/api/v1/reports/summary?from=$today&to=$today") { bearerAuth(token) }.body<SummaryReport>()
+        assertEquals(0.5, report2.topProducts.first { it.name == "Pivo" }.quantity, 1e-9)
+        assertEquals(2950L, report2.topProducts.first { it.name == "Pivo" }.revenue)
+        val items = client.get("/api/v1/export/items.csv?from=$today") { bearerAuth(token) }.bodyAsText()
+        assertTrue(items, items.contains("2027-000004;Pivo;0,5;"))
+        val pohoda2 = client.get("/api/v1/export/pohoda.xml?from=$today") { bearerAuth(token) }.bodyAsText()
+        assertTrue(pohoda2.contains("<pro:quantity>0.5</pro:quantity>"))
     }
 
     @Test fun staffPinAttendanceAndApiKeys() = run { client ->
