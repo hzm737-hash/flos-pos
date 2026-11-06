@@ -10,6 +10,8 @@ jobs:
   build:
     name: Android
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -21,16 +23,39 @@ jobs:
         run: ./gradlew :core:test
       - name: Build APKs
         run: ./gradlew :app:assembleDebug :app:assembleRelease
+      # Pull requests keep the files for 3 days. A full artifact storage must not fail the build.
       - name: Upload APKs
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: flos-apk
+          retention-days: 3
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
+      # The newest app goes straight to the "latest" release (no artifact storage needed), so it can be
+      # installed on a phone with one tap: https://github.com/<owner>/flos-pos/releases/latest/download/flos.apk
+      - name: Publish flos.apk
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cp app/build/outputs/apk/debug/*.apk flos.apk
+          gh release view latest >/dev/null 2>&1 || gh release create latest --target "$GITHUB_SHA" --latest \
+            --title "Flos – nejnovější verze / latest build" --notes "Flos" || true
+          gh release upload latest flos.apk --clobber
+          gh release edit latest --latest --title "Flos – nejnovější verze / latest build" \
+            --notes "Android: stáhněte **flos.apk** v telefonu a otevřete ho (povolte instalaci z neznámých zdrojů). Windows: **flos-windows.msi**.
+          Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
+
+          Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
 
   windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -42,45 +67,22 @@ jobs:
         shell: bash
         run: ./gradlew :desktop:packageMsi :desktop:createDistributable
       - name: Upload Windows installer
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: flos-windows-installer
+          retention-days: 3
           path: desktop/build/compose/binaries/main/msi/*.msi
-      - name: Upload portable Windows app
-        uses: actions/upload-artifact@v4
-        with:
-          name: flos-windows-portable
-          path: desktop/build/compose/binaries/main/app/
-
-  # Puts the newest app on the "Download" release page, so it can be installed on a phone with one tap:
-  # https://github.com/<owner>/flos-pos/releases/latest/download/flos.apk
-  release:
-    name: Publish download
-    needs: [ build, windows ]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-      - name: Collect files
-        run: |
-          mkdir out
-          cp dist/flos-apk/debug/*.apk out/flos.apk
-          cp dist/flos-windows-installer/*.msi out/flos-windows.msi
-          (cd dist/flos-windows-portable && zip -qr ../../out/flos-windows-portable.zip .)
-          ls -la out
-      - name: Replace the "latest" release
+      - name: Publish Windows downloads
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release delete latest --cleanup-tag --yes || true
-          gh release create latest out/* --target "$GITHUB_SHA" --latest \
-            --title "Flos – nejnovější verze / latest build" \
-            --notes "Android: stáhněte **flos.apk** v telefonu a otevřete ho (povolte instalaci z neznámých zdrojů). Windows: **flos-windows.msi**.
-          Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
-
-          Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
+          Copy-Item (Get-ChildItem desktop/build/compose/binaries/main/msi/*.msi | Select-Object -First 1).FullName flos-windows.msi
+          Compress-Archive -Path desktop/build/compose/binaries/main/app/* -DestinationPath flos-windows-portable.zip
+          gh release view latest *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create latest --target $env:GITHUB_SHA --latest --title "Flos" --notes "Flos"; $global:LASTEXITCODE = 0 }
+          gh release upload latest flos-windows.msi flos-windows-portable.zip --clobber
