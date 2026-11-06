@@ -54,7 +54,8 @@ class EetClient(
             val doc = try {
                 DocumentBuilderFactory.newInstance().apply {
                     isNamespaceAware = true
-                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                    // Android's parser rejects this feature (and never loads DTDs anyway).
+                    runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
                 }.newDocumentBuilder().parse(ByteArrayInputStream(body))
             } catch (e: Exception) {
                 return EetResult.Error(null, "Neplatná odpověď serveru (HTTP $httpStatus)", retryable = httpStatus >= 500 || httpStatus == 200)

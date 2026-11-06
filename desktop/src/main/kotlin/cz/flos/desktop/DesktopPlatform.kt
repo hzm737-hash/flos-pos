@@ -102,7 +102,7 @@ class DesktopPlatform(override val dataDir: File) : Platform {
             val dialog = FileDialog(null as Frame?, tr("Vyberte soubor"), FileDialog.LOAD)
             dialog.isVisible = true
             val file = dialog.file?.let { File(dialog.directory, it) }
-            if (file != null) onPicked(file.readBytes())
+            if (file != null) runCatching { file.readBytes() }.getOrNull()?.let(onPicked)
         }
     }
 
