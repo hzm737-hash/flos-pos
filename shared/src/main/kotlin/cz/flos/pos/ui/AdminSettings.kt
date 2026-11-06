@@ -51,6 +51,18 @@ fun AdminSettings(vm: PosViewModel, s: AppSettings) {
     OutlinedTextField(value = s.openingHours, onValueChange = { v -> vm.updateSettings { it.copy(openingHours = v) } },
         label = { Text(tr("Otevírací doba (např. Po-Pá 8:00-20:00)")) }, minLines = 2, modifier = Modifier.fillMaxWidth())
 
+    Section(tr("Způsoby platby na obrazovce platby"))
+    Text(tr("Vypnuté způsoby se při placení nezobrazí. Starší účtenky a přehledy se nemění."),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val hidden = s.hiddenPaymentSet
+    fun toggle(key: String, on: Boolean) = vm.updateSettings { a ->
+        val next = if (on) a.hiddenPaymentSet - key else a.hiddenPaymentSet + key
+        // At least one way to pay always stays on.
+        if (PaymentMethod.entries.all { it.name in next }) a else a.copy(hiddenPayments = next.sorted().joinToString(","))
+    }
+    PaymentMethod.entries.forEach { m -> SwitchRow(tr(m.label), m.name !in hidden) { v -> toggle(m.name, v) } }
+    SwitchRow(tr("Kombinovaná"), "MIXED" !in hidden) { v -> toggle("MIXED", v) }
+
     Section(tr("Vzhled účtenky a dokladů"))
     SwitchRow(tr("Tisknout jméno obsluhy"), s.receiptShowCashier) { v -> vm.updateSettings { it.copy(receiptShowCashier = v) } }
     SwitchRow(tr("Sazba DPH u každé položky"), s.receiptItemVat) { v -> vm.updateSettings { it.copy(receiptItemVat = v) } }

@@ -42,9 +42,10 @@ class AndroidPlatform(private val context: Context) : Platform {
     override fun rememberFilePicker(onPicked: (ByteArray) -> Unit): () -> Unit {
         val ctx = LocalContext.current
         val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) ctx.contentResolver.openInputStream(uri)?.use { onPicked(it.readBytes()) }
+            // A file the system cannot open (removed, no permission) is ignored instead of crashing.
+            if (uri != null) runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()?.let(onPicked)
         }
-        return { launcher.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }
+        return { runCatching { launcher.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) } }
     }
 
     @Composable
@@ -58,7 +59,7 @@ class AndroidPlatform(private val context: Context) : Platform {
             val ok = runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null }.getOrDefault(false)
             onDone(ok)
         }
-        return { name, bytes -> pending[0] = bytes; launcher.launch(name) }
+        return { name, bytes -> pending[0] = bytes; if (runCatching { launcher.launch(name) }.isFailure) { pending[0] = null; onDone(false) } }
     }
 
     override fun openUrl(url: String): Boolean = runCatching {

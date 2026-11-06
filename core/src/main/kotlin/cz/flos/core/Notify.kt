@@ -15,9 +15,9 @@ object Notify {
     const val ORDER_READY = "Dobrý den {jmeno}, Vaše objednávka č. {cislo} je připravena k vyzvednutí. {provozovna}"
     const val DOCUMENT = "Dobrý den {jmeno}, posíláme {cislo} na částku {castka}. Platba na účet {ucet}, VS {vs}. {provozovna}"
 
-    /** Replaces {placeholders}; unknown ones and those without a value disappear. */
+    /** Replaces {placeholders}; unknown ones and those without a value disappear. Both braces are escaped: Android's regex engine rejects a bare "}". */
     fun fill(template: String, values: Map<String, String>): String =
-        Regex("""\{([a-zA-Z]+)}""").replace(template) { m -> values[m.groupValues[1].lowercase()].orEmpty() }
+        Regex("""\{([a-zA-Z]+)\}""").replace(template) { m -> values[m.groupValues[1].lowercase()].orEmpty() }
             .replace(Regex("""[ \t]{2,}"""), " ").replace(Regex("""\s+([,.!?])"""), "$1").trim()
 
     /** "777 123 456", "+420 777…", "00420777…" → "420777123456"; null when it is not a phone number. */

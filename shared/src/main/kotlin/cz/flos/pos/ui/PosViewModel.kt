@@ -1274,7 +1274,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun addNote(target: cz.flos.pos.data.NoteTarget, id: Long?, text: String, file: Pair<String, ByteArray>?) = viewModelScope.launch {
         val stored = file?.let { (title, bytes) ->
             val name = "${System.currentTimeMillis()}-" + title.filter { it.isLetterOrDigit() || it in "._-" }.ifBlank { "soubor" }.take(60)
-            withContext(Dispatchers.IO) { java.io.File(attachmentsDir, name).writeBytes(bytes) }
+            val saved = runCatching { withContext(Dispatchers.IO) { java.io.File(attachmentsDir, name).writeBytes(bytes) } }.isSuccess
+            if (!saved) { _messages.tryEmit(tr("Dokument se nepodařilo uložit")); return@launch }
             name
         }
         noteDao.upsert(cz.flos.pos.data.NoteEntity(target = target.name, targetId = id, text = text.trim(), createdAt = System.currentTimeMillis(),
