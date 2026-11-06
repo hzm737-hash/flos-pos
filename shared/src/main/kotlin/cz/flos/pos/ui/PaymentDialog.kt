@@ -54,7 +54,9 @@ fun PaymentDialog(
     onConfirm: (PaymentMethod, Long?) -> Unit,
 ) {
     val s by vm.settings.collectAsState()
-    var method by remember { mutableStateOf(PaymentMethod.CASH) }
+    // Only the buttons the owner left switched on (Settings → Platby); never an empty row.
+    val shown = PaymentMethod.entries.filter { it.name !in s.hiddenPaymentSet }.ifEmpty { listOf(PaymentMethod.CASH) }
+    var method by remember { mutableStateOf(if (PaymentMethod.CASH in shown) PaymentMethod.CASH else shown.first()) }
     var mixed by remember { mutableStateOf(false) }
     var cardPart by remember { mutableStateOf("") }
     var voucherPart by remember { mutableStateOf("") }
@@ -79,11 +81,11 @@ fun PaymentDialog(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    PaymentMethod.entries.forEach { m ->
+                    shown.forEach { m ->
                         FilterChip(selected = method == m && !mixed, onClick = { method = m; mixed = false },
                             label = { Text(tr(m.label)) }, leadingIcon = { Icon(m.icon, null) })
                     }
-                    if (onMixed != null) FilterChip(selected = mixed, onClick = { mixed = true }, label = { Text(tr("Kombinovaná")) })
+                    if (onMixed != null && "MIXED" !in s.hiddenPaymentSet) FilterChip(selected = mixed, onClick = { mixed = true }, label = { Text(tr("Kombinovaná")) })
                 }
                 if (mixed) {
                     Hint(tr("Zadejte, kolik zákazník platí stravenkami a kartou. Zbytek zaplatí hotově."))

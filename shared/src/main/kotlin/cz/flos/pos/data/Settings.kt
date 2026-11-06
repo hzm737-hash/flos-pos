@@ -135,7 +135,10 @@ data class AppSettings(
     /** Public address of the menu: from the back office or the owner's own web. */
     val menuUrl: String = "",
     val menuNote: String = "",
+    /** Payment buttons the owner switched off, e.g. "INVOICE,MEAL_VOUCHER,MIXED". Empty = all shown. */
+    val hiddenPayments: String = "",
 ) {
+    val hiddenPaymentSet: Set<String> get() = hiddenPayments.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
     val discountRuleList: List<cz.flos.core.DiscountRule> get() = cz.flos.core.Pricing.parseRules(discountRules)
@@ -267,6 +270,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             msgDocument = str("msgDocument", d.msgDocument),
             menuUrl = str("menuUrl", d.menuUrl),
             menuNote = str("menuNote", d.menuNote),
+            hiddenPayments = str("hiddenPayments", d.hiddenPayments),
         )
     }
 
@@ -348,6 +352,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "msgDocument" to s.msgDocument,
                 "menuUrl" to s.menuUrl,
                 "menuNote" to s.menuNote,
+                "hiddenPayments" to s.hiddenPayments,
             ),
         )
         _state.value = s
