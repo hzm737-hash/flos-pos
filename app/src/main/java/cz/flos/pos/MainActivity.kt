@@ -54,6 +54,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Google Play's donation payment sheet opens on top of this screen.
+        ((application as FlosApp).container.platform as? AndroidPlatform)?.activity = java.lang.ref.WeakReference(this)
+    }
+
     override fun onStart() {
         super.onStart()
         (getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).registerDisplayListener(displayListener, null)

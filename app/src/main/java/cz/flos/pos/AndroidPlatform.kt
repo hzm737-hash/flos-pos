@@ -1,6 +1,9 @@
 package cz.flos.pos
 
 import android.Manifest
+import android.app.Activity
+import cz.flos.pos.billing.PlayDonations
+import java.lang.ref.WeakReference
 import android.content.Context
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,6 +19,14 @@ import java.io.File
 
 class AndroidPlatform(private val context: Context) : Platform {
     private val bluetooth = BluetoothPrinter(context)
+    private val donations = PlayDonations(context)
+
+    /** The visible screen, needed to show Google Play's payment sheet. Set by [MainActivity]. */
+    var activity: WeakReference<Activity>? = null
+
+    override suspend fun donationOptions(): List<DonationOption> = donations.options()
+
+    override fun donate(option: DonationOption, onDone: (Boolean) -> Unit) = donations.donate(activity?.get(), option, onDone)
 
     override val dataDir: File get() = context.filesDir
     override val printerTypes = listOf(PrinterType.BLUETOOTH, PrinterType.NETWORK)

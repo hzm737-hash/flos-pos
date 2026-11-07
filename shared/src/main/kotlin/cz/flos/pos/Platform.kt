@@ -8,6 +8,9 @@ import java.io.File
 /** A printer the operating system knows about: a paired Bluetooth printer, a COM port or a Windows printer. */
 data class PrinterDevice(val name: String, val address: String)
 
+/** A voluntary donation amount offered under "Podpořit Flos" (a Google Play in-app product on Android). */
+data class DonationOption(val id: String, val title: String, val price: String)
+
 /**
  * Everything that differs between Android and Windows. The shared till code only talks to
  * this interface; app/ (Android) and desktop/ (Windows) each provide one implementation.
@@ -53,6 +56,12 @@ interface Platform {
     /** Returns a function that asks for the permission needed by [canUsePrinters], then calls [onGranted]. */
     @Composable
     fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit
+
+    /** Donation amounts the user can choose; empty when donations are not available here. */
+    suspend fun donationOptions(): List<DonationOption> = emptyList()
+
+    /** Starts paying a donation; [onDone] gets true once the payment went through. */
+    fun donate(option: DonationOption, onDone: (Boolean) -> Unit) = onDone(false)
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("No platform") }
