@@ -7,23 +7,38 @@ plugins {
 
 android {
     namespace = "cz.flos.pos"
-    compileSdk = 35
+    // Google Play accepts new apps and updates only when they target Android 16 (API 36).
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "cz.flos.pos"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        // Google Play needs a higher version code for every upload: CI passes its run number.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = build ?: 1
+        versionName = if (build != null) "1.0.$build" else "0.1.0"
+    }
+
+    // Upload key for Google Play (Play App Signing re-signs the app with Google's key).
+    // CI writes it from the repository secrets; without them release builds keep the debug key.
+    val uploadKeystore = System.getenv("FLOS_UPLOAD_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (uploadKeystore != null) create("upload") {
+            storeFile = uploadKeystore
+            storePassword = System.getenv("FLOS_UPLOAD_PASSWORD")
+            keyAlias = System.getenv("FLOS_UPLOAD_ALIAS") ?: "flos-upload"
+            keyPassword = System.getenv("FLOS_UPLOAD_PASSWORD")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Until a release keystore is set up, release builds are signed with the debug key
-            // so the APK can be installed for testing.
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed with the upload key when CI has it (Google Play bundle); otherwise with the debug key
+            // so the APK can still be installed for testing.
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -66,4 +81,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.sqlite.framework)
     ksp(libs.androidx.room.compiler)
+
+    // Voluntary donations ("Podpořit Flos") through Google Play's own billing, as Play policy requires.
+    implementation(libs.billing)
 }

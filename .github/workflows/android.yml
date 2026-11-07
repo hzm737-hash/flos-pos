@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      HAS_UPLOAD_KEY: ${{ secrets.FLOS_UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -51,6 +53,21 @@ jobs:
           Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
 
           Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
+      # Google Play bundle, signed with the upload key from the repository secrets
+      # FLOS_UPLOAD_KEYSTORE_BASE64 and FLOS_UPLOAD_PASSWORD. Skipped until those secrets exist.
+      - name: Build Google Play bundle
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.HAS_UPLOAD_KEY == 'true'
+        env:
+          FLOS_UPLOAD_KEYSTORE_BASE64: ${{ secrets.FLOS_UPLOAD_KEYSTORE_BASE64 }}
+          FLOS_UPLOAD_PASSWORD: ${{ secrets.FLOS_UPLOAD_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "$FLOS_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flos-upload.p12"
+          FLOS_UPLOAD_KEYSTORE="$RUNNER_TEMP/flos-upload.p12" ./gradlew :app:bundleRelease
+          rm -f "$RUNNER_TEMP/flos-upload.p12"
+          cp app/build/outputs/bundle/release/*.aab flos-play.aab
+          gh release upload latest flos-play.aab --clobber
 
   windows:
     runs-on: windows-latest

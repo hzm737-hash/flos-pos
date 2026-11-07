@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.PointOfSale
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -74,6 +75,7 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     WAITERS("Obsluha", Icons.Rounded.Badge, false),
     PRODUCT_TOOLS("Excel a štítky", Icons.Rounded.TableView, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
+    SUPPORT("Podpořit Flos", Icons.Rounded.Favorite, false),
 }
 
 /** Navigation icon with the number of unpaid orders on the Orders tab. */
@@ -194,6 +196,7 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.DOCUMENTS -> DocumentsScreen(vm, onSell = { screen = Screen.SELL })
                 Screen.WAITERS -> WaitersScreen(vm)
                 Screen.PRODUCT_TOOLS -> ProductToolsScreen(vm)
+                Screen.SUPPORT -> SupportScreen(vm)
             }
         }
         }

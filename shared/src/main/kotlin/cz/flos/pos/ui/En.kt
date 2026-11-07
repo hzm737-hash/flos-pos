@@ -750,5 +750,12 @@ internal object En {
         "Kopírovat text" to "Copy text",
         "Otevře se aplikace s připraveným textem, zprávu odešlete v ní." to "The app opens with the text ready; send the message there.",
         "Text zkopírován" to "Text copied",
+        "Podpořit Flos" to "Support Flos",
+        "Flos je zdarma a všechny funkce zůstanou zdarma. Pokud vám pomáhá, můžete jeho další vývoj podpořit dobrovolným příspěvkem. Příspěvek nic neodemyká a nic se nemění." to "Flos is free and all features stay free. If it helps you, you can support its development with a voluntary contribution. A contribution unlocks nothing and changes nothing.",
+        "Načítání…" to "Loading…",
+        "Příspěvky jsou dostupné ve verzi Flos z Google Play." to "Contributions are available in the Google Play version of Flos.",
+        "Děkujeme za podporu!" to "Thank you for your support!",
+        "Platba nebyla dokončena" to "The payment was not completed",
+        "Platbu zpracovává Google Play. Flos nevidí údaje o vaší kartě." to "Google Play processes the payment. Flos never sees your card details.",
     )
 }

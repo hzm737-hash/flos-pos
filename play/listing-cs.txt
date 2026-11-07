@@ -1,0 +1,38 @@
+=== Název aplikace (max 30 znaků) ===
+Flos – pokladna
+
+=== Krátký popis (max 80 znaků) ===
+Pokladna pro kavárny, restaurace a obchody. Zdarma, česky, s EET a QR platbou.
+
+=== Úplný popis (max 4000 znaků) ===
+Flos je pokladní systém pro kavárny, bistra, restaurace, bary a malé obchody. Je zdarma, bez reklam a bez registrace. Funguje na telefonu, tabletu i ve Windows a data zůstávají ve vašem zařízení.
+
+PRODEJ
+• Rychlý prodej přes dlaždice s kategoriemi, vyhledávání a čárové kódy
+• Poloviční porce a desetinná množství, varianty a přílohy
+• Platba hotově, převodem, stravenkami, na fakturu i kombinovaně
+• QR Platba na účtence, spropitné z přeplatku
+• Rozdělení účtu, předúčet, vratky a storna
+• Stoly a mapa stolů, objednávky s sebou a rozvoz
+
+ÚČTENKY A TISK
+• Tisk na Bluetooth a Wi-Fi tiskárny (ESC/POS), otevření pokladní zásuvky
+• Historie účtenek s vyhledáváním, kalendářem a opakovaným tiskem
+• Odeslání účtenky e-mailem, SMS nebo přes WhatsApp
+
+EET A ÚČETNICTVÍ
+• EET s automatickým opakováním a offline frontou
+• Denní uzávěrka, pokladní směny, statistiky a přehled nezaplacených
+• Export do Excelu a POHODA
+
+PODNIK
+• Obsluha s PINem, role a oprávnění, docházka
+• Zákazníci a věrnostní body, rezervace
+• Kuchyňská obrazovka a zákaznický displej
+• Ceníky, happy hour, nabídky a zakázky
+• Více firem a provozoven, back office na webu (volitelné)
+• Ověření plateb převodem přes Fio API
+
+Flos je a zůstane zdarma. Pokud vám pomáhá, můžete jeho vývoj podpořit dobrovolným příspěvkem přímo v aplikaci. Příspěvek nic neodemyká.
+
+Aplikace je v češtině, angličtinu lze zapnout v nastavení.
