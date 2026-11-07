@@ -16,6 +16,10 @@ demo battery -e level 100 -e plugged false
 demo network -e wifi show -e level 4 -e mobile show -e datatype none -e level 4
 demo notifications -e visible false
 
+# A slow emulator sometimes shows "System UI isn't responding": hide such dialogs and tap "Wait".
+adb shell settings put global hide_error_dialogs 1
+sleep 30
+
 # Taps the centre of the first element whose text or description is $1.
 tap() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
@@ -33,7 +37,9 @@ PY
 )
   if [ -n "$xy" ]; then adb shell input tap $xy; sleep 2; else echo "not found: $1"; fi
 }
-shot() { sleep 1; adb exec-out screencap -p > "$OUT/$1.png"; echo "saved $1"; }
+dismiss() { for i in 1 2 3; do tap_quiet "Wait"; tap_quiet "Počkat"; done; }
+tap_quiet() { tap "$1" >/dev/null; }
+shot() { dismiss; sleep 1; adb exec-out screencap -p > "$OUT/$1.png"; echo "saved $1"; }
 back() { adb shell input keyevent KEYCODE_BACK; sleep 1; }
 
 # $1 = name prefix, $2 = screen size, $3 = density
