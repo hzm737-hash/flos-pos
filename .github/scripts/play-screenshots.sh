@@ -29,16 +29,16 @@ tap() {
 import re, sys, xml.etree.ElementTree as ET
 want = sys.argv[1]
 for n in ET.parse('/tmp/ui.xml').iter('node'):
-    if want in (n.get('text'), n.get('content-desc')):
+    if any((v or '').startswith(want) for v in (n.get('text'), n.get('content-desc'))):
         x1, y1, x2, y2 = map(int, re.findall(r'\d+', n.get('bounds')))
         print((x1 + x2) // 2, (y1 + y2) // 2)
         break
 PY
 )
-  if [ -n "$xy" ]; then adb shell input tap $xy; sleep 2; else echo "not found: $1"; fi
+  if [ -n "$xy" ]; then adb shell input tap $xy; sleep 2; else echo "not found: $1"; return 1; fi
 }
 dismiss() { for i in 1 2 3; do tap_quiet "Wait"; tap_quiet "Počkat"; done; }
-tap_quiet() { tap "$1" >/dev/null; }
+tap_quiet() { tap "$1" >/dev/null || true; }
 shot() { dismiss; sleep 1; adb exec-out screencap -p > "$OUT/$1.png"; echo "saved $1"; }
 back() { adb shell input keyevent KEYCODE_BACK; sleep 1; }
 
@@ -49,10 +49,12 @@ take_set() {
   adb shell pm clear "$PKG" >/dev/null
   adb shell pm grant "$PKG" android.permission.BLUETOOTH_CONNECT 2>/dev/null
   adb shell am start -n "$PKG/.MainActivity" >/dev/null
-  sleep 10
+  sleep 15
+  dismiss
   tap "Cappuccino"; tap "Cappuccino"; tap "Pizza Margherita"; tap "Croissant"; tap "Pivo 0,5 l"
   shot "$1-1-prodej"
-  tap "Zaplatit"; shot "$1-2-platba"; back
+  # Back only closes the payment dialog when it opened; otherwise it would leave the app.
+  if tap "Zaplatit"; then shot "$1-2-platba"; back; fi
   tap "Stoly"; shot "$1-3-stoly"
   tap "Účtenky"; shot "$1-4-uctenky"
   tap "Více"; tap "Produkty"; shot "$1-5-produkty"
