@@ -80,10 +80,24 @@ class AndroidPlatform(private val context: Context) : Platform {
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit {
         val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) onGranted()
+            if (granted) onGranted() else openBluetoothPermissionSettings()
         }
         return {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) launcher.launch(Manifest.permission.BLUETOOTH_CONNECT) else onGranted()
+        }
+    }
+
+    /**
+     * Once "Nearby devices" (Bluetooth) was refused, Android stops asking, so printing would silently do
+     * nothing. Explain it and open Flos's own settings page, where the permission can be allowed.
+     */
+    private fun openBluetoothPermissionSettings() {
+        android.widget.Toast.makeText(context, tr("Pro tisk přes Bluetooth povolte oprávnění „Zařízení v okolí“ v nastavení aplikace."), android.widget.Toast.LENGTH_LONG).show()
+        runCatching {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }
     }
 }
