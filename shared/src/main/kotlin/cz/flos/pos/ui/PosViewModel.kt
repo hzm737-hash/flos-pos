@@ -591,6 +591,31 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _pendingTable.value = name
     }
 
+    /**
+     * Moves every open bill of table [from] to table [to] (Pokročilé nastavení → Plán stolů).
+     * When [to] already has a bill, both stay there as separate bills.
+     */
+    fun moveTable(from: String, to: String) = viewModelScope.launch {
+        if (from == to) return@launch
+        val bills = openOrders.value.filter { it.sale.tableName == from }
+        if (bills.isEmpty()) return@launch
+        bills.forEach { salesDao.update(it.sale.copy(tableName = to)) }
+        _editingOrder.value?.let { e -> if (e.tableName == from) _editingOrder.value = e.copy(tableName = to) }
+        if (_pendingTable.value == from) _pendingTable.value = to
+        audit(tr("Účet přesunut ze stolu %s na stůl %s", from, to), "")
+        _messages.tryEmit(tr("Účet přesunut na stůl %s.", to))
+    }
+
+    /** Saves where table [name] sits on the plan; x and y run from 0 to 1. */
+    fun placeTable(name: String, x: Float, y: Float) = updateSettings { s ->
+        val others = s.tablePositions - name
+        val all = others + (name to (x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)))
+        s.copy(tablePlan = all.entries.joinToString("\n") { (n, p) -> "%.4f;%.4f;%s".format(java.util.Locale.ROOT, p.first, p.second, n) })
+    }
+
+    /** Puts every table back in rows on the plan. */
+    fun resetTablePlan() = updateSettings { it.copy(tablePlan = "") }
+
     /** Table of the cart: the loaded order's table or the one just picked on the map. */
     val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
     fun setQuantity(index: Int, qty: Double) = _cart.update { it.setQuantity(index, qty) }

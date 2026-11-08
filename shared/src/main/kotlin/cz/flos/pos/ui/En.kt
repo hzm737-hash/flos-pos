@@ -847,5 +847,17 @@ internal object En {
         "V záloze chybí nastavení." to "The backup has no settings.",
         "Databáze v záloze je poškozená." to "The database in the backup is damaged.",
         "Záloha je z novější verze Flos. Nejdřív aktualizujte aplikaci." to "The backup is from a newer Flos. Update the app first.",
+        "Plán stolů a přesun účtu" to "Table plan and moving bills",
+        "Stoly rozmístíte tažením jako v podniku a otevřený účet přesunete na jiný stůl (podržte stůl)." to "Drag the tables to where they stand in your place, and move an open bill to another table (hold the table).",
+        "Konec úprav" to "Done",
+        "Upravit rozmístění" to "Arrange tables",
+        "Seřadit do řad" to "Put back in rows",
+        "Stoly přetáhněte na jejich místo." to "Drag the tables to their place.",
+        "Podržte stůl s účtem pro přesun na jiný stůl." to "Hold a table with a bill to move it to another table.",
+        "Přesunout účet ze stolu %s" to "Move the bill from table %s",
+        "Vyberte stůl. Má-li už účet, zůstanou tam oba účty zvlášť." to "Pick a table. If it already has a bill, both bills stay there separately.",
+        "obsazený" to "taken",
+        "Účet přesunut ze stolu %s na stůl %s" to "Bill moved from table %s to table %s",
+        "Účet přesunut na stůl %s." to "Bill moved to table %s.",
     )
 }

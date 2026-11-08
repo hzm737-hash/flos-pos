@@ -14,4 +14,5 @@ enum class AdvFeature(val label: String, val hint: String) {
     EUR_CASH("Hotovost v eurech", "Při platbě hotově ukáže částku v EUR a vrácení v Kč podle kurzu."),
     BIRTHDAYS("Narozeniny zákazníků", "Datum narození u zákazníka, přehled oslavenců a upozornění na prodeji."),
     WAITER_TABLES("Stoly podle obsluhy", "Každý číšník má své stoly; na mapě stolů lze zobrazit jen ty své."),
+    TABLE_PLAN("Plán stolů a přesun účtu", "Stoly rozmístíte tažením jako v podniku a otevřený účet přesunete na jiný stůl (podržte stůl)."),
 }

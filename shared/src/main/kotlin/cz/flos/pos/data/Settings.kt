@@ -155,6 +155,8 @@ data class AppSettings(
     val waiterTables: String = "",
     /** Own rate for cash in euros ("24,50"); empty = the ČNB rate or the rate from Platby z banky. */
     val eurCashRate: String = "",
+    /** Where each table sits on the plan, one per line: "x;y;name" with x and y from 0 to 1. */
+    val tablePlan: String = "",
 ) {
     /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
     fun on(f: AdvFeature): Boolean = f.name in advancedSet
@@ -165,6 +167,15 @@ data class AppSettings(
         val i = line.indexOf(':')
         if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
     }.filter { it.first.isNotEmpty() }.toMap()
+
+    /** Table name → its place on the plan (x, y from 0 to 1), from [tablePlan]. */
+    val tablePositions: Map<String, Pair<Float, Float>> get() = tablePlan.lines().mapNotNull { line ->
+        val parts = line.split(';', limit = 3)
+        if (parts.size < 3) return@mapNotNull null
+        val x = parts[0].trim().toFloatOrNull() ?: return@mapNotNull null
+        val y = parts[1].trim().toFloatOrNull() ?: return@mapNotNull null
+        parts[2].trim().takeIf { it.isNotEmpty() }?.let { it to (x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)) }
+    }.toMap()
 
     val hiddenPaymentSet: Set<String> get() = hiddenPayments.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
@@ -305,6 +316,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             serviceChargePercent = int("serviceChargePercent", d.serviceChargePercent),
             serviceChargeVat = int("serviceChargeVat", d.serviceChargeVat),
             waiterTables = str("waiterTables", d.waiterTables),
+            tablePlan = str("tablePlan", d.tablePlan),
             eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
@@ -410,6 +422,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "serviceChargePercent" to s.serviceChargePercent.toString(),
                 "serviceChargeVat" to s.serviceChargeVat.toString(),
                 "waiterTables" to s.waiterTables,
+                "tablePlan" to s.tablePlan,
                 "eurCashRate" to s.eurCashRate,
             )
 
