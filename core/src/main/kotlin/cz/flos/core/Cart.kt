@@ -48,6 +48,11 @@ data class Cart(val items: List<CartItem> = emptyList(), val discountPercent: In
 
     fun setDiscount(percent: Int): Cart = copy(discountPercent = percent.coerceIn(0, 100))
 
+    /** New name of one line, e.g. with a note for the kitchen added ([LineNote]). */
+    fun rename(index: Int, name: String): Cart =
+        if (index !in items.indices || name.isBlank()) this
+        else copy(items = items.toMutableList().also { it[index] = it[index].copy(name = name) })
+
     fun remove(index: Int): Cart = copy(items = items.filterIndexed { i, _ -> i != index })
 
     fun clear(): Cart = Cart()

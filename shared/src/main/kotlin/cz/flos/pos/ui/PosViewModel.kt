@@ -58,6 +58,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 
+/** Product id of lines typed in by hand (not in the catalogue); the back office stores them without a product. */
+const val MANUAL_ITEM_ID = 0L
+
 class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     val platform = flos.platform
     private val catalog = flos.database.catalog()
@@ -284,12 +287,50 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val _halfPortion = MutableStateFlow(false)
     /** "½ porce" switched on: the next product tapped is added as a half portion (0,5). */
     val halfPortion: StateFlow<Boolean> = _halfPortion.asStateFlow()
-    fun toggleHalfPortion() { _halfPortion.value = !_halfPortion.value }
+    fun toggleHalfPortion() { _halfPortion.value = !_halfPortion.value; if (_halfPortion.value) _pendingQty.value = null }
 
     /** Quantity for the product being added: 0,5 once after "½ porce", otherwise 1. */
-    private fun nextQty(): Double = if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
+    private fun nextQty(): Double {
+        _pendingQty.value?.let { q -> _pendingQty.value = null; _halfPortion.value = false; return q }
+        return if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
+    }
+
+    private val _pendingQty = MutableStateFlow<Double?>(null)
+    /** Quantity typed before tapping a product ("5 ×"); used once, then back to 1. */
+    val pendingQty: StateFlow<Double?> = _pendingQty.asStateFlow()
+    fun setPendingQty(q: Double?) { _pendingQty.value = q?.let(Qty::norm)?.takeIf { it >= Qty.MIN }; if (_pendingQty.value != null) _halfPortion.value = false }
+
+    // ---- Add-ons, kitchen notes, open prices and manual items ----
+    /** The product's own variants and extras, then the add-ons from Settings for its category. */
+    fun optionGroupsFor(p: ProductEntity): List<cz.flos.core.OptionGroup> {
+        val category = p.categoryId?.let { id -> categories.value.firstOrNull { it.id == id }?.name }
+        return cz.flos.core.ProductOptions.parse(p.options) +
+            cz.flos.core.Addons.forCategory(cz.flos.core.Addons.parse(settings.value.addons), category)
+    }
+
+    /** Writes a kitchen note on one cart line ("pálivé, bez cibule"); an empty note removes it. */
+    fun setLineNote(index: Int, note: String) = _cart.update { cart ->
+        val item = cart.items.getOrNull(index) ?: return@update cart
+        cart.rename(index, cz.flos.core.LineNote.join(cz.flos.core.LineNote.split(item.name).first, note))
+    }
+
+    /** An open-price product with the price typed in at the till ([name] may carry extras and a note). */
+    fun addOpenPrice(p: ProductEntity, name: String, price: Long) {
+        if (!allow(cz.flos.core.Permission.MANUAL_PRICE) || price < 0) return
+        val q = nextQty()
+        _cart.update { it.add(p.id, name, price, p.vatRate, q) }
+    }
+
+    /** Something that is not in the catalogue: name, price and VAT typed in at the till. */
+    fun addManualItem(name: String, price: Long, vat: VatRate) {
+        if (!allow(cz.flos.core.Permission.MANUAL_PRICE) || price < 0 || name.isBlank()) return
+        val q = nextQty()
+        _cart.update { it.add(MANUAL_ITEM_ID, name.trim(), price, vat, q) }
+    }
 
     fun addToCart(p: ProductEntity) {
+        // An open-price product needs its price typed in (tap the tile); never sell it for 0 by accident.
+        if (p.openPrice) { _messages.tryEmit(tr("%s: cena se zadává při prodeji, klepněte na produkt.", p.name)); return }
         val q = nextQty()
         val (unit, auto) = priced(p)
         _cart.update { it.add(p.id, p.name, unit, p.vatRate, q, auto) }

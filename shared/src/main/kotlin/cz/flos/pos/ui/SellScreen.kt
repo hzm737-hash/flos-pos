@@ -43,6 +43,8 @@ import androidx.compose.material3.AssistChip
 import cz.flos.core.OptionGroup
 import cz.flos.core.ProductOptions
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.EditNote
+import cz.flos.core.LineNote
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material3.AlertDialog
@@ -226,51 +228,6 @@ private fun SplitDialog(cart: Cart, onDismiss: () -> Unit, onPay: (Map<Int, Doub
     )
 }
 
-/** Variants (one choice) and extras (any number) of a product, chosen before it goes to the cart. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun OptionsDialog(p: ProductEntity, groups: List<OptionGroup>, onDismiss: () -> Unit, onAdd: (String, Long) -> Unit) {
-    var chosen by remember { mutableStateOf(ProductOptions.defaults(groups)) }
-    val (name, price) = ProductOptions.apply(p.name, p.price, groups, chosen)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(p.name) },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                groups.forEachIndexed { gi, g ->
-                    item(key = "g$gi") {
-                        Text(g.name + if (g.multiple) " " + tr("(libovolně)") else "", style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                    }
-                    item(key = "c$gi") {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            g.choices.forEachIndexed { ci, c ->
-                                val selected = ci in chosen[gi].orEmpty()
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = {
-                                        val now = chosen[gi].orEmpty()
-                                        val next = when {
-                                            !g.multiple -> setOf(ci)
-                                            selected -> now - ci
-                                            else -> now + ci
-                                        }
-                                        chosen = chosen + (gi to next)
-                                    },
-                                    label = { Text(c.name + if (c.price != 0L) "  " + (if (c.price > 0) "+" else "") + Money.format(c.price) else "") },
-                                    shape = RoundedCornerShape(50),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { Button(onClick = { onAdd(name, price) }) { Text(tr("Přidat · %s", Money.format(price))) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
-    )
-}
-
 @Composable
 private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
     val products by vm.products.collectAsState()
@@ -284,8 +241,19 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
         .filter { q.isEmpty() || CoreText.stripDiacritics(it.name).lowercase().contains(q) || it.barcode == query.trim() }
     val scope = rememberCoroutineScope()
     var choosing by remember { mutableStateOf<Pair<ProductEntity, List<OptionGroup>>?>(null) }
+    val settings by vm.settings.collectAsState()
     choosing?.let { (p, groups) ->
-        OptionsDialog(p, groups, onDismiss = { choosing = null }) { name, price -> vm.addToCart(p, name, price); choosing = null }
+        ProductPickDialog(p, groups, LineNote.quickNotes(settings.quickNotes), onDismiss = { choosing = null }) { name, price ->
+            if (p.openPrice) vm.addOpenPrice(p, name, price) else vm.addToCart(p, name, price)
+            choosing = null
+        }
+    }
+    var askQty by remember { mutableStateOf(false) }
+    var manualItem by remember { mutableStateOf(false) }
+    val pendingQty by vm.pendingQty.collectAsState()
+    if (askQty) NextQtyDialog(pendingQty, onDismiss = { askQty = false }) { q -> vm.setPendingQty(q); askQty = false }
+    if (manualItem) ManualItemDialog(settings.vatPayer, onDismiss = { manualItem = false }) { name, price, vat ->
+        vm.addManualItem(name, price, vat); manualItem = false
     }
     // A barcode scanner types the code and presses Enter: add the product with that code,
     // or the only product the search shows.
@@ -320,6 +288,13 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                 selected = half, onClick = { vm.toggleHalfPortion() }, shape = RoundedCornerShape(50),
                 label = { Text(tr("½ porce"), fontWeight = FontWeight.Bold) },
             )
+            // Quantity typed in before tapping a product: "5 ×", then the product.
+            Spacer(Modifier.width(6.dp))
+            FilterChip(
+                selected = pendingQty != null, onClick = { askQty = true }, shape = RoundedCornerShape(50),
+                label = { Text(pendingQty?.let { Qty.format(it) + " ×" } ?: "× " + tr("ks"), fontWeight = FontWeight.Bold) },
+            )
+            IconButton(onClick = { manualItem = true }) { Icon(Icons.Rounded.EditNote, tr("Ruční položka")) }
         }
         PricingChips(vm)
         LazyRow(
@@ -353,8 +328,8 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                     color = category?.let { Color(it.color) } ?: MaterialTheme.colorScheme.primary,
                     iconKey = p.icon ?: category?.icon,
                 ) {
-                    val groups = ProductOptions.parse(p.options)
-                    if (groups.isEmpty()) vm.addToCart(p) else choosing = p to groups
+                    val groups = vm.optionGroupsFor(p)
+                    if (groups.isEmpty() && !p.openPrice) vm.addToCart(p) else choosing = p to groups
                 }
             }
         }
@@ -381,7 +356,7 @@ private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClic
                     ) { Icon(icon, null, Modifier.size(20.dp)) }
                 }
             }
-            Text(Money.format(p.price), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(if (p.openPrice) tr("Cena?") else Money.format(p.price), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -390,6 +365,8 @@ private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClic
 private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: () -> Unit, onSplit: () -> Unit, modifier: Modifier = Modifier) {
     var discountDialog by remember { mutableStateOf(false) }
     var quantityOf by remember { mutableStateOf<Int?>(null) }
+    var noteOf by remember { mutableStateOf<Int?>(null) }
+    val settings by vm.settings.collectAsState()
     val order by vm.editingOrder.collectAsState()
     val pendingTable by vm.pendingTable.collectAsState()
     Column(modifier.fillMaxHeight().padding(14.dp)) {
@@ -426,8 +403,9 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
             LazyColumn(Modifier.weight(1f)) {
                 itemsIndexed(cart.items) { i, item ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(item.name, fontWeight = FontWeight.Medium)
+                        // Tap the name for a kitchen note ("pálivé, bez cibule").
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { noteOf = i }) {
+                            LineNameWithNote(item.name)
                             Text(
                                 Money.format(item.unitPrice) + if (item.discountPercent > 0) "  −${item.discountPercent} %" else "",
                                 style = MaterialTheme.typography.bodySmall,
@@ -481,6 +459,13 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
         ) {
             Text(tr("Zaplatit") + "  " + Money.format(cart.total), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
+    }
+    noteOf?.let { i ->
+        cart.items.getOrNull(i)?.let { item ->
+            LineNoteDialog(item.name, LineNote.quickNotes(settings.quickNotes), onDismiss = { noteOf = null }) { note ->
+                vm.setLineNote(i, note); noteOf = null
+            }
+        } ?: run { noteOf = null }
     }
     quantityOf?.let { i ->
         cart.items.getOrNull(i)?.let { item ->

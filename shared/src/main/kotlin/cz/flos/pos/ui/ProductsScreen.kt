@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -119,7 +120,7 @@ fun ProductsScreen(vm: PosViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Text(Money.format(p.price))
+                        Text(if (p.openPrice) tr("Cena při prodeji") else Money.format(p.price))
                     }
                     HorizontalDivider()
                 }
@@ -164,8 +165,10 @@ private fun ProductDialog(
     var barcode by remember { mutableStateOf(initial.barcode.orEmpty()) }
     var options by remember { mutableStateOf(initial.options.orEmpty()) }
     var prices by remember { mutableStateOf(initial.prices.orEmpty()) }
+    var openPrice by remember { mutableStateOf(initial.openPrice) }
     val parsed = Money.parse(price)
-    val valid = name.isNotBlank() && parsed != null && parsed >= 0
+    // An open-price product may leave the price empty: it is typed in at every sale.
+    val valid = name.isNotBlank() && ((parsed != null && parsed >= 0) || (openPrice && price.isBlank()))
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -179,6 +182,14 @@ private fun ProductDialog(
                     isError = price.isNotEmpty() && parsed == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Cena se zadává při prodeji"))
+                        Text(tr("Pokladna se pokaždé zeptá na cenu (zboží od dodavatele, různé ceny)."),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = openPrice, onCheckedChange = { openPrice = it })
+                }
                 if (vatPayer) {
                     Text(tr("Sazba DPH"), style = MaterialTheme.typography.labelLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -225,7 +236,7 @@ private fun ProductDialog(
             Button(enabled = valid, onClick = {
                 onSave(initial.copy(name = name.trim(), price = parsed ?: 0, vatPercent = vat, categoryId = category, icon = icon,
                     barcode = barcode.trim().ifEmpty { null }, options = options.trim().ifEmpty { null },
-                    prices = prices.trim().ifEmpty { null }))
+                    prices = prices.trim().ifEmpty { null }, openPrice = openPrice))
             }) { Text(tr("Uložit")) }
         },
         dismissButton = {

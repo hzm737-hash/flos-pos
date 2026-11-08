@@ -137,6 +137,12 @@ data class AppSettings(
     val menuNote: String = "",
     /** Payment buttons the owner switched off, e.g. "INVOICE,MEAL_VOUCHER,MIXED". Empty = all shown. */
     val hiddenPayments: String = "",
+
+    // ---- Add-ons and kitchen notes ----
+    /** Add-ons for whole categories, see cz.flos.core.Addons ("[Pizza] Přísady*: Sýr +15"). */
+    val addons: String = "",
+    /** Ready-made kitchen notes offered with a product, comma separated. */
+    val quickNotes: String = "Pálivé, Extra pálivé, Bez cibule, Bez lepku, Málo propečené, Dobře propečené",
 ) {
     val hiddenPaymentSet: Set<String> get() = hiddenPayments.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
@@ -271,6 +277,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
             menuUrl = str("menuUrl", d.menuUrl),
             menuNote = str("menuNote", d.menuNote),
             hiddenPayments = str("hiddenPayments", d.hiddenPayments),
+            addons = str("addons", d.addons),
+            quickNotes = str("quickNotes", d.quickNotes),
         )
     }
 
@@ -353,6 +361,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "menuUrl" to s.menuUrl,
                 "menuNote" to s.menuNote,
                 "hiddenPayments" to s.hiddenPayments,
+                "addons" to s.addons,
+                "quickNotes" to s.quickNotes,
             ),
         )
         _state.value = s
