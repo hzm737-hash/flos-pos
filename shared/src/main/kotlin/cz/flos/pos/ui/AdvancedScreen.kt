@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import cz.flos.core.VatRate
+import cz.flos.pos.LocalPlatform
 import cz.flos.pos.data.AdvFeature
 import cz.flos.pos.data.AppSettings
 import kotlinx.coroutines.launch
