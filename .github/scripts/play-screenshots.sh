@@ -53,13 +53,23 @@ take_set() {
   dismiss
   tap "Cappuccino"; tap "Cappuccino"; tap "Pizza Margherita"; tap "Croissant"; tap "Pivo 0,5 l"
   shot "$1-1-prodej"
+  # Pay the bill in cash so history and statistics have something to show.
   # Back only closes the payment dialog when it opened; otherwise it would leave the app.
-  if tap "Zaplatit"; then shot "$1-2-platba"; back; fi
+  if tap "Zaplatit"; then
+    shot "$1-2-platba"
+    tap "Přesně"; tap "Dokončit" || back
+    sleep 3
+  fi
+  tap "Espresso"; tap "Dort"; tap "Burger"
+  if tap "Zaplatit"; then tap "Kartou"; tap "Dokončit" || back; sleep 3; fi
   tap "Stoly"; shot "$1-3-stoly"
   tap "Účtenky"; shot "$1-4-uctenky"
-  tap "Více"; tap "Produkty"; shot "$1-5-produkty"
-  tap "Více"; tap "Statistiky"; shot "$1-6-statistiky"
-  tap "Více"; tap "Nastavení"; shot "$1-7-nastaveni"
+  # On a phone the rest is under "Více", whose label becomes the screen last opened from it.
+  more() { tap "Více" || tap "$LAST" || true; }
+  LAST=Více
+  more; tap "Produkty"; LAST=Produkty; shot "$1-5-produkty"
+  more; tap "Statistiky"; LAST=Statistiky; shot "$1-6-statistiky"
+  more; tap "Nastavení"; LAST=Nastavení; shot "$1-7-nastaveni"
 }
 
 # Phone 9:16 and a 10" tablet in landscape (Google Play allows at most a 2:1 ratio).
