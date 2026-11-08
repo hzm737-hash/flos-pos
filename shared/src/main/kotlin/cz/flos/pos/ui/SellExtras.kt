@@ -129,6 +129,7 @@ internal fun ProductPickDialog(
     p: ProductEntity,
     groups: List<OptionGroup>,
     quickNotes: List<String>,
+    showNotes: Boolean,
     onDismiss: () -> Unit,
     onAdd: (name: String, price: Long) -> Unit,
 ) {
@@ -179,7 +180,7 @@ internal fun ProductPickDialog(
                         }
                     }
                 }
-                Column(Modifier.padding(top = 8.dp)) { NoteEditor(note, quickNotes) { note = it } }
+                if (showNotes) Column(Modifier.padding(top = 8.dp)) { NoteEditor(note, quickNotes) { note = it } }
             }
         },
         confirmButton = { Button(onClick = add, enabled = ok) { Text(tr("Přidat · %s", Money.format(price))) } },
@@ -245,13 +246,13 @@ internal fun ManualItemDialog(vatPayer: Boolean, onDismiss: () -> Unit, onAdd: (
 // ---- Settings: add-ons for categories and ready-made kitchen notes ----
 
 @Composable
-fun AddonsSettings(vm: PosViewModel, s: AppSettings) {
+fun AddonsSettings(vm: PosViewModel, s: AppSettings, showNotes: Boolean = true) {
     val categories by vm.categories.collectAsState()
     val list = Addons.parse(s.addons)
     var editing by remember { mutableStateOf<Int?>(null) }
     fun save(next: List<AddonGroup>) = vm.updateSettings { it.copy(addons = Addons.format(next)) }
 
-    Section(tr("Přídavky a poznámky pro kuchyň"))
+    if (showNotes) Section(tr("Přídavky a poznámky pro kuchyň"))
     ExtrasHint(tr("Přídavky se nabídnou po klepnutí na produkt z vybraných kategorií (nebo u všech produktů). Mají vlastní cenu a lze je vybrat nebo nechat být."))
     list.forEachIndexed { i, a ->
         Card(Modifier.fillMaxWidth().clickable { editing = i }) {
@@ -265,7 +266,7 @@ fun AddonsSettings(vm: PosViewModel, s: AppSettings) {
         }
     }
     OutlinedButton(onClick = { editing = -1 }) { Icon(Icons.Rounded.Add, null); Text(tr("  Přidat skupinu přídavků")) }
-    OutlinedTextField(
+    if (showNotes) OutlinedTextField(
         s.quickNotes, { v -> vm.updateSettings { it.copy(quickNotes = v) } },
         label = { Text(tr("Rychlé poznámky (oddělené čárkou)")) }, minLines = 2, modifier = Modifier.fillMaxWidth(),
         supportingText = { Text(tr("Nabídnou se při přidání produktu a po klepnutí na název položky v košíku.")) },

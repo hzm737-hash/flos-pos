@@ -44,7 +44,9 @@ import cz.flos.core.OptionGroup
 import cz.flos.core.ProductOptions
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.RoomService
 import cz.flos.core.LineNote
+import cz.flos.pos.data.AdvFeature
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ShoppingBag
 import androidx.compose.material3.AlertDialog
@@ -243,7 +245,7 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
     var choosing by remember { mutableStateOf<Pair<ProductEntity, List<OptionGroup>>?>(null) }
     val settings by vm.settings.collectAsState()
     choosing?.let { (p, groups) ->
-        ProductPickDialog(p, groups, LineNote.quickNotes(settings.quickNotes), onDismiss = { choosing = null }) { name, price ->
+        ProductPickDialog(p, groups, LineNote.quickNotes(settings.quickNotes), showNotes = settings.on(AdvFeature.NOTES), onDismiss = { choosing = null }) { name, price ->
             if (p.openPrice) vm.addOpenPrice(p, name, price) else vm.addToCart(p, name, price)
             choosing = null
         }
@@ -288,13 +290,15 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                 selected = half, onClick = { vm.toggleHalfPortion() }, shape = RoundedCornerShape(50),
                 label = { Text(tr("½ porce"), fontWeight = FontWeight.Bold) },
             )
-            // Quantity typed in before tapping a product: "5 ×", then the product.
-            Spacer(Modifier.width(6.dp))
-            FilterChip(
-                selected = pendingQty != null, onClick = { askQty = true }, shape = RoundedCornerShape(50),
-                label = { Text(pendingQty?.let { Qty.format(it) + " ×" } ?: "× " + tr("ks"), fontWeight = FontWeight.Bold) },
-            )
-            IconButton(onClick = { manualItem = true }) { Icon(Icons.Rounded.EditNote, tr("Ruční položka")) }
+            // Quantity typed in before tapping a product: "5 ×", then the product (Pokročilé nastavení).
+            if (settings.on(AdvFeature.QTY_BEFORE)) {
+                Spacer(Modifier.width(6.dp))
+                FilterChip(
+                    selected = pendingQty != null, onClick = { askQty = true }, shape = RoundedCornerShape(50),
+                    label = { Text(pendingQty?.let { Qty.format(it) + " ×" } ?: "× " + tr("ks"), fontWeight = FontWeight.Bold) },
+                )
+            }
+            if (settings.on(AdvFeature.OPEN_PRICE)) IconButton(onClick = { manualItem = true }) { Icon(Icons.Rounded.EditNote, tr("Ruční položka")) }
         }
         PricingChips(vm)
         LazyRow(
@@ -404,7 +408,7 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
                 itemsIndexed(cart.items) { i, item ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         // Tap the name for a kitchen note ("pálivé, bez cibule").
-                        Column(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { noteOf = i }) {
+                        Column(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable(enabled = settings.on(AdvFeature.NOTES)) { noteOf = i }) {
                             LineNameWithNote(item.name)
                             Text(
                                 Money.format(item.unitPrice) + if (item.discountPercent > 0) "  −${item.discountPercent} %" else "",
@@ -448,6 +452,7 @@ private fun CartPanel(vm: PosViewModel, cart: Cart, onPay: () -> Unit, onPark: (
             SmallAction(Icons.Rounded.DeliveryDining, tr("Odložit"), enabled = !cart.isEmpty(), modifier = w, onClick = onPark)
             SmallAction(Icons.Rounded.CallSplit, tr("Rozdělit"), enabled = !cart.isEmpty(), modifier = w, onClick = onSplit)
             SmallAction(Icons.Rounded.Percent, tr("Sleva"), enabled = !cart.isEmpty(), modifier = w) { discountDialog = true }
+            if (settings.on(AdvFeature.SERVICE_CHARGE)) SmallAction(Icons.Rounded.RoomService, tr("Servis"), enabled = !cart.isEmpty(), modifier = w) { vm.toggleServiceCharge() }
             SmallAction(Icons.Rounded.DeleteOutline, tr("Vymazat"), enabled = !cart.isEmpty() || order != null || pendingTable != null, modifier = w) { vm.clearCart() }
         }
         Spacer(Modifier.height(10.dp))

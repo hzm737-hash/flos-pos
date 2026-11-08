@@ -48,3 +48,22 @@ class V2SellingTest {
         assertEquals(c, c.rename(0, " "))
     }
 }
+
+class BirthdaysTest {
+    @Test fun parsesCzechAndIso() {
+        assertEquals(java.time.MonthDay.of(3, 15), Birthdays.parse("15.3."))
+        assertEquals(java.time.MonthDay.of(3, 15), Birthdays.parse(" 15. 3. 1990"))
+        assertEquals(java.time.MonthDay.of(3, 15), Birthdays.parse("1990-03-15"))
+        assertEquals(null, Birthdays.parse("31.2."))
+        assertEquals(null, Birthdays.parse("zítra"))
+        assertEquals(null, Birthdays.parse(null))
+    }
+
+    @Test fun daysUntil() {
+        val today = java.time.LocalDate.of(2026, 11, 8)
+        assertEquals(0, Birthdays.daysUntil(java.time.MonthDay.of(11, 8), today))
+        assertEquals(3, Birthdays.daysUntil(java.time.MonthDay.of(11, 11), today))
+        assertEquals(364, Birthdays.daysUntil(java.time.MonthDay.of(11, 7), today))
+        assertEquals(112, Birthdays.daysUntil(java.time.MonthDay.of(2, 29), today))
+    }
+}

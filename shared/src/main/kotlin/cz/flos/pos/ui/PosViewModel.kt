@@ -61,6 +61,9 @@ import java.time.ZoneId
 /** Product id of lines typed in by hand (not in the catalogue); the back office stores them without a product. */
 const val MANUAL_ITEM_ID = 0L
 
+/** Product id of the service charge line (Pokročilé nastavení → Servisní poplatek). */
+const val SERVICE_CHARGE_ID = -1L
+
 class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     val platform = flos.platform
     private val catalog = flos.database.catalog()
@@ -304,8 +307,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** The product's own variants and extras, then the add-ons from Settings for its category. */
     fun optionGroupsFor(p: ProductEntity): List<cz.flos.core.OptionGroup> {
         val category = p.categoryId?.let { id -> categories.value.firstOrNull { it.id == id }?.name }
-        return cz.flos.core.ProductOptions.parse(p.options) +
-            cz.flos.core.Addons.forCategory(cz.flos.core.Addons.parse(settings.value.addons), category)
+        val own = cz.flos.core.ProductOptions.parse(p.options)
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.ADDONS)) return own
+        return own + cz.flos.core.Addons.forCategory(cz.flos.core.Addons.parse(settings.value.addons), category)
     }
 
     /** Writes a kitchen note on one cart line ("pálivé, bez cibule"); an empty note removes it. */
@@ -326,6 +330,51 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         if (!allow(cz.flos.core.Permission.MANUAL_PRICE) || price < 0 || name.isBlank()) return
         val q = nextQty()
         _cart.update { it.add(MANUAL_ITEM_ID, name.trim(), price, vat, q) }
+    }
+
+    // ---- Backup and restore (Pokročilé nastavení) ----
+    /** The whole till in one .zip: database, settings with counters, certificate and attachments. */
+    suspend fun createBackup(): ByteArray = withContext(Dispatchers.IO) {
+        cz.flos.pos.backup.FlosBackup.create(platform.dataDir, flos.settings.exportAll())
+    }
+
+    /** Checks a backup and leaves it to be restored at the next start; returns why not, or null when ready. */
+    suspend fun stageRestore(bytes: ByteArray): String? = withContext(Dispatchers.IO) {
+        if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
+        cz.flos.pos.backup.FlosBackup.check(bytes, platform.dataDir)?.let { return@withContext tr(it) }
+        cz.flos.pos.backup.FlosBackup.stage(bytes, platform.dataDir)
+        null
+    }
+
+    // ---- Service charge (Pokročilé nastavení) ----
+    /** Adds the service charge line to the cart, or removes it when it is there. */
+    fun toggleServiceCharge() {
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.SERVICE_CHARGE)) return
+        _cart.update { c ->
+            val i = c.items.indexOfFirst { it.productId == SERVICE_CHARGE_ID }
+            if (i >= 0) c.remove(i)
+            else withServiceCharge(c.copy(items = c.items + CartItem(SERVICE_CHARGE_ID, "", 0, VatRate.fromPercent(settings.value.serviceChargeVat), 1.0)))
+        }
+    }
+
+    /** The service charge line follows the rest of the cart: [percent] of everything else, one piece, no line discount. */
+    private fun withServiceCharge(c: Cart): Cart {
+        val i = c.items.indexOfFirst { it.productId == SERVICE_CHARGE_ID }
+        if (i < 0) return c
+        val s = settings.value
+        val pct = s.serviceChargePercent.coerceIn(0, 100)
+        val base = c.items.filter { it.productId != SERVICE_CHARGE_ID }.sumOf { it.total }
+        val line = c.items[i]
+        val want = line.copy(
+            name = "Servisní poplatek $pct %", unitPrice = Math.round(base * pct / 100.0).coerceAtLeast(0),
+            quantity = 1.0, discountPercent = 0,
+        )
+        return if (want == line) c else c.copy(items = c.items.toMutableList().also { it[i] = want })
+    }
+
+    init {
+        // Keeps the service charge up to date whenever the cart changes.
+        viewModelScope.launch { _cart.collect { c -> val n = withServiceCharge(c); if (n != c) _cart.value = n } }
     }
 
     fun addToCart(p: ProductEntity) {
@@ -429,6 +478,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun selectCustomer(c: cz.flos.pos.data.CustomerEntity?) {
         _customer.value = c
         if (c != null && c.discountPercent > 0) _cart.update { it.setDiscount(c.discountPercent) }
+        if (c != null && settings.value.on(cz.flos.pos.data.AdvFeature.BIRTHDAYS)) {
+            val bd = cz.flos.core.Birthdays.parse(c.birthday)
+            if (bd != null && cz.flos.core.Birthdays.daysUntil(bd, LocalDate.now()) == 0) _messages.tryEmit(tr("%s má dnes narozeniny!", c.name))
+        }
     }
 
     /** Saves a customer; [select] also picks them for the cart (a new customer made at the till). */
@@ -796,6 +849,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Cancels an unpaid order. It stays in history as cancelled; nothing is sent to EET. */
     fun cancelOrder(sw: SaleWithItems, reason: String) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.CANCEL_ORDER)) return@launch
+        audit(tr("Zrušena objednávka č. %d (%s)", sw.sale.orderNumber ?: 0, Money.format(sw.sale.total)), reason)
         val note = listOf(sw.sale.note, reason.trim().takeIf { it.isNotEmpty() }?.let { tr("Zrušeno: %s", it) })
             .filterNot { it.isNullOrBlank() }.joinToString(" · ")
         salesDao.update(sw.sale.copy(status = SaleStatus.VOID.name, note = note, createdAt = System.currentTimeMillis()))
@@ -860,8 +914,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * Cancels (storno) a sale. The original stays in history marked as cancelled; a storno
      * document with its own number and a negative amount is recorded in EET and printed.
      */
-    fun cancelSale(sw: SaleWithItems) = viewModelScope.launch {
+    fun cancelSale(sw: SaleWithItems, reason: String = "") = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.STORNO)) return@launch
+        audit(tr("Storno účtenky %s (%s)", sw.sale.number, Money.format(sw.sale.received)), reason)
         val s = settings.value
         val now = LocalDateTime.now()
         val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -897,9 +952,11 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * with a negative amount when the original was, and printed. The money goes back the same
      * way it was paid.
      */
-    fun refund(sw: SaleWithItems, quantities: Map<Int, Double>) = viewModelScope.launch {
+    fun refund(sw: SaleWithItems, quantities: Map<Int, Double>, reason: String = "") = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.REFUND)) return@launch
         if (!sw.sale.isPaid || sw.sale.cancelled || sw.sale.isRefund) return@launch
+        audit(tr("Vratka z účtenky %s", sw.sale.number) + ": " + quantities.entries.joinToString(", ") { (i, q) ->
+            Qty.format(q) + "× " + (sw.items.getOrNull(i)?.name ?: "?") }, reason)
         val left = refundable(sw)
         val items = sw.items.mapIndexedNotNull { i, item ->
             val q = Qty.norm((quantities[i] ?: 0.0).coerceIn(0.0, left.getOrElse(i) { 0.0 }))
@@ -1310,6 +1367,16 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun notes(target: cz.flos.pos.data.NoteTarget, id: Long?): Flow<List<cz.flos.pos.data.NoteEntity>> = noteDao.of(target.name, id)
     val allNotes = noteDao.all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Storno, refunds and cancelled orders with who, when and why (Pokročilé nastavení → Důvod storna a záznam). */
+    val auditLog = noteDao.of(cz.flos.pos.data.NoteTarget.AUDIT.name, null).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private suspend fun audit(what: String, reason: String) {
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.STORNO_REASON)) return
+        val text = what + (reason.trim().takeIf { it.isNotEmpty() }?.let { "\n" + tr("Důvod: %s", it) } ?: "")
+        noteDao.upsert(cz.flos.pos.data.NoteEntity(target = cz.flos.pos.data.NoteTarget.AUDIT.name, text = text,
+            createdAt = System.currentTimeMillis(), author = settings.value.cashier))
+    }
 
     /** Saves a note; [file] is an attached document with the name to show. */
     fun addNote(target: cz.flos.pos.data.NoteTarget, id: Long?, text: String, file: Pair<String, ByteArray>?) = viewModelScope.launch {

@@ -135,7 +135,7 @@ fun ProductsScreen(vm: PosViewModel) {
     }
 
     editing?.let { p ->
-        ProductDialog(p, categories, settings.vatPayer,
+        ProductDialog(p, categories, settings.vatPayer, showOpenPrice = settings.on(cz.flos.pos.data.AdvFeature.OPEN_PRICE) || p.openPrice,
             onDismiss = { editing = null },
             onSave = { vm.saveProduct(it); editing = null },
             onDelete = { vm.deleteProduct(p); editing = null })
@@ -153,6 +153,7 @@ private fun ProductDialog(
     initial: ProductEntity,
     categories: List<CategoryEntity>,
     vatPayer: Boolean,
+    showOpenPrice: Boolean,
     onDismiss: () -> Unit,
     onSave: (ProductEntity) -> Unit,
     onDelete: () -> Unit,
@@ -182,7 +183,7 @@ private fun ProductDialog(
                     isError = price.isNotEmpty() && parsed == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth(),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (showOpenPrice) Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(tr("Cena se zadává při prodeji"))
                         Text(tr("Pokladna se pokaždé zeptá na cenu (zboží od dodavatele, různé ceny)."),

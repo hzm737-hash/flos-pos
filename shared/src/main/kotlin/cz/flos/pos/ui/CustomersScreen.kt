@@ -78,6 +78,20 @@ fun CustomersScreen(vm: PosViewModel) {
                 tr("Věrnostní body: 1 bod za každých %d Kč. Body se připíšou po zaplacení účtenky s vybraným zákazníkem.", settings.loyaltyCrownsPerPoint),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (settings.on(cz.flos.pos.data.AdvFeature.BIRTHDAYS) && query.isBlank()) {
+                val today = java.time.LocalDate.now()
+                val soon = customers.mapNotNull { c -> cz.flos.core.Birthdays.parse(c.birthday)?.let { c to cz.flos.core.Birthdays.daysUntil(it, today) } }
+                    .filter { it.second <= 7 }.sortedBy { it.second }
+                if (soon.isNotEmpty()) Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(tr("Narozeniny tento týden"), fontWeight = FontWeight.Bold)
+                        soon.forEach { (c, d) ->
+                            Text((if (d == 0) "🎂 " + tr("dnes") else tr("za %d dní", d)) + " · " + c.name + (c.phone.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                                modifier = Modifier.clickable { editing = c }.padding(vertical = 4.dp))
+                        }
+                    }
+                }
+            }
             val list = customers.filter { it.matches(query) }
             if (list.isEmpty()) Text(tr("Zatím žádní zákazníci."), color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -134,6 +148,9 @@ internal fun CustomerDialog(vm: PosViewModel, initial: CustomerEntity, onDismiss
                         label = { Text(tr("Body")) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f),
                     )
+                }
+                if (vm.settings.collectAsState().value.on(cz.flos.pos.data.AdvFeature.BIRTHDAYS) || !c.birthday.isNullOrBlank()) {
+                    Field(tr("Datum narození (např. 15.3. nebo 15.3.1990)"), c.birthday.orEmpty()) { v -> c = c.copy(birthday = v.ifBlank { null }) }
                 }
                 Field(tr("Poznámka"), c.note) { v -> c = c.copy(note = v) }
                 if (initial.id != 0L && (c.phone.isNotBlank() || c.email.isNotBlank())) TextButton(onClick = { messaging = true }) { Text(tr("Napsat zákazníkovi")) }

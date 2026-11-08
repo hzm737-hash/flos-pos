@@ -143,7 +143,29 @@ data class AppSettings(
     val addons: String = "",
     /** Ready-made kitchen notes offered with a product, comma separated. */
     val quickNotes: String = "Pálivé, Extra pálivé, Bez cibule, Bez lepku, Málo propečené, Dobře propečené",
+
+    // ---- Advanced settings (Pokročilé nastavení): optional features, all off until switched on ----
+    /** Names of the [AdvFeature]s switched on, comma separated. */
+    val advanced: String = "",
+    /** Service charge in percent of the bill. */
+    val serviceChargePercent: Int = 10,
+    /** VAT rate of the service charge (it follows the meal: 12 % in restaurants). */
+    val serviceChargeVat: Int = 12,
+    /** Tables of each waiter, one per line: "Eva: 1, 2, 3". */
+    val waiterTables: String = "",
+    /** Own rate for cash in euros ("24,50"); empty = the ČNB rate or the rate from Platby z banky. */
+    val eurCashRate: String = "",
 ) {
+    /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
+    fun on(f: AdvFeature): Boolean = f.name in advancedSet
+    val advancedSet: Set<String> get() = advanced.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    val eurCashRateOverride: Double? get() = eurCashRate.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }
+    /** Waiter name → their tables, from [waiterTables]. */
+    val waiterTableMap: Map<String, List<String>> get() = waiterTables.lines().mapNotNull { line ->
+        val i = line.indexOf(':')
+        if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+    }.filter { it.first.isNotEmpty() }.toMap()
+
     val hiddenPaymentSet: Set<String> get() = hiddenPayments.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
@@ -279,12 +301,33 @@ class SettingsStore(private val prefs: KeyValueStore) {
             hiddenPayments = str("hiddenPayments", d.hiddenPayments),
             addons = str("addons", d.addons),
             quickNotes = str("quickNotes", d.quickNotes),
+            advanced = str("advanced", d.advanced),
+            serviceChargePercent = int("serviceChargePercent", d.serviceChargePercent),
+            serviceChargeVat = int("serviceChargeVat", d.serviceChargeVat),
+            waiterTables = str("waiterTables", d.waiterTables),
+            eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
 
     fun update(transform: (AppSettings) -> AppSettings) {
         val s = transform(_state.value)
-        prefs.put(
+        prefs.put(toMap(s))
+        _state.value = s
+    }
+
+    /**
+     * Everything a backup needs: all settings (secrets in plain text, as the app uses them) and the
+     * receipt and order counters, so numbering continues after a restore.
+     */
+    fun exportAll(): Map<String, String> {
+        val s = _state.value
+        val year = java.time.LocalDate.now().year
+        val counters = ((year - 1)..(year + 1)).map { "receiptSeq_$it" } + "orderSeq" +
+            listOf("imapValidity_${s.imapUser}", "imapUid_${s.imapUser}")
+        return toMap(s) + counters.mapNotNull { k -> prefs.get(k)?.let { k to it } }
+    }
+
+    private fun toMap(s: AppSettings): Map<String, String> =
             mapOf(
                 "language" to s.language.code,
                 "businessName" to s.businessName,
@@ -363,10 +406,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "hiddenPayments" to s.hiddenPayments,
                 "addons" to s.addons,
                 "quickNotes" to s.quickNotes,
-            ),
-        )
-        _state.value = s
-    }
+                "advanced" to s.advanced,
+                "serviceChargePercent" to s.serviceChargePercent.toString(),
+                "serviceChargeVat" to s.serviceChargeVat.toString(),
+                "waiterTables" to s.waiterTables,
+                "eurCashRate" to s.eurCashRate,
+            )
 
     /** Where reading the mailbox stopped: UIDVALIDITY and the last UID read. */
     fun imapPosition(account: String): Pair<Long, Long> =
