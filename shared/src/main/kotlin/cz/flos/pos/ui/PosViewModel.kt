@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import androidx.room.useWriterConnection
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -335,6 +336,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     // ---- Backup and restore (Pokročilé nastavení) ----
     /** The whole till in one .zip: database, settings with counters, certificate and attachments. */
     suspend fun createBackup(): ByteArray = withContext(Dispatchers.IO) {
+        // Writes the recent changes from the write-ahead log into the main file first, so the copy is
+        // one consistent file even if a sale is saved meanwhile (the -wal file is still copied too).
+        runCatching { flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } } }
         cz.flos.pos.backup.FlosBackup.create(platform.dataDir, flos.settings.exportAll())
     }
 

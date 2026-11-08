@@ -187,14 +187,21 @@ private fun TablePlan(
             // Tables without a saved place go in rows, like on the grid.
             val perRow = ((maxWidth + 12.dp) / (tileW + 12.dp)).toInt().coerceAtLeast(1)
             val rowsAvailable = ((maxHeight + 12.dp) / (tileH + 12.dp)).toInt().coerceAtLeast(1)
+            // Places come from the full list, so showing only one waiter's tables does not move them.
+            val all = settings.tableList
+            val rowsNeeded = (all.size + perRow - 1) / perRow
             fun defaultPlace(i: Int): Pair<Float, Float> {
                 val col = i % perRow
-                val row = (i / perRow) % rowsAvailable
+                val row = i / perRow
                 val x = with(density) { (col * (tileW + 12.dp)).toPx() } / freeW
-                val y = with(density) { (row * (tileH + 12.dp)).toPx() } / freeH
+                // More rows than fit on the screen: spread them over the height (they overlap a little)
+                // instead of stacking tables on top of each other.
+                val y = if (rowsNeeded > rowsAvailable) row.toFloat() / (rowsNeeded - 1).coerceAtLeast(1)
+                    else with(density) { (row * (tileH + 12.dp)).toPx() } / freeH
                 return x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)
             }
-            tables.forEachIndexed { i, name ->
+            tables.forEach { name ->
+                val i = all.indexOf(name).coerceAtLeast(0)
                 val (fx, fy) = dragged[name] ?: saved[name] ?: defaultPlace(i)
                 val bills = byTable[name].orEmpty()
                 val busy = bills.isNotEmpty()
