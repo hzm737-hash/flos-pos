@@ -859,5 +859,15 @@ internal object En {
         "obsazený" to "taken",
         "Účet přesunut ze stolu %s na stůl %s" to "Bill moved from table %s to table %s",
         "Účet přesunut na stůl %s." to "Bill moved to table %s.",
+        "Špatné heslo zálohy." to "Wrong backup password.",
+        "Soubor zálohy je poškozený." to "The backup file is damaged.",
+        "Kontroluji zálohu…" to "Checking the backup…",
+        "Záloha obsahuje vše: účtenky, produkty, zákazníky, nastavení včetně bankovního účtu a certifikát EET. Je zašifrovaná heslem, které zadáte. Uložte ji mimo telefon (Disk Google, e-mail, počítač)." to "The backup holds everything: receipts, products, customers, settings including the bank account, and the EET certificate. It is encrypted with a password you choose. Keep it off the phone (Google Drive, e-mail, a computer).",
+        "Heslo zálohy" to "Backup password",
+        "Bez hesla zálohu nikdo neotevře, ani vy. Heslo si zapište; ztracené heslo nejde obnovit." to "Without the password nobody can open the backup, not even you. Write it down; a lost password cannot be recovered.",
+        "Zadejte heslo, které jste zvolili při zálohování." to "Enter the password you chose when making the backup.",
+        "Heslo znovu" to "Password again",
+        "Alespoň %d znaků." to "At least %d characters.",
+        "Pokračovat" to "Continue",
     )
 }

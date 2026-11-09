@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import cz.flos.core.VatRate
 import cz.flos.pos.LocalPlatform
@@ -152,29 +153,53 @@ private fun BackupSection(vm: PosViewModel) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<String?>(null) }
     var restoreReady by remember { mutableStateOf(false) }
-    val save = platform.rememberFileSaver("application/zip") { ok -> status = if (ok) tr("Záloha uložena.") else tr("Záloha nebyla uložena.") }
-    val pick = platform.rememberFilePicker { bytes ->
+    var askBackupPassword by remember { mutableStateOf(false) }
+    // A picked backup that is encrypted waits here for its password.
+    var lockedBackup by remember { mutableStateOf<ByteArray?>(null) }
+    val save = platform.rememberFileSaver("application/octet-stream") { ok -> status = if (ok) tr("Záloha uložena.") else tr("Záloha nebyla uložena.") }
+    fun restore(bytes: ByteArray, password: String?) {
+        status = tr("Kontroluji zálohu…")
         scope.launch {
-            val error = vm.stageRestore(bytes)
-            if (error == null) restoreReady = true else status = error
+            val error = vm.stageRestore(bytes, password)
+            if (error == null) { status = null; lockedBackup = null; restoreReady = true } else status = error
         }
+    }
+    val pick = platform.rememberFilePicker { bytes ->
+        if (vm.backupNeedsPassword(bytes)) lockedBackup = bytes else restore(bytes, null)
     }
 
     Section(tr("Záloha a obnova"))
-    Text(tr("Záloha obsahuje vše: účtenky, produkty, zákazníky, nastavení včetně bankovního účtu a certifikát EET. Uložte ji mimo telefon (Disk Google, e-mail, počítač)."),
+    Text(tr("Záloha obsahuje vše: účtenky, produkty, zákazníky, nastavení včetně bankovního účtu a certifikát EET. Je zašifrovaná heslem, které zadáte. Uložte ji mimo telefon (Disk Google, e-mail, počítač)."),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = {
-            status = tr("Připravuji zálohu…")
-            scope.launch {
-                runCatching { vm.createBackup() }
-                    .onSuccess { save("flos-zaloha-" + LocalDate.now() + ".zip", it) }
-                    .onFailure { status = tr("Zálohu se nepodařilo vytvořit: %s", it.message ?: "") }
-            }
-        }) { Icon(Icons.Rounded.Backup, null); Text(tr("  Zálohovat")) }
+        Button(onClick = { askBackupPassword = true }) { Icon(Icons.Rounded.Backup, null); Text(tr("  Zálohovat")) }
         OutlinedButton(onClick = pick) { Icon(Icons.Rounded.Restore, null); Text(tr("  Obnovit ze zálohy")) }
     }
     status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+
+    if (askBackupPassword) PasswordDialog(
+        title = tr("Heslo zálohy"),
+        hint = tr("Bez hesla zálohu nikdo neotevře, ani vy. Heslo si zapište; ztracené heslo nejde obnovit."),
+        confirmTwice = true,
+        onDismiss = { askBackupPassword = false },
+    ) { password ->
+        askBackupPassword = false
+        status = tr("Připravuji zálohu…")
+        scope.launch {
+            runCatching { vm.createBackup(password) }
+                .onSuccess { save("flos-zaloha-" + LocalDate.now() + ".flosbak", it) }
+                .onFailure { status = tr("Zálohu se nepodařilo vytvořit: %s", it.message ?: "") }
+        }
+    }
+
+    lockedBackup?.let { bytes ->
+        PasswordDialog(
+            title = tr("Heslo zálohy"),
+            hint = tr("Zadejte heslo, které jste zvolili při zálohování."),
+            confirmTwice = false,
+            onDismiss = { lockedBackup = null },
+        ) { password -> restore(bytes, password) }
+    }
 
     if (restoreReady) AlertDialog(
         onDismissRequest = {},
@@ -182,5 +207,41 @@ private fun BackupSection(vm: PosViewModel) {
         text = { Text(tr("Obnoví se při dalším spuštění: data na tomto zařízení se nahradí zálohou (dosavadní databáze se uloží vedle jako flos.db.before-restore). Zavřete Flos a otevřete ho znovu.")) },
         confirmButton = { Button(onClick = { kotlin.system.exitProcess(0) }) { Text(tr("Zavřít Flos")) } },
         dismissButton = { TextButton(onClick = { restoreReady = false }) { Text(tr("Později")) } },
+    )
+}
+
+/** Asks for the backup password; [confirmTwice] for a new one (typed twice, at least 8 characters). */
+@Composable
+private fun PasswordDialog(title: String, hint: String, confirmTwice: Boolean, onDismiss: () -> Unit, onOk: (String) -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var again by remember { mutableStateOf("") }
+    val min = cz.flos.core.BackupCrypto.MIN_PASSWORD
+    val longEnough = password.length >= min
+    val ok = if (confirmTwice) longEnough && password == again else password.isNotEmpty()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(hint, style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    password, { password = it }, label = { Text(tr("Heslo")) }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = confirmTwice && password.isNotEmpty() && !longEnough,
+                    supportingText = { if (confirmTwice) Text(tr("Alespoň %d znaků.", min)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (confirmTwice) OutlinedTextField(
+                    again, { again = it }, label = { Text(tr("Heslo znovu")) }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    isError = again.isNotEmpty() && again != password,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { Button(onClick = { if (ok) onOk(password) }, enabled = ok) { Text(tr("Pokračovat")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zrušit")) } },
     )
 }

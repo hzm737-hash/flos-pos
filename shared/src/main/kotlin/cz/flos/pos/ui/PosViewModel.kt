@@ -335,7 +335,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     // ---- Backup and restore (Pokročilé nastavení) ----
     /** The whole till in one .zip: database, settings with counters, certificate and attachments. */
-    suspend fun createBackup(): ByteArray = withContext(Dispatchers.IO) {
+    /** The backup encrypted with [password] (it holds bank and EET secrets and customer data). */
+    suspend fun createBackup(password: String): ByteArray = cz.flos.core.BackupCrypto.encrypt(createPlainBackup(), password)
+
+    private suspend fun createPlainBackup(): ByteArray = withContext(Dispatchers.IO) {
         // Writes the recent changes from the write-ahead log into the main file first, so the copy is
         // one consistent file even if a sale is saved meanwhile (the -wal file is still copied too).
         runCatching { flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } } }
@@ -343,12 +346,21 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     /** Checks a backup and leaves it to be restored at the next start; returns why not, or null when ready. */
-    suspend fun stageRestore(bytes: ByteArray): String? = withContext(Dispatchers.IO) {
+    suspend fun stageRestore(bytes: ByteArray, password: String?): String? = withContext(Dispatchers.IO) {
         if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
-        cz.flos.pos.backup.FlosBackup.check(bytes, platform.dataDir)?.let { return@withContext tr(it) }
-        cz.flos.pos.backup.FlosBackup.stage(bytes, platform.dataDir)
+        // Backups made before the password existed are plain .zip files and still restore.
+        val zip = if (!cz.flos.core.BackupCrypto.isEncrypted(bytes)) bytes else when (val o = cz.flos.core.BackupCrypto.decrypt(bytes, password.orEmpty())) {
+            is cz.flos.core.BackupCrypto.Opened.Ok -> o.zip
+            cz.flos.core.BackupCrypto.Opened.WrongPassword -> return@withContext tr("Špatné heslo zálohy.")
+            cz.flos.core.BackupCrypto.Opened.Damaged -> return@withContext tr("Soubor zálohy je poškozený.")
+        }
+        cz.flos.pos.backup.FlosBackup.check(zip, platform.dataDir)?.let { return@withContext tr(it) }
+        cz.flos.pos.backup.FlosBackup.stage(zip, platform.dataDir)
         null
     }
+
+    /** True when a backup file needs its password before it can be restored. */
+    fun backupNeedsPassword(bytes: ByteArray): Boolean = cz.flos.core.BackupCrypto.isEncrypted(bytes)
 
     // ---- Service charge (Pokročilé nastavení) ----
     /** Adds the service charge line to the cart, or removes it when it is there. */
