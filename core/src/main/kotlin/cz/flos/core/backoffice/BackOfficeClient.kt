@@ -19,6 +19,7 @@ import javax.crypto.spec.PBEKeySpec
 @Serializable data class BoOrg(val id: Long = 0, val name: String = "", val ico: String = "", val dic: String = "", val vatPayer: Boolean = false, val address: String = "")
 @Serializable data class BoBranch(val id: Long = 0, val name: String = "", val address: String = "", val eetIdJednotky: Int? = null)
 @Serializable data class BoMenuPublished(val path: String)
+@Serializable data class BoOk(val ok: Boolean = true)
 @Serializable data class BoStaff(val id: Long, val name: String, val role: String = "CASHIER", val pinHash: String? = null)
 @Serializable data class BoConfig(
     val deviceId: Long, val deviceName: String = "", val eetIdPokl: String = "", val org: BoOrg = BoOrg(), val branch: BoBranch = BoBranch(),
@@ -75,6 +76,22 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
     /** Publishes the digital menu; returns its public address (e.g. https://flos.gnocco.cz/menu/ab12cd34ef). */
     fun publishMenu(menu: cz.flos.core.MenuData): String =
         base + request("PUT", "/device/menu", json.encodeToString(cz.flos.core.MenuData.serializer(), menu), BoMenuPublished.serializer()).path
+
+    /** Addresses for the tables' QR codes (ordering from the table), signed by the back office. */
+    fun tableLinks(tables: List<String>): List<cz.flos.core.TableLink> =
+        request("POST", "/device/table-links", json.encodeToString(cz.flos.core.TableLinkRequest.serializer(), cz.flos.core.TableLinkRequest(tables)),
+            cz.flos.core.TableLinkList.serializer()).links.map { it.copy(path = base + it.path) }
+
+    /** Orders guests sent from the tables that no till has answered yet. */
+    fun tableOrders(): List<cz.flos.core.TableOrder> =
+        request("GET", "/device/table-orders", null, cz.flos.core.TableOrderList.serializer()).orders
+
+    /**
+     * Tells the guest's page whether the order was taken. False when the order was already answered
+     * (by another till) or is gone, so it must not be put on the bill again.
+     */
+    fun ackTableOrder(id: Long, accepted: Boolean): Boolean =
+        request("POST", "/device/table-orders/$id/ack", json.encodeToString(cz.flos.core.TableOrderAck.serializer(), cz.flos.core.TableOrderAck(accepted)), BoOk.serializer()).ok
 
     private fun <T> request(method: String, path: String, body: String?, serializer: KSerializer<T>, auth: Boolean = true): T {
         val conn = URI(api + path).toURL().openConnection() as HttpURLConnection

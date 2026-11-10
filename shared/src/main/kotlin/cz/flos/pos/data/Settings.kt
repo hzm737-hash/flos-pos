@@ -157,6 +157,10 @@ data class AppSettings(
     val eurCashRate: String = "",
     /** Where each table sits on the plan, one per line: "x;y;name" with x and y from 0 to 1. */
     val tablePlan: String = "",
+    /** QR ordering: an order from a table waits until the staff accepts it (otherwise it goes straight on the bill). */
+    val qrOrderApprove: Boolean = true,
+    /** QR ordering: print a kitchen ticket for each accepted order. */
+    val qrOrderPrint: Boolean = true,
 ) {
     /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
     fun on(f: AdvFeature): Boolean = f.name in advancedSet
@@ -317,6 +321,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
             serviceChargeVat = int("serviceChargeVat", d.serviceChargeVat),
             waiterTables = str("waiterTables", d.waiterTables),
             tablePlan = str("tablePlan", d.tablePlan),
+            qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
+            qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
             eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
@@ -423,6 +429,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "serviceChargeVat" to s.serviceChargeVat.toString(),
                 "waiterTables" to s.waiterTables,
                 "tablePlan" to s.tablePlan,
+                "qrOrderApprove" to s.qrOrderApprove.toString(),
+                "qrOrderPrint" to s.qrOrderPrint.toString(),
                 "eurCashRate" to s.eurCashRate,
             )
 

@@ -238,4 +238,74 @@ class ServerTest {
         assertEquals(HttpStatusCode.NotFound, client.get("/menu/nic").status)
         assertEquals(HttpStatusCode.Unauthorized, client.put("/api/v1/device/menu") { contentType(ContentType.Application.Json); setBody(menu) }.status)
     }
+
+    @Test fun guestOrdersFromTheTable() = run { client ->
+        GuestThrottle.clear()
+        val token = client.register()
+        val branch = client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
+        val device = client.postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
+        val dt = client.postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>()
+        val pizza = cz.flos.core.MenuItem("Margherita", 18900, id = 7, options = "Velikost: Malá, Velká +60\nPřísady*: Sýr +20, Šunka +30")
+        val menu = cz.flos.core.MenuData("Pizza Fresca", categories = listOf(cz.flos.core.MenuCategory("Pizza", listOf(pizza))), ordering = true)
+        // Links need a published menu first.
+        assertEquals(HttpStatusCode.Conflict, client.postJson("/api/v1/device/table-links", cz.flos.core.TableLinkRequest(listOf("5")), dt.token).status)
+        client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu) }
+        val links = client.postJson("/api/v1/device/table-links", cz.flos.core.TableLinkRequest(listOf("5", "Terasa 1")), dt.token).body<cz.flos.core.TableLinkList>().links
+        assertEquals(listOf("5", "Terasa 1"), links.map { it.table })
+        val link = links.first().path
+        val slug = link.substringAfter("/menu/").substringBefore("?")
+        val key = link.substringAfter("k=")
+        assertTrue(links[1].path.contains("t=Terasa%201"))
+
+        // The table's QR opens the menu with ordering; without the key it is the plain menu.
+        val page = client.get(link)
+        assertTrue(page.bodyAsText().contains("flos-order"))
+        assertTrue(page.headers["Content-Security-Policy"]!!.contains("script-src 'self'"))
+        assertTrue(!client.get("/menu/$slug?t=5&k=spatne").bodyAsText().contains("flos-order"))
+        assertTrue(!client.get("/menu/$slug").bodyAsText().contains("flos-order"))
+
+        val line = cz.flos.core.GuestOrderLine(7, 2, listOf(listOf(1), listOf(0, 1)), "bez bazalky")
+        // A wrong key, an unknown dish or a bad choice is refused.
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", "x", listOf(line))).status)
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("6", key, listOf(line))).status)
+        assertEquals(HttpStatusCode.BadRequest, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", key, listOf(line.copy(id = 99)))).status)
+        assertEquals(HttpStatusCode.BadRequest, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", key, listOf(line.copy(choices = listOf(emptyList()))))).status)
+
+        val sent = client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", key, listOf(line), "spěcháme"))
+        assertEquals(HttpStatusCode.OK, sent.status)
+        val id = sent.body<cz.flos.core.GuestOrderAccepted>().id
+        assertEquals("NEW", client.get("/menu/$slug/order/$id?t=5&k=$key").body<GuestOrderStatus>().status)
+
+        // The till fetches it once, then answers.
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/device/table-orders").status)
+        val waiting = client.get("/api/v1/device/table-orders") { bearerAuth(dt.token) }.body<cz.flos.core.TableOrderList>().orders
+        assertEquals(1, waiting.size)
+        assertEquals("5", waiting[0].table)
+        assertEquals("bez bazalky", waiting[0].lines[0].note)
+        assertEquals("spěcháme", waiting[0].note)
+        assertTrue(client.get("/api/v1/device/table-orders") { bearerAuth(dt.token) }.body<cz.flos.core.TableOrderList>().orders.isEmpty())
+        client.postJson("/api/v1/device/table-orders/$id/ack", cz.flos.core.TableOrderAck(true), dt.token)
+        assertEquals("ACCEPTED", client.get("/menu/$slug/order/$id?t=5&k=$key").body<GuestOrderStatus>().status)
+
+        // Ordering switched off on the till: the same QR shows only the menu and orders are refused.
+        client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu.copy(ordering = false)) }
+        assertTrue(!client.get(link).bodyAsText().contains("flos-order"))
+        assertEquals(HttpStatusCode.BadRequest, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", key, listOf(line))).status)
+    }
+
+    @Test fun guestOrdersAreThrottledPerTable() = run { client ->
+        GuestThrottle.clear()
+        val token = client.register()
+        val branch = client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
+        val device = client.postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
+        val dt = client.postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>()
+        val menu = cz.flos.core.MenuData("Pizza Fresca", categories = listOf(cz.flos.core.MenuCategory("Nápoje", listOf(cz.flos.core.MenuItem("Voda", 3900, id = 1)))), ordering = true)
+        client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu) }
+        val link = client.postJson("/api/v1/device/table-links", cz.flos.core.TableLinkRequest(listOf("2")), dt.token).body<cz.flos.core.TableLinkList>().links.single().path
+        val slug = link.substringAfter("/menu/").substringBefore("?")
+        val key = link.substringAfter("k=")
+        val order = cz.flos.core.GuestOrder("2", key, listOf(cz.flos.core.GuestOrderLine(1, 1)))
+        repeat(6) { assertEquals(HttpStatusCode.OK, client.postJson("/menu/$slug/order", order).status) }
+        assertEquals(HttpStatusCode.TooManyRequests, client.postJson("/menu/$slug/order", order).status)
+    }
 }

@@ -117,6 +117,8 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         }
     }
 
+    override fun beep() { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } }
+
     override fun openUrl(url: String): Boolean = runCatching {
         val d = java.awt.Desktop.getDesktop()
         val uri = java.net.URI(url)

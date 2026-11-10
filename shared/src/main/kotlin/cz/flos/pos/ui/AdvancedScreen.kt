@@ -123,6 +123,7 @@ private fun FeatureCard(vm: PosViewModel, s: AppSettings, f: AdvFeature) {
                     supportingText = { Text(tr("Každý řádek jeden číšník: jméno, dvojtečka a jeho stoly. Jméno jako v Obsluze.")) },
                 )
                 AdvFeature.STORNO_REASON -> AuditLog(vm)
+                AdvFeature.QR_ORDERING -> QrOrderingSettings(vm, s)
                 else -> {}
             }
         }

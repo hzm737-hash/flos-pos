@@ -53,6 +53,9 @@ interface Platform {
     /** Returns a function that asks for the permission needed by [canUsePrinters], then calls [onGranted]. */
     @Composable
     fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit
+
+    /** A short sound when something new arrives (an order from a table); silent where not supported. */
+    fun beep() {}
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("No platform") }

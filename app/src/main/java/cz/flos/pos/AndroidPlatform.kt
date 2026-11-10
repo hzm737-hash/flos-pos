@@ -62,6 +62,14 @@ class AndroidPlatform(private val context: Context) : Platform {
         return { name, bytes -> pending[0] = bytes; if (runCatching { launcher.launch(name) }.isFailure) { pending[0] = null; onDone(false) } }
     }
 
+    override fun beep() {
+        runCatching {
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 600)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 1_000)
+        }
+    }
+
     override fun openUrl(url: String): Boolean = runCatching {
         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     }.isSuccess
