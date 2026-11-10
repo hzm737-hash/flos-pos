@@ -40,8 +40,21 @@ rem Old app too, so it could be put back if anything goes wrong.
 for /f "tokens=2 delims=:" %%p in ('"%ADB%" shell pm path %PKG%') do "%ADB%" pull %%p flos-old.apk >nul
 
 rem ---- 2. Download the new Flos ----
-echo [2/4] Downloading the new Flos...
-curl.exe -L -o flos-new.apk https://github.com/hzm737-hash/flos-pos/releases/latest/download/flos.apk || goto :fail
+rem The repository is private: download flos.apk in the browser (signed in to GitHub) into this folder.
+if exist flos.apk copy /y flos.apk flos-new.apk >nul
+if not exist flos-new.apk (
+  echo [2/4] Downloading the new Flos...
+  curl.exe -f -L -o flos-new.apk https://github.com/hzm737-hash/flos-pos/releases/latest/download/flos.apk
+)
+for %%A in (flos-new.apk) do if %%~zA LSS 1000000 (
+  del flos-new.apk 2>nul
+  echo The new Flos could not be downloaded here.
+  echo Open https://github.com/hzm737-hash/flos-pos/releases/latest in the browser,
+  echo download flos.apk into this folder: %~dp0
+  echo and start flos-prenos.bat again. Nothing was changed on the phone.
+  goto :fail
+)
+echo [2/4] New Flos ready.
 
 echo.
 echo [3/4] The old Flos will now be removed and the new one installed. Your data is saved in:
