@@ -46,14 +46,9 @@ if not exist flos-new.apk (
   echo [2/4] Downloading the new Flos...
   curl.exe -f -L -o flos-new.apk https://github.com/hzm737-hash/flos-pos/releases/latest/download/flos.apk
 )
-for %%A in (flos-new.apk) do if %%~zA LSS 1000000 (
-  del flos-new.apk 2>nul
-  echo The new Flos could not be downloaded here.
-  echo Open https://github.com/hzm737-hash/flos-pos/releases/latest in the browser,
-  echo download flos.apk into this folder: %~dp0
-  echo and start flos-prenos.bat again. Nothing was changed on the phone.
-  goto :fail
-)
+if not exist flos-new.apk goto :nodownload
+for %%A in (flos-new.apk) do set APKSIZE=%%~zA
+if %APKSIZE% LSS 1000000 goto :nodownload
 echo [2/4] New Flos ready.
 
 echo.
@@ -83,6 +78,16 @@ echo.
 echo DONE. Flos is open on the phone with your data. Keep flos-data-backup.tar somewhere safe.
 pause
 exit /b 0
+
+:nodownload
+del flos-new.apk 2>nul
+echo.
+echo The new Flos could not be downloaded here (the repository is private).
+echo Open https://github.com/hzm737-hash/flos-pos/releases/latest in the browser,
+echo download flos.apk into this folder: %~dp0
+echo and start flos-prenos.bat again. Nothing was changed on the phone.
+pause
+exit /b 1
 
 :fail
 echo.
