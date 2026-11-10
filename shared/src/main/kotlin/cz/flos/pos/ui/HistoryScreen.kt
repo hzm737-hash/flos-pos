@@ -368,6 +368,8 @@ internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> 
     var left by remember(sw) { mutableStateOf<List<Double>?>(null) }
     LaunchedEffect(sw) { left = vm.refundable(sw) }
     var chosen by remember(sw) { mutableStateOf(mapOf<Int, Double>()) }
+    var reason by remember(sw) { mutableStateOf("") }
+    val needReason = vm.settings.collectAsState().value.on(cz.flos.pos.data.AdvFeature.STORNO_REASON)
     val cart = sw.toCart()
     val amount = sw.items.indices.sumOf { i ->
         val q = chosen[i] ?: 0.0
@@ -396,10 +398,12 @@ internal fun RefundDialog(vm: PosViewModel, sw: SaleWithItems, onDismiss: () -> 
                     }
                 }
                 Text(tr("Vrátit zákazníkovi: %s", Money.format(amount)), fontWeight = FontWeight.Bold)
+                if (needReason) OutlinedTextField(reason, { reason = it }, label = { Text(tr("Důvod (povinný)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            Button(onClick = { vm.refund(sw, chosen.filterValues { it >= cz.flos.core.Qty.MIN }); onDismiss() }, enabled = amount > 0 || chosen.values.any { it >= cz.flos.core.Qty.MIN }) {
+            Button(onClick = { vm.refund(sw, chosen.filterValues { it >= cz.flos.core.Qty.MIN }, reason); onDismiss() },
+                enabled = (amount > 0 || chosen.values.any { it >= cz.flos.core.Qty.MIN }) && (!needReason || reason.isNotBlank())) {
                 Text(tr("Vrátit"))
             }
         },

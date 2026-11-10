@@ -13,7 +13,7 @@ import androidx.sqlite.execSQL
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class,
         DocumentEntity::class, ReservationEntity::class, NoteEntity::class],
-    version = 9,
+    version = 11,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -157,6 +157,20 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+        /** 9 → 10: open-price products (the price is typed in when sold). Only adds a column, all data stays. */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE products ADD COLUMN openPrice INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** 10 → 11: customers' birthdays. Only adds a column, all data stays. */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE customers ADD COLUMN birthday TEXT")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
     }
 }

@@ -132,6 +132,28 @@ fun PaymentDialog(
                                 color = if (change >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             )
                         }
+                        // Cash in euros (Pokročilé nastavení): the amount due in EUR, and what was received
+                        // in EUR becomes the crowns handed over, so the change is given in Kč.
+                        if (s.on(cz.flos.pos.data.AdvFeature.EUR_CASH)) {
+                            var rate by remember { mutableStateOf(s.eurCashRateOverride) }
+                            LaunchedEffect(Unit) { if (rate == null) rate = vm.eurRate() }
+                            var eur by remember { mutableStateOf("") }
+                            val r = rate
+                            if (r == null) Hint(tr("Načítám kurz EUR…"))
+                            else {
+                                // Rounded up to 10 cents so the business never gets less than the bill.
+                                val dueCents = Math.ceil(cashDue / r / 10.0).toLong() * 10
+                                Text(tr("V eurech: %s (kurz 1 EUR = %s Kč)", Money.format(dueCents, "EUR"),
+                                    "%.2f".format(java.util.Locale.ROOT, r).replace('.', ',')), fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = eur,
+                                    onValueChange = { v -> eur = v; Money.parse(v)?.let { c -> given = Money.format(Math.round(c * r), "") } },
+                                    label = { Text(tr("Přijato v EUR")) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
                     }
                     PaymentMethod.CARD -> Hint(tr("Proveďte platbu na platebním terminálu a po schválení potvrďte."))
                     PaymentMethod.MEAL_VOUCHER -> Hint(tr("Přijměte stravenky v hodnotě nákupu. Tržba se eviduje v EET jako ostatní platby."))
