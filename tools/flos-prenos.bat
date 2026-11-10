@@ -3,6 +3,8 @@ rem Flos: move ALL data (sales, products, settings, bank, EET certificate) from 
 rem Flos on the phone to the new Flos, once. Phone connected by USB with USB debugging on.
 setlocal EnableExtensions
 cd /d "%~dp0"
+rem A copy saved by the browser may have Unix line ends; cmd then cannot find the :labels. Fix the file once.
+powershell -NoProfile -Command "$p='%~f0'; $t=[IO.File]::ReadAllText($p); if ($t -match '[^\r]\n') { [IO.File]::WriteAllText($p, ($t -replace '\r?\n', [string][char]13 + [char]10)); exit 1 }" || (echo. & echo The script was repaired. Close this window and start flos-prenos.bat again. & pause & exit /b 1)
 set PKG=cz.flos.pos
 set ADB=%~dp0platform-tools\adb.exe
 set BACKUP=%~dp0flos-data-backup.tar
