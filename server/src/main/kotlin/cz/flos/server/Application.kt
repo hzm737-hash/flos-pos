@@ -47,16 +47,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
     routing {
         staticResources("/", "static", index = "index.html")
         get("/health") { call.respondText("ok") }
-        /** Public digital menu (QR menu); rendered here from the till's data, so no foreign HTML is ever served. */
-        get("/menu/{slug}") {
-            val slug = call.parameters["slug"].orEmpty()
-            val data = db.tx { queryOne("SELECT data FROM menus WHERE slug = ?", slug) { it.getString(1) } }
-            val menu = data?.let { runCatching { FlosJson.decodeFromString(cz.flos.core.MenuData.serializer(), it) }.getOrNull() }
-                ?: return@get call.respondText("Menu nenalezeno", status = HttpStatusCode.NotFound)
-            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
-            call.response.headers.append("Cache-Control", "public, max-age=60")
-            call.respondText(cz.flos.core.MenuPage.html(menu), io.ktor.http.ContentType.Text.Html.withCharset(Charsets.UTF_8))
-        }
+        /** Public digital menu (QR menu), rendered here from the till's data; ordering from the table. */
+        menuRoutes(db)
         route("/api/v1") {
             authRoutes(db, openSignup)
             orgRoutes(db)
@@ -64,6 +56,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             stockRoutes(db)
             salesRoutes(db)
             deviceRoutes(db)
+            tableOrderDeviceRoutes(db)
         }
     }
 }

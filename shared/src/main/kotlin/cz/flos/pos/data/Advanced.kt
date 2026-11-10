@@ -15,4 +15,5 @@ enum class AdvFeature(val label: String, val hint: String) {
     BIRTHDAYS("Narozeniny zákazníků", "Datum narození u zákazníka, přehled oslavenců a upozornění na prodeji."),
     WAITER_TABLES("Stoly podle obsluhy", "Každý číšník má své stoly; na mapě stolů lze zobrazit jen ty své."),
     TABLE_PLAN("Plán stolů a přesun účtu", "Stoly rozmístíte tažením jako v podniku a otevřený účet přesunete na jiný stůl (podržte stůl)."),
+    QR_ORDERING("Objednávky z QR kódu na stole", "Host naskenuje QR kód stolu, vybere z menu a objednávka přijde sem na stůl. Potřebuje propojení s back office a zveřejněné QR menu."),
 }

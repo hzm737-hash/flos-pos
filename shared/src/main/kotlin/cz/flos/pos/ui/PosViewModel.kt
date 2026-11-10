@@ -163,6 +163,14 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 delay(60_000)
             }
         }
+        // Orders from the tables: every 10 seconds while QR ordering is switched on.
+        viewModelScope.launch {
+            while (true) {
+                val s = settings.value
+                if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
+                delay(10_000)
+            }
+        }
     }
 
     // ---- Payers from abroad (SEPA QR code in euro) ----
@@ -876,6 +884,127 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun reprintOrder(sw: SaleWithItems) = printOrder(sw.sale, sw.toCart())
 
+    // ---- Orders from the tables (QR code on the table, Pokročilé nastavení → Objednávky z QR) ----
+    private val _qrInbox = MutableStateFlow<List<cz.flos.core.TableOrder>>(emptyList())
+    /** Orders from the tables waiting for the staff to accept or decline them. */
+    val qrInbox: StateFlow<List<cz.flos.core.TableOrder>> = _qrInbox.asStateFlow()
+    /** Orders this till has already shown or taken, so a second fetch does not bring them twice. */
+    private val qrSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+    private val qrMutex = kotlinx.coroutines.sync.Mutex()
+    private val qrTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    private val _tableLinks = MutableStateFlow<List<cz.flos.core.TableLink>>(emptyList())
+    /** The QR code link of each table, loaded from the back office. */
+    val tableLinks: StateFlow<List<cz.flos.core.TableLink>> = _tableLinks.asStateFlow()
+
+    private fun boClient(s: AppSettings = settings.value) = cz.flos.core.backoffice.BackOfficeClient(s.boUrl, s.boToken)
+
+    /** Fetches new orders from the tables; asks the staff or puts them straight on the bill. */
+    private suspend fun pollTableOrders() {
+        val s = settings.value
+        val orders = runCatching { withContext(Dispatchers.IO) { boClient(s).tableOrders() } }.getOrNull() ?: return
+        val fresh = orders.filter { qrSeen.add(it.id) }
+        if (fresh.isEmpty()) return
+        platform.beep()
+        if (s.qrOrderApprove) _qrInbox.update { it + fresh }
+        else fresh.forEach { acceptTableOrder(it).join() }
+    }
+
+    /** The order's lines as cart lines priced by this till; lines that no longer match a product are left out. */
+    fun tableOrderCart(o: cz.flos.core.TableOrder, service: String? = null): Pair<Cart, List<String>> {
+        val byId = products.value.associateBy { it.id }
+        var cart = Cart()
+        val missing = mutableListOf<String>()
+        for (l in o.lines) {
+            val p = byId[l.id]
+            if (p == null || !p.active || p.openPrice) { missing += "#${l.id}"; continue }
+            val groups = optionGroupsFor(p)
+            if (!cz.flos.core.TableOrders.choicesValid(groups, l.choices) || l.qty !in 1..cz.flos.core.TableOrders.MAX_QTY) { missing += p.name; continue }
+            val (name, price) = cz.flos.core.ProductOptions.apply(p.name, p.price, groups, cz.flos.core.TableOrders.chosen(l.choices))
+            val (unit, auto) = priced(p, extras = price - p.price, service = service, list = null)
+            cart = cart.add(p.id, cz.flos.core.LineNote.join(name, cz.flos.core.TableOrders.cleanNote(l.note)), unit, p.vatRate, l.qty.toDouble(), auto)
+        }
+        return cart to missing
+    }
+
+    /**
+     * Takes an order from a table: tells the back office first (so no other till takes it too), then adds
+     * the dishes to the table's open bill, or opens a new bill, and prints a ticket for the kitchen.
+     */
+    fun acceptTableOrder(o: cz.flos.core.TableOrder) = viewModelScope.launch {
+        if (!qrTaking.add(o.id)) return@launch // a second tap while the first one is still running
+        qrMutex.lock()
+        try {
+            val existing = openOrders.value.firstOrNull { it.sale.tableName == o.table }
+            val (lines, missing) = tableOrderCart(o, existing?.sale?.serviceType)
+            if (lines.isEmpty()) {
+                _qrInbox.update { list -> list.filterNot { it.id == o.id } }
+                runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, false) } }
+                _messages.tryEmit(tr("Objednávku ze stolu %s nelze přijmout: položky už nejsou v nabídce. Zveřejněte menu znovu.", o.table))
+                return@launch
+            }
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, true) } }
+            if (taken.isFailure) {
+                // Not confirmed: stays in the list (or is fetched again) and can be tried once more.
+                if (!settings.value.qrOrderApprove) qrSeen.remove(o.id)
+                _messages.tryEmit(tr("Objednávku ze stolu %s se nepodařilo potvrdit: %s", o.table, taken.exceptionOrNull()?.message ?: ""))
+                return@launch
+            }
+            _qrInbox.update { list -> list.filterNot { it.id == o.id } }
+            if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku ze stolu %s už vyřídila jiná pokladna.", o.table)); return@launch }
+
+            val note = listOf(tr("QR objednávka"), o.note.trim()).filter { it.isNotEmpty() }.joinToString(": ")
+            val sale = if (existing != null) {
+                var cart = existing.toCart()
+                lines.items.forEach { cart = cart.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) }
+                val joinedNote = listOf(existing.sale.note, o.note.trim()).filter { it.isNotBlank() }.joinToString(" · ")
+                val updated = existing.sale.copy(total = cart.total, received = cart.total, kitchenReadyAt = null, note = joinedNote)
+                salesDao.replace(updated, itemsOf(cart))
+                // The same bill is open in the cart: show the new dishes there too, so saving it keeps them.
+                if (_editingOrder.value?.id == existing.sale.id) {
+                    _cart.update { c -> lines.items.fold(c) { acc, it -> acc.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) } }
+                    _editingOrder.value = updated
+                }
+                updated
+            } else {
+                val millis = System.currentTimeMillis()
+                SaleEntity(
+                    number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                    payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                    orderNumber = flos.settings.nextOrderNumber(), note = note, tableName = o.table,
+                ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            }
+            _messages.tryEmit(tr("Objednávka ze stolu %s přijata", o.table) +
+                (if (missing.isNotEmpty()) " " + tr("(vynecháno: %s)", missing.joinToString(", ")) else ""))
+            if (settings.value.qrOrderPrint) printOrder(sale.copy(note = note), lines)
+        } finally { qrMutex.unlock(); qrTaking.remove(o.id) }
+    }
+
+    /** Declines an order from a table; the guest's page says to ask the staff. */
+    fun rejectTableOrder(o: cz.flos.core.TableOrder) = viewModelScope.launch {
+        runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, false) } }
+            .onSuccess { _qrInbox.update { list -> list.filterNot { it.id == o.id } } }
+            .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
+    }
+
+    /** Loads the QR code link of every table from the back office (the menu must be published). */
+    fun loadTableLinks() = viewModelScope.launch {
+        val s = settings.value
+        if (!s.paired) { _messages.tryEmit(tr("Nejdřív spárujte pokladnu s back office.")); return@launch }
+        if (s.tableList.isEmpty()) { _messages.tryEmit(tr("Nejdřív zadejte stoly v Nastavení.")); return@launch }
+        runCatching { withContext(Dispatchers.IO) { boClient(s).tableLinks(s.tableList) } }
+            .onSuccess { _tableLinks.value = it }
+            .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
+    }
+
+    /** Prints a QR code for every table on the receipt printer, to stand on the tables. */
+    fun printTableQrs() {
+        val links = _tableLinks.value
+        if (links.isEmpty()) return
+        val name = settings.value.businessName
+        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, it.path, tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+    }
+
     /** Loads an open order into the cart so items can be added or removed. */
     fun editOrder(sw: SaleWithItems) {
         _cart.value = sw.toCart()
@@ -1497,11 +1626,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cats = categories.value.map { c -> cz.flos.core.MenuCategory(c.name, byCat[c.id].orEmpty().map { it.menuItem() }) } +
             listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
         return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
-            s.business.contacts, s.openingHours, cats, s.menuNote)
+            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING))
     }
 
-    private fun ProductEntity.menuItem() = cz.flos.core.MenuItem(name, price,
-        options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · "))
+    private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {
+        val note = options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
+        // With QR ordering on, guests can order the product: its id and the variants and extras the till offers.
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || openPrice) return cz.flos.core.MenuItem(name, price, note)
+        return cz.flos.core.MenuItem(name, price, note, id = id, options = cz.flos.core.ProductOptions.format(optionGroupsFor(this)))
+    }
 
     fun menuHtml(): ByteArray = cz.flos.core.MenuPage.html(menuData()).toByteArray(Charsets.UTF_8)
 
