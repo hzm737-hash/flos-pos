@@ -123,7 +123,21 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
             var u = url.trim().trimEnd('/')
             if (u.endsWith("/api/v1")) u = u.removeSuffix("/api/v1")
             if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://$u"
+            // The device token must never travel unencrypted over the internet: plain http is kept
+            // only for a back office inside the shop's own network (e.g. http://192.168.1.10:8080).
+            if (u.startsWith("http://") && !isLocalHost(u.removePrefix("http://"))) u = "https://" + u.removePrefix("http://")
             return u
+        }
+
+        /** True for localhost, private IPv4 ranges and *.local names, i.e. a server inside the local network. */
+        fun isLocalHost(hostAndRest: String): Boolean {
+            val host = hostAndRest.substringBefore('/').substringBefore('?').let { h ->
+                if (h.startsWith("[")) h.substringAfter('[').substringBefore(']') else h.substringBefore(':')
+            }.lowercase()
+            if (host == "localhost" || host.endsWith(".local") || host == "::1") return true
+            val p = host.split('.').mapNotNull { it.toIntOrNull() }
+            if (p.size != 4 || host.count { it == '.' } != 3) return false
+            return p[0] == 10 || p[0] == 127 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && p[1] in 16..31) || (p[0] == 169 && p[1] == 254)
         }
 
         /** Checks a staff PIN against the hash the back office sent ("pbkdf2$iterations$salt$hash"), without a network call. */

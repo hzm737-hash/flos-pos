@@ -13,8 +13,6 @@ import cz.flos.core.TableOrders
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.withCharset
-import io.ktor.server.application.ApplicationCall
-import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
@@ -55,9 +53,6 @@ internal object GuestThrottle {
 
     fun clear() = hits.clear()
 }
-
-private fun ApplicationCall.clientAddress(): String =
-    request.headers["X-Forwarded-For"]?.substringBefore(',')?.trim()?.takeIf { it.isNotEmpty() } ?: request.origin.remoteHost
 
 private data class MenuRow(val orgId: Long, val menu: MenuData?, val secret: String?)
 
@@ -109,7 +104,7 @@ internal fun Route.menuRoutes(db: Db) {
         val menu = row.menu ?: throw ApiError(HttpStatusCode.NotFound, "Menu nenalezeno")
         if (!validKey(row, order.table, order.key)) throw ApiError(HttpStatusCode.Forbidden, "Neplatný QR kód stolu. Naskenujte prosím kód na stole znovu.")
         TableOrders.problem(menu, order)?.let { throw ApiError(HttpStatusCode.BadRequest, it) }
-        if (!GuestThrottle.allow("ip:" + call.clientAddress(), 10) || !GuestThrottle.allow("table:${row.orgId}:${order.table.trim()}", 6)) {
+        if (!GuestThrottle.allow("ip:" + call.clientIp(), 10) || !GuestThrottle.allow("table:${row.orgId}:${order.table.trim()}", 6)) {
             throw ApiError(HttpStatusCode.TooManyRequests, "Příliš mnoho objednávek. Chvíli počkejte nebo zavolejte obsluhu.")
         }
         val clean = order.copy(
