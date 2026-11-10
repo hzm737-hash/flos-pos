@@ -51,21 +51,7 @@ if not exist flos-new.apk (
   echo [2/4] Downloading the new Flos...
   curl.exe -f -L -o flos-new.apk https://github.com/hzm737-hash/flos-pos/releases/latest/download/flos.apk
 )
-if not exist flos-new.apk goto :wifi
-rem Wireless debugging (Android 11+): phone and computer on the same Wi-Fi.
-echo.
-echo On the phone: Developer options - Wireless debugging ON - "Pair device with pairing code".
-set /p PAIR=Type the IP address and port shown under the code (for example 192.168.1.20:37099): 
-set /p CODE=Type the 6-digit Wi-Fi pairing code: 
-"%ADB%" pair %PAIR% %CODE% || exit /b 1
-echo.
-echo Now look at the main Wireless debugging screen: "IP address and Port" (a different port).
-set /p CONN=Type that IP address and port (for example 192.168.1.20:41235): 
-"%ADB%" connect %CONN% | find "connected to" >nul || (echo Could not connect to %CONN%. & exit /b 1)
-echo Connected over Wi-Fi.
-exit /b 0
-
-:nodownload
+if not exist flos-new.apk goto :nodownload
 for %%A in (flos-new.apk) do set APKSIZE=%%~zA
 if %APKSIZE% LSS 1000000 goto :nodownload
 echo [2/4] New Flos ready.
@@ -96,6 +82,20 @@ echo Trying another way...
 echo.
 echo DONE. Flos is open on the phone with your data. Keep flos-data-backup.tar somewhere safe.
 pause
+exit /b 0
+
+:wifi
+rem Wireless debugging (Android 11+): phone and computer on the same Wi-Fi.
+echo.
+echo On the phone: Developer options - Wireless debugging ON - "Pair device with pairing code".
+set /p PAIR=Type the IP address and port shown under the code (for example 192.168.1.20:37099): 
+set /p CODE=Type the 6-digit Wi-Fi pairing code: 
+"%ADB%" pair %PAIR% %CODE% || exit /b 1
+echo.
+echo Now look at the main Wireless debugging screen: "IP address and Port" (a different port).
+set /p CONN=Type that IP address and port (for example 192.168.1.20:41235): 
+"%ADB%" connect %CONN% | find "connected to" >nul || (echo Could not connect to %CONN%. & exit /b 1)
+echo Connected over Wi-Fi.
 exit /b 0
 
 :nodownload
