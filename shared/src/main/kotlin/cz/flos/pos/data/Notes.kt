@@ -9,7 +9,11 @@ import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 /** What a note belongs to. */
-enum class NoteTarget { GENERAL, CUSTOMER, PRODUCT }
+enum class NoteTarget {
+    GENERAL, CUSTOMER, PRODUCT,
+    /** Record of storno, refunds and cancelled orders with the reason (Pokročilé nastavení). */
+    AUDIT,
+}
 
 /**
  * A note, optionally with an attached document (contract, invoice, photo). The file itself

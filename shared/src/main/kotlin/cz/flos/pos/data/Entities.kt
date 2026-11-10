@@ -1,5 +1,6 @@
 package cz.flos.pos.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -45,6 +46,8 @@ data class ProductEntity(
     val prices: String? = null,
     /** Id in the back office when the product comes from there. */
     val remoteId: Long? = null,
+    /** Open price: the till asks for the price every time the product is sold. */
+    @ColumnInfo(defaultValue = "0") val openPrice: Boolean = false,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }

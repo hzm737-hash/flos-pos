@@ -25,6 +25,7 @@ enum class Permission(val label: String) {
     CUSTOMERS("Úprava zákazníků"),
     STATISTICS("Statistiky a tržby"),
     SETTINGS("Nastavení"),
+    MANUAL_PRICE("Ruční položka a cena zadaná při prodeji"),
 }
 
 /** What each role may not do, stored as "CASHIER=STORNO,REFUND;MANAGER=SETTINGS". */

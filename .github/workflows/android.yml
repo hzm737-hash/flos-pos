@@ -21,8 +21,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test core logic
         run: ./gradlew :core:test
+      # The permanent signing key (repository secrets) lets every new flos.apk install as an update over the
+      # old one without losing data. Without the secrets the build still works, signed with a random key.
       - name: Build APKs
-        run: ./gradlew :app:assembleDebug :app:assembleRelease
+        env:
+          FLOS_UPLOAD_KEYSTORE_BASE64: ${{ secrets.FLOS_UPLOAD_KEYSTORE_BASE64 }}
+          FLOS_UPLOAD_PASSWORD: ${{ secrets.FLOS_UPLOAD_PASSWORD }}
+        run: |
+          if [ -n "$FLOS_UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "$FLOS_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flos-upload.p12"
+            export FLOS_UPLOAD_KEYSTORE="$RUNNER_TEMP/flos-upload.p12"
+            echo "Signing with the permanent Flos key"
+          else
+            echo "::warning::No FLOS_UPLOAD_KEYSTORE_BASE64 secret: APKs are signed with a random key and cannot update an installed Flos."
+          fi
+          ./gradlew :app:assembleDebug :app:assembleRelease
+          rm -f "$RUNNER_TEMP/flos-upload.p12"
       # Pull requests keep the files for 3 days. A full artifact storage must not fail the build.
       - name: Upload APKs
         if: github.event_name == 'pull_request'

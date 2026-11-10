@@ -13,17 +13,34 @@ android {
         applicationId = "cz.flos.pos"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Every CI build gets a higher version code (its run number), so a phone installs it as an update.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = build ?: 1
+        versionName = if (build != null) "1.0.$build" else "0.1.0"
+    }
+
+    // One permanent key for every build. Android installs a new APK over the old one (keeping all data)
+    // only when both are signed with the same key. CI writes the key from the repository secrets
+    // FLOS_UPLOAD_KEYSTORE_BASE64 + FLOS_UPLOAD_PASSWORD; without them builds keep the random debug key.
+    val flosKeystore = System.getenv("FLOS_UPLOAD_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (flosKeystore != null) create("flos") {
+            storeFile = flosKeystore
+            storePassword = System.getenv("FLOS_UPLOAD_PASSWORD")
+            keyAlias = System.getenv("FLOS_UPLOAD_ALIAS") ?: "flos-upload"
+            keyPassword = System.getenv("FLOS_UPLOAD_PASSWORD")
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfigs.findByName("flos")?.let { signingConfig = it }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Until a release keystore is set up, release builds are signed with the debug key
-            // so the APK can be installed for testing.
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed with the permanent key when CI has it; otherwise with the debug key for testing.
+            signingConfig = signingConfigs.findByName("flos") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
