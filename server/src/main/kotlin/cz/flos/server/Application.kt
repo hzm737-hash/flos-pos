@@ -34,6 +34,8 @@ val FlosJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitN
  *   people are added by the owner under Users. Set FLOS_OPEN_SIGNUP=true to allow anyone to sign up.
  */
 fun Application.flosModule(db: Db, openSignup: Boolean = false) {
+    installHardening()
+    val throttle = Throttle()
     install(ContentNegotiation) { json(FlosJson) }
     install(StatusPages) {
         exception<ApiError> { call, e -> call.respond(e.status, ErrorBody(e.message)) }
@@ -58,12 +60,12 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             call.respondText(cz.flos.core.MenuPage.html(menu), io.ktor.http.ContentType.Text.Html.withCharset(Charsets.UTF_8))
         }
         route("/api/v1") {
-            authRoutes(db, openSignup)
+            authRoutes(db, openSignup, throttle)
             orgRoutes(db)
             catalogRoutes(db)
             stockRoutes(db)
             salesRoutes(db)
-            deviceRoutes(db)
+            deviceRoutes(db, throttle)
         }
     }
 }
@@ -102,7 +104,7 @@ private fun Connection.newSession(userId: Long, orgId: Long): String {
 private suspend fun Db.signupAllowed(openSignup: Boolean): Boolean =
     openSignup || tx { queryOne("SELECT COUNT(*) FROM users") { it.getLong(1) } ?: 0L } == 0L
 
-private fun Route.authRoutes(db: Db, openSignup: Boolean) {
+private fun Route.authRoutes(db: Db, openSignup: Boolean, throttle: Throttle) {
     get("/auth/signup") { call.respond(SignupStatus(db.signupAllowed(openSignup))) }
     post("/auth/register") {
         if (!db.signupAllowed(openSignup)) throw ApiError(HttpStatusCode.Forbidden, "Registrace je uzavřena. Nového uživatele přidá majitel v sekci Uživatelé.")
@@ -125,15 +127,18 @@ private fun Route.authRoutes(db: Db, openSignup: Boolean) {
     }
     post("/auth/login") {
         val r = call.receive<LoginRequest>()
-        val res = db.tx {
+        val keys = listOf("login:" + r.email.lowercase().trim() to Throttle.LOGIN_PER_ACCOUNT, "ip:" + call.clientIp() to Throttle.PER_ADDRESS)
+        val res = throttle.guard(keys) { db.tx {
             val u = queryOne("SELECT id, org_id, password_hash, role FROM users WHERE email = ? AND active", r.email.lowercase().trim()) {
                 Triple(it.getLong(1), it.getLong(2), it.getString(3)) to it.getString(4)
             }
+            // An unknown e-mail takes as long as a wrong password, so answers don't reveal which e-mails exist.
+            if (u == null) Passwords.verify(r.password, DUMMY_HASH)
             if (u == null || !Passwords.verify(r.password, u.first.third) || u.second == Role.CASHIER.name) {
                 throw ApiError(HttpStatusCode.Unauthorized, "Nesprávný e-mail nebo heslo")
             }
             TokenResponse(newSession(u.first.first, u.first.second), userDto(u.first.first))
-        }
+        } }
         call.respond(res)
     }
     post("/auth/logout") {
@@ -287,7 +292,12 @@ private fun Route.orgRoutes(db: Db) {
             val n = update("UPDATE users SET name = ?, email = ?, role = ?, active = ? WHERE id = ? AND org_id = ?", u.name, u.email?.lowercase()?.ifBlank { null }, role, u.active, id, c.orgId)
             if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Uživatel nenalezen")
             update("UPDATE memberships SET role = ? WHERE user_id = ? AND org_id = ?", role, id, c.orgId)
-            u.password?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET password_hash = ? WHERE id = ?", Passwords.hash(it), id) }
+            u.password?.takeIf { it.isNotEmpty() }?.let {
+                update("UPDATE users SET password_hash = ? WHERE id = ?", Passwords.hash(it), id)
+                // A new password signs the user out everywhere else (a stolen session stops working), but not in this browser.
+                val own = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim().orEmpty()
+                update("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", id, Tokens.hash(own))
+            }
             u.pin?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET pin_hash = ? WHERE id = ?", Passwords.hash(it), id) }
             if (!u.active) update("DELETE FROM sessions WHERE user_id = ?", id)
         }
@@ -339,6 +349,9 @@ private fun validateStaff(u: UserWrite, role: Role, isNew: Boolean) {
 }
 
 private const val PAIRING_TTL = 24 * 3_600_000L
+
+/** A real hash of a random secret, used to spend the same time on an unknown e-mail as on a wrong password. */
+private val DUMMY_HASH: String = Passwords.hash(Tokens.new("x_"))
 
 // ---------- catalogue ----------
 
@@ -545,17 +558,17 @@ private fun Route.salesRoutes(db: Db) {
 
 // ---------- tills ----------
 
-private fun Route.deviceRoutes(db: Db) {
+private fun Route.deviceRoutes(db: Db, throttle: Throttle) {
     post("/device/pair") {
         val r = call.receive<PairRequest>()
         val token = Tokens.new("d_")
-        val res = db.tx {
+        val res = throttle.guard(listOf("ip:pair:" + call.clientIp() to Throttle.PER_ADDRESS)) { db.tx {
             val id = queryOne("SELECT id FROM devices WHERE pairing_code = ? AND pairing_expires_at > ? AND active", r.code.trim().uppercase(), System.currentTimeMillis()) { it.getLong(1) }
                 ?: throw ApiError(HttpStatusCode.NotFound, "Neplatný nebo prošlý párovací kód")
             update("UPDATE devices SET token_hash = ?, pairing_code = NULL, pairing_expires_at = NULL, paired_at = ?, app_version = ? WHERE id = ?",
                 Tokens.hash(token), System.currentTimeMillis(), r.appVersion, id)
             deviceConfig(id)
-        }
+        } }
         call.respond(PairResponse(token, res))
     }
     get("/device/config") {
@@ -603,7 +616,7 @@ private fun Route.deviceRoutes(db: Db) {
     post("/device/clock") {
         val d = call.device(db)
         val r = call.receive<ClockRequest>()
-        val res = db.tx {
+        val res = throttle.guard(listOf("pin:" + d.deviceId to Throttle.PIN_PER_DEVICE)) { db.tx {
             val staff = query("SELECT id, name, pin_hash FROM users WHERE org_id = ? AND active AND pin_hash IS NOT NULL", d.orgId) {
                 Triple(it.getLong(1), it.getString(2), it.getString(3))
             }.firstOrNull { Passwords.verify(r.pin, it.third) } ?: throw ApiError(HttpStatusCode.Unauthorized, "Neplatný PIN")
@@ -616,7 +629,7 @@ private fun Route.deviceRoutes(db: Db) {
                 insert("INSERT INTO attendance (org_id, branch_id, user_id, clock_in, device_id) VALUES (?,?,?,?,?)", d.orgId, d.branchId, staff.first, time, d.deviceId)
                 ClockResponse(staff.first, staff.second, "IN", time)
             }
-        }
+        } }
         call.respond(res)
     }
 }

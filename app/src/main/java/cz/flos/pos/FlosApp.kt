@@ -18,7 +18,7 @@ class FlosApp : Application() {
             .setDriver(AndroidSQLiteDriver())
             .addMigrations(*FlosDatabase.MIGRATIONS)
             .build()
-        container = FlosContainer(AndroidPlatform(this), database, PrefsStore(this))
+        container = FlosContainer(AndroidPlatform(this), database, cz.flos.pos.security.EncryptedStore(PrefsStore(this), AndroidSecretKey::getOrCreate))
         EetRetryWorker.schedulePeriodic(this)
     }
 }

@@ -41,7 +41,7 @@ fun main() {
         .addMigrations(*FlosDatabase.MIGRATIONS)
         .build()
     val platform = DesktopPlatform(dir)
-    val container = FlosContainer(platform, database, RegistryStore())
+    val container = FlosContainer(platform, database, cz.flos.pos.security.EncryptedStore(RegistryStore(), key = { DesktopSecretKey.getOrCreate(dir) }))
 
     // Resends sales that are still waiting for EET confirmation: shortly after a failure, and every 5 minutes.
     val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
