@@ -24,6 +24,10 @@ data class CategoryEntity(
     val icon: String? = null,
     /** Id in the back office when the category comes from there. */
     val remoteId: Long? = null,
+    /** When it was last changed on this till (epoch ms); the last change wins against the back office. */
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
+    /** Changed on this till and not yet sent to the back office. */
+    @ColumnInfo(defaultValue = "0") val dirty: Boolean = false,
 )
 
 @Entity(tableName = "products", indices = [Index("categoryId")])
@@ -48,6 +52,12 @@ data class ProductEntity(
     val remoteId: Long? = null,
     /** Open price: the till asks for the price every time the product is sold. */
     @ColumnInfo(defaultValue = "0") val openPrice: Boolean = false,
+    /** Photo from the back office ("<id>-<key>"), kept in the data folder; null = none. */
+    val image: String? = null,
+    /** When it was last changed on this till (epoch ms); the last change wins against the back office. */
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
+    /** Changed on this till and not yet sent to the back office. */
+    @ColumnInfo(defaultValue = "0") val dirty: Boolean = false,
 ) {
     val vatRate: VatRate get() = VatRate.fromPercent(vatPercent)
 }

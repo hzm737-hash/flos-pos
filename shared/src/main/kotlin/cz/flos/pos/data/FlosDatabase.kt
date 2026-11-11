@@ -13,7 +13,7 @@ import androidx.sqlite.execSQL
 @Database(
     entities = [CategoryEntity::class, ProductEntity::class, SaleEntity::class, SaleItemEntity::class, EetRecordEntity::class, CashMovementEntity::class, BankPaymentEntity::class, CustomerEntity::class,
         DocumentEntity::class, ReservationEntity::class, NoteEntity::class],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class FlosDatabase : RoomDatabase() {
@@ -171,6 +171,17 @@ abstract class FlosDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+        /** 11 → 12: the catalogue is shared with the back office both ways, with product photos. Only adds columns. */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE products ADD COLUMN image TEXT")
+                connection.execSQL("ALTER TABLE products ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE products ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE categories ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE categories ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
     }
 }

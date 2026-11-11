@@ -1,5 +1,6 @@
 package cz.flos.pos
 
+import androidx.compose.ui.graphics.asImageBitmap
 import android.Manifest
 import android.content.Context
 import android.os.Build
@@ -61,6 +62,17 @@ class AndroidPlatform(private val context: Context) : Platform {
         }
         return { name, bytes -> pending[0] = bytes; if (runCatching { launcher.launch(name) }.isFailure) { pending[0] = null; onDone(false) } }
     }
+
+    override fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = runCatching {
+        // Tiles are small: decode at most about 400 px wide to save memory.
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 400) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?.asImageBitmap()
+    }.getOrNull()
 
     override fun beep() {
         runCatching {

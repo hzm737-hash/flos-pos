@@ -63,6 +63,11 @@ fun BackOfficeSettings(vm: PosViewModel, s: AppSettings) {
             Button(onClick = { vm.syncNow() }) { Text(tr("Synchronizovat teď")) }
             OutlinedButton(onClick = { confirm = true }) { Text(tr("Odpojit")) }
         }
+        Text(
+            tr("Kategorie a produkty můžete upravovat v pokladně i v back office, platí vždy poslední změna. Produkty, které vznikly v pokladně ještě před spárováním, pošlete do back office jednou tímto tlačítkem."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = { vm.uploadLocalCatalog() }) { Text(tr("Nahrát produkty z pokladny do back office")) }
         if (confirm) AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text(tr("Odpojit od back office?")) },

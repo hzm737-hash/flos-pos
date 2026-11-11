@@ -78,6 +78,8 @@ data class AppSettings(
     val boDeviceName: String = "",
     /** Server time of the last catalogue download, so only changes are fetched next time. */
     val boCatalogSince: Long = 0,
+    /** Back office ids of categories deleted on this till, waiting to be sent ("12,15"). */
+    val boDeletedCategories: String = "",
     /** Staff with their PIN hashes from the back office, as JSON. */
     val boStaff: String = "",
     val boLastSync: Long = 0,
@@ -282,6 +284,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             boToken = str("boToken", d.boToken),
             boDeviceName = str("boDeviceName", d.boDeviceName),
             boCatalogSince = prefs.get("boCatalogSince")?.toLongOrNull() ?: d.boCatalogSince,
+            boDeletedCategories = str("boDeletedCategories", d.boDeletedCategories),
             boStaff = str("boStaff", d.boStaff),
             boLastSync = prefs.get("boLastSync")?.toLongOrNull() ?: d.boLastSync,
             loyaltyCrownsPerPoint = int("loyaltyCrownsPerPoint", d.loyaltyCrownsPerPoint),
@@ -390,6 +393,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "boToken" to s.boToken,
                 "boDeviceName" to s.boDeviceName,
                 "boCatalogSince" to s.boCatalogSince.toString(),
+                "boDeletedCategories" to s.boDeletedCategories,
                 "boStaff" to s.boStaff,
                 "boLastSync" to s.boLastSync.toString(),
                 "loyaltyCrownsPerPoint" to s.loyaltyCrownsPerPoint.toString(),

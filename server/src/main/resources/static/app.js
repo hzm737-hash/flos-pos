@@ -190,6 +190,20 @@ function eetBadge(s) {
 }
 
 // ---------- Products ----------
+const ICONS = ['coffee', 'cafe', 'tea', 'drink', 'beer', 'wine', 'cocktail', 'spirits', 'pizza', 'burger', 'fastfood', 'kebab', 'pasta', 'noodles', 'rice', 'soup',
+  'fish', 'tapas', 'breakfast', 'egg', 'salad', 'bakery', 'cake', 'cookie', 'icecream', 'meal', 'grocery', 'basket', 'flower', 'star'];
+const iconSelect = (v) => `<select name="icon"><option value="">–</option>${ICONS.map((i) => `<option value="${i}" ${i === v ? 'selected' : ''}>${i}</option>`).join('')}</select>`;
+const imgUrl = (ref) => (/^\d+-[0-9a-f]{32}$/.test(ref || '') ? '/img/' + ref : '');
+
+/** Makes a photo at most 800 px wide/high and sends it as JPEG; returns its reference. */
+async function uploadPhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 800 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const data = c.toDataURL('image/jpeg', 0.85);
+  return (await api('/images', { method: 'POST', body: { mime: 'image/jpeg', data } })).image;
+}
 pages.products = async (main) => {
   const [products, categories] = await Promise.all([api('/products'), api('/categories')]);
   const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
@@ -197,8 +211,8 @@ pages.products = async (main) => {
     <div class="toolbar"><button class="primary" id="new">Nový produkt</button><button id="newcat">Nová kategorie</button>
     <input id="filter" placeholder="Hledat…" style="max-width:240px"></div>
     <p class="muted">${t('Kategorie:')} ${categories.map((c) => `<a href="#" data-cat="${c.id}">${esc(c.name)}</a>`).join(', ') || '–'}</p>
-    <table id="tbl"><tr><th>Název</th><th>Kategorie</th><th>Kód / EAN</th><th class="num">Cena</th><th class="num">DPH</th><th>Sklad</th><th>Receptura</th></tr>
-    ${products.map((p) => `<tr class="clickable" data-id="${p.id}" data-name="${esc(p.name.toLowerCase())}"><td>${esc(p.name)}${p.sellable ? '' : ' <span class="badge">surovina</span>'}</td><td>${esc(catName[p.categoryId] || '')}</td>
+    <table id="tbl"><tr><th></th><th>Název</th><th>Kategorie</th><th>Kód / EAN</th><th class="num">Cena</th><th class="num">DPH</th><th>Sklad</th><th>Receptura</th></tr>
+    ${products.map((p) => `<tr class="clickable" data-id="${p.id}" data-name="${esc(p.name.toLowerCase())}"><td>${imgUrl(p.image) ? `<img class="thumb" alt="" src="${imgUrl(p.image)}">` : ''}</td><td>${esc(p.name)}${p.openPrice ? ' <span class="badge">cena při prodeji</span>' : ''}${p.options ? ' <span class="badge">varianty</span>' : ''}${p.sellable ? '' : ' <span class="badge">surovina</span>'}</td><td>${esc(catName[p.categoryId] || '')}</td>
       <td>${esc(p.sku)} ${esc(p.barcode)}</td><td class="num">${kc(p.price)}</td><td class="num">${p.vatPercent} %</td><td>${p.trackStock ? t('ano') + ' (' + esc(p.unit) + ')' : ''}</td><td>${p.recipe.length ? p.recipe.length + ' ' + t(p.recipe.length === 1 ? 'surovina' : p.recipe.length < 5 ? 'suroviny' : 'surovin') : ''}</td></tr>`).join('')}</table>
     <dialog id="dlg"></dialog>`;
   $('#filter').addEventListener('input', (e) => document.querySelectorAll('#tbl tr[data-name]').forEach((tr) => tr.classList.toggle('hidden', !tr.dataset.name.includes(e.target.value.toLowerCase()))));
@@ -210,7 +224,8 @@ pages.products = async (main) => {
 
 function productDialog(p, products, categories) {
   const d = $('#dlg'); const isNew = !p;
-  p = p || { name: '', price: 0, vatPercent: me.org.vatPayer ? 21 : 0, sku: '', barcode: '', unit: 'ks', costPrice: 0, trackStock: false, sellable: true, minStock: 0, recipe: [] };
+  p = p || { name: '', price: 0, vatPercent: me.org.vatPayer ? 21 : 0, sku: '', barcode: '', unit: 'ks', costPrice: 0, trackStock: false, sellable: true, minStock: 0, recipe: [], options: '', prices: '', openPrice: false, icon: '', image: '' };
+  let image = p.image || '';
   const ingredients = products.filter((x) => x.id !== p.id);
   const recipeRow = (r = { ingredientId: '', qty: '' }) => `<div class="recipe-line"><select name="ing">${ingredients.map((x) => `<option value="${x.id}" ${x.id == r.ingredientId ? 'selected' : ''}>${esc(x.name)} (${esc(x.unit)})</option>`).join('')}</select>
     <input name="ingqty" type="number" step="0.001" min="0" value="${r.qty}" placeholder="množství"><button type="button" class="danger" data-rm>✕</button></div>`;
@@ -222,6 +237,15 @@ function productDialog(p, products, categories) {
     <label>Jednotka<input name="unit" value="${esc(p.unit)}"></label></div>
     <div class="row"><label>Kód (PLU/SKU)<input name="sku" value="${esc(p.sku)}"></label><label>EAN<input name="barcode" value="${esc(p.barcode)}"></label></div>
     <div class="row"><label>Nákupní cena (Kč za jednotku)<input name="costPrice" value="${fromHaler(p.costPrice)}"></label><label>Minimální zásoba<input name="minStock" type="number" step="0.001" value="${p.minStock}"></label></div>
+    <h2>Na pokladně</h2>
+    <div class="row"><label>Fotka<span class="photo"><img id="ph" alt="" ${imgUrl(image) ? `src="${imgUrl(image)}"` : 'hidden'}>
+      <input type="file" id="phfile" accept="image/jpeg,image/png,image/webp"><button type="button" id="phdel" ${image ? '' : 'hidden'}>Odebrat fotku</button></span></label>
+    <label>Ikona (bez fotky)${iconSelect(p.icon)}</label></div>
+    <label>Varianty a přídavky<textarea name="options" rows="3" placeholder="Velikost: Malá, Velká +40&#10;Přísady*: Sýr +15, Šunka +25">${esc(p.options)}</textarea></label>
+    <p class="muted">Každý řádek jedna skupina. Hvězdička za názvem = lze vybrat více (přídavky), jinak se vybírá jedna varianta. Cena za volbou se přičte.</p>
+    <label>Ceny v jiných cenících<textarea name="prices" rows="2" placeholder="Rozvoz: 89&#10;Happy hour: 49">${esc(p.prices)}</textarea></label>
+    <label class="check"><input type="checkbox" name="openPrice" ${p.openPrice ? 'checked' : ''}> Cena se zadává při prodeji</label>
+    <h2>Sklad</h2>
     <label class="check"><input type="checkbox" name="trackStock" ${p.trackStock ? 'checked' : ''}> Sledovat skladovou zásobu</label>
     <label class="check"><input type="checkbox" name="sellable" ${p.sellable ? 'checked' : ''}> Prodává se na pokladně (jinak jen surovina)</label>
     <h2>Receptura</h2><p class="muted">Při prodeji se ze skladu odečtou suroviny místo samotného produktu.</p>
@@ -231,6 +255,12 @@ function productDialog(p, products, categories) {
   const bindRm = () => d.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => b.parentElement.remove()));
   $('#addrow', d).onclick = () => { $('#recipe', d).insertAdjacentHTML('beforeend', recipeRow()); bindRm(); };
   bindRm();
+  $('#phfile', d).onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { image = await uploadPhoto(f); $('#ph', d).src = imgUrl(image); $('#ph', d).hidden = false; $('#phdel', d).hidden = false; }
+    catch (err) { toast(err.message); }
+  };
+  $('#phdel', d).onclick = () => { image = ''; $('#ph', d).hidden = true; $('#phdel', d).hidden = true; $('#phfile', d).value = ''; };
   $('#cancel', d).onclick = () => d.close();
   if (!isNew) $('#del', d).onclick = async () => { if (confirm(t('Smazat produkt?'))) { await api('/products/' + p.id, { method: 'DELETE' }); d.close(); route(); } };
   form.onsubmit = async (e) => {
@@ -241,6 +271,7 @@ function productDialog(p, products, categories) {
       unit: f.get('unit') || 'ks', sku: f.get('sku'), barcode: f.get('barcode'), costPrice: toHaler(f.get('costPrice')), minStock: +f.get('minStock') || 0,
       trackStock: f.get('trackStock') === 'on', sellable: f.get('sellable') === 'on', sortOrder: p.sortOrder || 0, active: true,
       recipe: ings.map((id, i) => ({ ingredientId: +id, qty: +qtys[i] })).filter((r) => r.qty > 0),
+      options: f.get('options').trim(), prices: f.get('prices').trim(), openPrice: f.get('openPrice') === 'on', icon: f.get('icon') || '', image,
     };
     try { await api(isNew ? '/products' : '/products/' + p.id, { method: isNew ? 'POST' : 'PUT', body }); d.close(); toast('Uloženo'); route(); }
     catch (err) { toast(err.message); }
@@ -249,16 +280,16 @@ function productDialog(p, products, categories) {
 }
 
 function categoryDialog(c) {
-  const d = $('#dlg'); const isNew = !c; c = c || { name: '', color: 0xFF2E7D6B, sortOrder: 0 };
+  const d = $('#dlg'); const isNew = !c; c = c || { name: '', color: 0xFF2E7D6B, sortOrder: 0, icon: '' };
   const hex = '#' + (Number(c.color) & 0xFFFFFF).toString(16).padStart(6, '0');
   d.innerHTML = `<form><h2>${isNew ? 'Nová kategorie' : 'Kategorie'}</h2><label>Název<input name="name" required value="${esc(c.name)}"></label>
-    <label>Barva dlaždic<input name="color" type="color" value="${hex}"></label><label>Pořadí<input name="sortOrder" type="number" value="${c.sortOrder}"></label>
+    <label>Barva dlaždic<input name="color" type="color" value="${hex}"></label><label>Pořadí<input name="sortOrder" type="number" value="${c.sortOrder}"></label><label>Ikona${iconSelect(c.icon)}</label>
     <div class="actions">${isNew ? '' : '<button type="button" class="danger" id="del">Smazat</button>'}<button type="button" id="cancel">Zrušit</button><button class="primary">Uložit</button></div></form>`;
   $('#cancel', d).onclick = () => d.close();
   if (!isNew) $('#del', d).onclick = async () => { await api('/categories/' + c.id, { method: 'DELETE' }); d.close(); route(); };
   $('form', d).onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    const body = { name: f.get('name'), color: 0xFF000000 + parseInt(f.get('color').slice(1), 16), sortOrder: +f.get('sortOrder') || 0 };
+    const body = { name: f.get('name'), color: 0xFF000000 + parseInt(f.get('color').slice(1), 16), sortOrder: +f.get('sortOrder') || 0, icon: f.get('icon') || '' };
     try { await api(isNew ? '/categories' : '/categories/' + c.id, { method: isNew ? 'POST' : 'PUT', body }); d.close(); route(); } catch (err) { toast(err.message); }
   };
   d.showModal();

@@ -56,6 +56,9 @@ interface Platform {
 
     /** A short sound when something new arrives (an order from a table); silent where not supported. */
     fun beep() {}
+
+    /** A product photo (JPEG, PNG or WebP) as an image for the screen; null where it cannot be read. */
+    fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = null
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("No platform") }

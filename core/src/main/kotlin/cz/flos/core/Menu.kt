@@ -10,6 +10,8 @@ import kotlinx.serialization.Serializable
     val id: Long = 0,
     /** Variants and extras in the [ProductOptions] text form, offered when ordering. */
     val options: String = "",
+    /** Photo in the back office as "<id>-<key>" (shown from /img/...); "" = none. */
+    val image: String = "",
 )
 @Serializable data class MenuCategory(val name: String, val items: List<MenuItem>)
 @Serializable data class MenuData(
@@ -26,6 +28,8 @@ import kotlinx.serialization.Serializable
 
 /** The digital menu as one mobile-friendly HTML page (no scripts), for the QR code on the tables. */
 object MenuPage {
+    /** A photo reference from the back office; anything else is never put into the page. */
+    private val IMAGE_REF = Regex("""^\d{1,18}-[0-9a-f]{32}$""")
     private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
 
     /**
@@ -43,7 +47,7 @@ object MenuPage {
         append(".meta{color:var(--muted);font-size:14px;white-space:pre-line}nav{display:flex;gap:8px;overflow-x:auto;padding:16px 0;position:sticky;top:0;background:var(--bg)}")
         append("nav a{flex:none;padding:6px 12px;border:1px solid var(--line);border-radius:999px;color:var(--fg);text-decoration:none;font-size:14px}")
         append("h2{margin:28px 0 8px;font-size:20px}.item{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}")
-        append(".item .n{flex:1}.item .p{font-weight:600;white-space:nowrap}.note{display:block;color:var(--muted);font-size:14px}footer{margin-top:32px;color:var(--muted);font-size:13px}")
+        append(".item .n{flex:1}.item .p{font-weight:600;white-space:nowrap}.note{display:block;color:var(--muted);font-size:14px}.ph{flex:none;width:64px;height:64px;border-radius:10px;object-fit:cover}footer{margin-top:32px;color:var(--muted);font-size:13px}")
         if (ordering) append(ORDER_CSS)
         append("</style></head><body><main><h1>").append(esc(m.name)).append("</h1>")
         if (ordering) append("<div class=\"table\" id=\"table-banner\">").append(esc("Stůl " + table)).append("</div>")
@@ -58,7 +62,9 @@ object MenuPage {
         cats.forEachIndexed { i, c ->
             append("<h2 id=\"c$i\">").append(esc(c.name)).append("</h2>")
             c.items.forEach { it ->
-                append("<div class=\"item\"><span class=\"n\">").append(esc(it.name))
+                append("<div class=\"item\">")
+                if (IMAGE_REF.matches(it.image)) append("<img class=\"ph\" alt=\"\" loading=\"lazy\" src=\"/img/").append(it.image).append("\">")
+                append("<span class=\"n\">").append(esc(it.name))
                 if (it.note.isNotBlank()) append("<span class=\"note\">").append(esc(it.note)).append("</span>")
                 append("</span><span class=\"p\">").append(esc(Money.format(it.price))).append("</span>")
                 if (ordering && it.id > 0) append("<button class=\"add\" type=\"button\" data-id=\"").append(it.id).append("\" aria-label=\"+\">+</button>")
