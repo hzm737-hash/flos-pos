@@ -888,6 +888,8 @@ internal object En {
         "Objednávku ze stolu %s už vyřídila jiná pokladna." to "The order from table %s was already handled by another till.",
         "Objednávky z QR kódu na stole" to "Orders from the table QR code",
         "Nastavení z back office" to "Settings from the back office",
+        "Přehled pokladny v back office" to "Till overview in the back office",
+        "Back office ukazuje, co se na pokladně děje: otevřené stoly a objednávky, hotovost ve směně, zákazníky, rezervace, doklady a záznam. Posílá se každou minutu, v back office se jen čte." to "The back office shows what is going on at the till: open tables and orders, cash in the shift, customers, reservations, documents and the log. It is sent every minute and can only be read in the back office.",
         "Nastavení této pokladny uvidíte a změníte i v back office (Nastavení pokladen). Po zapnutí pokladna převezme nastavení firmy, pokud už v back office jsou, jinak tam pošle svoje. Hesla a tokeny zůstávají jen v pokladně. Platí poslední změna." to "You can see and change this till's settings in the back office too (Till settings). When switched on, the till takes the company's settings if the back office already has them, otherwise it sends its own there. Passwords and tokens stay on the till only. The latest change wins.",
         "Odkaz na menu pro váš web (bez objednávání):" to "Menu link for your website (without ordering):",
         "Odkazy stolů se nepodařilo načíst: %s" to "Could not load the table links: %s",

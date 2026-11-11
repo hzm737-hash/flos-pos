@@ -64,6 +64,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             deviceCatalogRoutes(db)
             deviceSettingsRoutes(db)
             tillSettingsRoutes(db)
+            deviceSnapshotRoutes(db)
+            tillLiveRoutes(db)
         }
     }
 }

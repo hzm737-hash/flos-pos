@@ -131,6 +131,21 @@ class BackOfficeSync(
         return cats.size + prods.size + deleted.size
     }
 
+    private var lastSnapshot: String? = null
+    private var lastSnapshotAt = 0L
+
+    /** Sends what is going on at this till; skipped when nothing changed in the last ten minutes. Returns true when sent. */
+    suspend fun uploadSnapshot(s: cz.flos.core.backoffice.BoTillSnapshot): Boolean = lock.withLock {
+        val c = client()
+        // The same picture apart from the time it was taken is not sent again for a while.
+        val key = s.copy(takenAt = 0).toString()
+        if (key == lastSnapshot && System.currentTimeMillis() - lastSnapshotAt < 10 * 60_000) return@withLock false
+        withContext(Dispatchers.IO) { c.uploadSnapshot(s) }
+        lastSnapshot = key
+        lastSnapshotAt = System.currentTimeMillis()
+        true
+    }
+
     /** Downloads photos the till does not have yet. */
     private suspend fun fetchImages(c: BackOfficeClient) {
         val dir = imageDir ?: return
