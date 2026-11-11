@@ -190,6 +190,20 @@ function eetBadge(s) {
 }
 
 // ---------- Products ----------
+const ICONS = ['coffee', 'cafe', 'tea', 'drink', 'beer', 'wine', 'cocktail', 'spirits', 'pizza', 'burger', 'fastfood', 'kebab', 'pasta', 'noodles', 'rice', 'soup',
+  'fish', 'tapas', 'breakfast', 'egg', 'salad', 'bakery', 'cake', 'cookie', 'icecream', 'meal', 'grocery', 'basket', 'flower', 'star'];
+const iconSelect = (v) => `<select name="icon"><option value="">–</option>${ICONS.map((i) => `<option value="${i}" ${i === v ? 'selected' : ''}>${i}</option>`).join('')}</select>`;
+const imgUrl = (ref) => (/^\d+-[0-9a-f]{32}$/.test(ref || '') ? '/img/' + ref : '');
+
+/** Makes a photo at most 800 px wide/high and sends it as JPEG; returns its reference. */
+async function uploadPhoto(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 800 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const data = c.toDataURL('image/jpeg', 0.85);
+  return (await api('/images', { method: 'POST', body: { mime: 'image/jpeg', data } })).image;
+}
 pages.products = async (main) => {
   const [products, categories] = await Promise.all([api('/products'), api('/categories')]);
   const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
@@ -197,8 +211,8 @@ pages.products = async (main) => {
     <div class="toolbar"><button class="primary" id="new">Nový produkt</button><button id="newcat">Nová kategorie</button>
     <input id="filter" placeholder="Hledat…" style="max-width:240px"></div>
     <p class="muted">${t('Kategorie:')} ${categories.map((c) => `<a href="#" data-cat="${c.id}">${esc(c.name)}</a>`).join(', ') || '–'}</p>
-    <table id="tbl"><tr><th>Název</th><th>Kategorie</th><th>Kód / EAN</th><th class="num">Cena</th><th class="num">DPH</th><th>Sklad</th><th>Receptura</th></tr>
-    ${products.map((p) => `<tr class="clickable" data-id="${p.id}" data-name="${esc(p.name.toLowerCase())}"><td>${esc(p.name)}${p.sellable ? '' : ' <span class="badge">surovina</span>'}</td><td>${esc(catName[p.categoryId] || '')}</td>
+    <table id="tbl"><tr><th></th><th>Název</th><th>Kategorie</th><th>Kód / EAN</th><th class="num">Cena</th><th class="num">DPH</th><th>Sklad</th><th>Receptura</th></tr>
+    ${products.map((p) => `<tr class="clickable" data-id="${p.id}" data-name="${esc(p.name.toLowerCase())}"><td>${imgUrl(p.image) ? `<img class="thumb" alt="" src="${imgUrl(p.image)}">` : ''}</td><td>${esc(p.name)}${p.openPrice ? ' <span class="badge">cena při prodeji</span>' : ''}${p.options ? ' <span class="badge">varianty</span>' : ''}${p.sellable ? '' : ' <span class="badge">surovina</span>'}</td><td>${esc(catName[p.categoryId] || '')}</td>
       <td>${esc(p.sku)} ${esc(p.barcode)}</td><td class="num">${kc(p.price)}</td><td class="num">${p.vatPercent} %</td><td>${p.trackStock ? t('ano') + ' (' + esc(p.unit) + ')' : ''}</td><td>${p.recipe.length ? p.recipe.length + ' ' + t(p.recipe.length === 1 ? 'surovina' : p.recipe.length < 5 ? 'suroviny' : 'surovin') : ''}</td></tr>`).join('')}</table>
     <dialog id="dlg"></dialog>`;
   $('#filter').addEventListener('input', (e) => document.querySelectorAll('#tbl tr[data-name]').forEach((tr) => tr.classList.toggle('hidden', !tr.dataset.name.includes(e.target.value.toLowerCase()))));
@@ -210,7 +224,8 @@ pages.products = async (main) => {
 
 function productDialog(p, products, categories) {
   const d = $('#dlg'); const isNew = !p;
-  p = p || { name: '', price: 0, vatPercent: me.org.vatPayer ? 21 : 0, sku: '', barcode: '', unit: 'ks', costPrice: 0, trackStock: false, sellable: true, minStock: 0, recipe: [] };
+  p = p || { name: '', price: 0, vatPercent: me.org.vatPayer ? 21 : 0, sku: '', barcode: '', unit: 'ks', costPrice: 0, trackStock: false, sellable: true, minStock: 0, recipe: [], options: '', prices: '', openPrice: false, icon: '', image: '' };
+  let image = p.image || '';
   const ingredients = products.filter((x) => x.id !== p.id);
   const recipeRow = (r = { ingredientId: '', qty: '' }) => `<div class="recipe-line"><select name="ing">${ingredients.map((x) => `<option value="${x.id}" ${x.id == r.ingredientId ? 'selected' : ''}>${esc(x.name)} (${esc(x.unit)})</option>`).join('')}</select>
     <input name="ingqty" type="number" step="0.001" min="0" value="${r.qty}" placeholder="množství"><button type="button" class="danger" data-rm>✕</button></div>`;
@@ -222,6 +237,15 @@ function productDialog(p, products, categories) {
     <label>Jednotka<input name="unit" value="${esc(p.unit)}"></label></div>
     <div class="row"><label>Kód (PLU/SKU)<input name="sku" value="${esc(p.sku)}"></label><label>EAN<input name="barcode" value="${esc(p.barcode)}"></label></div>
     <div class="row"><label>Nákupní cena (Kč za jednotku)<input name="costPrice" value="${fromHaler(p.costPrice)}"></label><label>Minimální zásoba<input name="minStock" type="number" step="0.001" value="${p.minStock}"></label></div>
+    <h2>Na pokladně</h2>
+    <div class="row"><label>Fotka<span class="photo"><img id="ph" alt="" ${imgUrl(image) ? `src="${imgUrl(image)}"` : 'hidden'}>
+      <input type="file" id="phfile" accept="image/jpeg,image/png,image/webp"><button type="button" id="phdel" ${image ? '' : 'hidden'}>Odebrat fotku</button></span></label>
+    <label>Ikona (bez fotky)${iconSelect(p.icon)}</label></div>
+    <label>Varianty a přídavky<textarea name="options" rows="3" placeholder="Velikost: Malá, Velká +40&#10;Přísady*: Sýr +15, Šunka +25">${esc(p.options)}</textarea></label>
+    <p class="muted">Každý řádek jedna skupina. Hvězdička za názvem = lze vybrat více (přídavky), jinak se vybírá jedna varianta. Cena za volbou se přičte.</p>
+    <label>Ceny v jiných cenících<textarea name="prices" rows="2" placeholder="Rozvoz: 89&#10;Happy hour: 49">${esc(p.prices)}</textarea></label>
+    <label class="check"><input type="checkbox" name="openPrice" ${p.openPrice ? 'checked' : ''}> Cena se zadává při prodeji</label>
+    <h2>Sklad</h2>
     <label class="check"><input type="checkbox" name="trackStock" ${p.trackStock ? 'checked' : ''}> Sledovat skladovou zásobu</label>
     <label class="check"><input type="checkbox" name="sellable" ${p.sellable ? 'checked' : ''}> Prodává se na pokladně (jinak jen surovina)</label>
     <h2>Receptura</h2><p class="muted">Při prodeji se ze skladu odečtou suroviny místo samotného produktu.</p>
@@ -231,6 +255,12 @@ function productDialog(p, products, categories) {
   const bindRm = () => d.querySelectorAll('[data-rm]').forEach((b) => (b.onclick = () => b.parentElement.remove()));
   $('#addrow', d).onclick = () => { $('#recipe', d).insertAdjacentHTML('beforeend', recipeRow()); bindRm(); };
   bindRm();
+  $('#phfile', d).onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try { image = await uploadPhoto(f); $('#ph', d).src = imgUrl(image); $('#ph', d).hidden = false; $('#phdel', d).hidden = false; }
+    catch (err) { toast(err.message); }
+  };
+  $('#phdel', d).onclick = () => { image = ''; $('#ph', d).hidden = true; $('#phdel', d).hidden = true; $('#phfile', d).value = ''; };
   $('#cancel', d).onclick = () => d.close();
   if (!isNew) $('#del', d).onclick = async () => { if (confirm(t('Smazat produkt?'))) { await api('/products/' + p.id, { method: 'DELETE' }); d.close(); route(); } };
   form.onsubmit = async (e) => {
@@ -241,6 +271,7 @@ function productDialog(p, products, categories) {
       unit: f.get('unit') || 'ks', sku: f.get('sku'), barcode: f.get('barcode'), costPrice: toHaler(f.get('costPrice')), minStock: +f.get('minStock') || 0,
       trackStock: f.get('trackStock') === 'on', sellable: f.get('sellable') === 'on', sortOrder: p.sortOrder || 0, active: true,
       recipe: ings.map((id, i) => ({ ingredientId: +id, qty: +qtys[i] })).filter((r) => r.qty > 0),
+      options: f.get('options').trim(), prices: f.get('prices').trim(), openPrice: f.get('openPrice') === 'on', icon: f.get('icon') || '', image,
     };
     try { await api(isNew ? '/products' : '/products/' + p.id, { method: isNew ? 'POST' : 'PUT', body }); d.close(); toast('Uloženo'); route(); }
     catch (err) { toast(err.message); }
@@ -249,16 +280,16 @@ function productDialog(p, products, categories) {
 }
 
 function categoryDialog(c) {
-  const d = $('#dlg'); const isNew = !c; c = c || { name: '', color: 0xFF2E7D6B, sortOrder: 0 };
+  const d = $('#dlg'); const isNew = !c; c = c || { name: '', color: 0xFF2E7D6B, sortOrder: 0, icon: '' };
   const hex = '#' + (Number(c.color) & 0xFFFFFF).toString(16).padStart(6, '0');
   d.innerHTML = `<form><h2>${isNew ? 'Nová kategorie' : 'Kategorie'}</h2><label>Název<input name="name" required value="${esc(c.name)}"></label>
-    <label>Barva dlaždic<input name="color" type="color" value="${hex}"></label><label>Pořadí<input name="sortOrder" type="number" value="${c.sortOrder}"></label>
+    <label>Barva dlaždic<input name="color" type="color" value="${hex}"></label><label>Pořadí<input name="sortOrder" type="number" value="${c.sortOrder}"></label><label>Ikona${iconSelect(c.icon)}</label>
     <div class="actions">${isNew ? '' : '<button type="button" class="danger" id="del">Smazat</button>'}<button type="button" id="cancel">Zrušit</button><button class="primary">Uložit</button></div></form>`;
   $('#cancel', d).onclick = () => d.close();
   if (!isNew) $('#del', d).onclick = async () => { await api('/categories/' + c.id, { method: 'DELETE' }); d.close(); route(); };
   $('form', d).onsubmit = async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    const body = { name: f.get('name'), color: 0xFF000000 + parseInt(f.get('color').slice(1), 16), sortOrder: +f.get('sortOrder') || 0 };
+    const body = { name: f.get('name'), color: 0xFF000000 + parseInt(f.get('color').slice(1), 16), sortOrder: +f.get('sortOrder') || 0, icon: f.get('icon') || '' };
     try { await api(isNew ? '/categories' : '/categories/' + c.id, { method: isNew ? 'POST' : 'PUT', body }); d.close(); route(); } catch (err) { toast(err.message); }
   };
   d.showModal();
@@ -324,13 +355,18 @@ pages.branches = async (main) => {
     <h2>Pokladny</h2><table><tr><th>Název</th><th>Provozovna</th><th>Označení EET</th><th>Stav</th><th>Naposledy online</th><th></th></tr>
     ${devices.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc((bl.find((b) => b.id === d.branchId) || {}).name)}</td><td>${esc(d.eetIdPokl)}</td>
       <td>${d.pairingCode ? `Párovací kód <span class="code">${esc(d.pairingCode)}</span>` : d.pairedAt ? '<span class="badge ok">spárováno</span>' : '<span class="badge">nespárováno</span>'}</td>
-      <td>${dt(d.lastSeenAt)}</td><td><button data-pair="${d.id}">Nový kód</button></td></tr>`).join('')}</table>
+      <td>${dt(d.lastSeenAt)}</td><td><button data-pair="${d.id}">Nový kód</button> <button class="danger" data-del-dev="${d.id}">Smazat</button></td></tr>`).join('')}</table>
     <p class="muted">Na pokladně otevřete Nastavení → Back office a zadejte adresu serveru a párovací kód (platí 24 hodin).</p><dialog id="dlg"></dialog>`;
   $('#nb').onclick = () => branchDialog(null);
   document.querySelectorAll('[data-b]').forEach((tr) => tr.addEventListener('click', () => branchDialog(bl.find((b) => b.id == tr.dataset.b))));
   $('#nd').onclick = () => deviceDialog(bl);
   document.querySelectorAll('[data-pair]').forEach((btn) => btn.addEventListener('click', async () => {
     const r = await api(`/devices/${btn.dataset.pair}/pair`, { method: 'POST' }); toast('Nový párovací kód: ' + r.pairingCode); route();
+  }));
+  document.querySelectorAll('[data-del-dev]').forEach((btn) => btn.addEventListener('click', async () => {
+    const dev = devices.find((x) => String(x.id) === btn.dataset.delDev);
+    if (!confirm(t('Smazat pokladnu?') + '\n' + dev.name + '\n\n' + t('Pokladna se odpojí a zmizí z back office. Účtenky z ní zůstanou v přehledech a exportech.'))) return;
+    try { await api('/devices/' + dev.id, { method: 'DELETE' }); toast(t('Pokladna smazána')); route(); } catch (e) { toast(t(e.message)); }
   }));
 };
 function branchDialog(b) {
@@ -468,6 +504,257 @@ pages.company = async (main) => {
     try { await api('/org', { method: 'PUT', body: { name: f.get('name'), ico: f.get('ico'), dic: f.get('dic'), address: f.get('address'), vatPayer: f.get('vatPayer') === 'on' } }); toast('Uloženo'); me = await api('/me'); loadCompanies(); }
     catch (err) { toast(err.message); }
   };
+};
+
+// ---------- Till settings (the tills with "Nastavení z back office" switched on) ----------
+const FEATURES = {
+  QTY_BEFORE: 'Množství před produktem', ADDONS: 'Přídavky pro kategorie', NOTES: 'Poznámky pro kuchyň', OPEN_PRICE: 'Cena při prodeji a ruční položka',
+  SERVICE_CHARGE: 'Servisní poplatek', STORNO_REASON: 'Důvod storna a záznam', EUR_CASH: 'Hotovost v eurech', BIRTHDAYS: 'Narozeniny zákazníků',
+  WAITER_TABLES: 'Stoly podle obsluhy', TABLE_PLAN: 'Plán stolů a přesun účtu', QR_ORDERING: 'Objednávky z QR kódu na stole',
+};
+// [key, label, type]: t = text, a = more lines, b = yes/no, i = number, or a list of choices [value, label].
+const TILL_SETTINGS = [
+  ['Firma a účtenka', [
+    ['businessName', 'Název na účtence', 't'], ['ico', 'IČO', 't'], ['dic', 'DIČ', 't'], ['vatPayer', 'Plátce DPH', 'b'],
+    ['phone', 'Telefon', 't'], ['email', 'E-mail', 't'], ['web', 'Web', 't'], ['registry', 'Zápis v rejstříku', 't'],
+    ['openingHours', 'Otevírací doba', 'a'], ['footer', 'Patička účtenky', 't'], ['receiptExtraFooter', 'Další text pod účtenkou', 'a'],
+    ['receiptShowCashier', 'Tisknout jméno obsluhy', 'b'], ['receiptItemVat', 'DPH u každé položky', 'b'], ['receiptBigTotal', 'Velký součet', 'b'],
+    ['documentTerms', 'Podmínky na nabídkách a zálohových fakturách', 'a'], ['quoteValidDays', 'Platnost nabídky (dny)', 'i'],
+    ['bankAccount', 'Bankovní účet pro QR platbu', 't']]],
+  ['Provozovna', [['address1', 'Adresa – 1. řádek', 't'], ['address2', 'Adresa – 2. řádek', 't']]],
+  ['Tiskárna a obrazovka', [
+    ['printerType', 'Druh tiskárny', [['BLUETOOTH', 'Bluetooth / COM port'], ['NETWORK', 'Wi-Fi / síťová'], ['SYSTEM', 'Tiskárna ve Windows']]],
+    ['printerHost', 'IP adresa síťové tiskárny', 't'], ['printerPort', 'Port síťové tiskárny', 'i'],
+    ['printerAddress', 'Adresa Bluetooth / COM tiskárny', 't'], ['printerName', 'Název tiskárny', 't'],
+    ['paperWidth', 'Šířka papíru', [['MM58', '58 mm'], ['MM80', '80 mm']]],
+    ['charset', 'Znaková sada', [['ASCII', 'Bez diakritiky'], ['CP852', 'CP852 (Latin 2)'], ['CP1250', 'Windows-1250']]],
+    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'],
+    ['customerDisplay', 'Zákaznický displej', 'b'], ['language', 'Jazyk pokladny', [['cs', 'Čeština'], ['en', 'English']]]]],
+  ['EET', [
+    ['eetEnabled', 'Evidovat tržby (EET)', 'b'], ['eetEnvironment', 'Prostředí', [['PLAYGROUND', 'Playground (test)'], ['PRODUCTION', 'Produkce']]],
+    ['eetVerification', 'Ověřovací režim', 'b'], ['eetEic', 'EIČ (prázdné = DIČ)', 't'], ['eetTimeoutMs', 'Čekat na odpověď (ms)', 'i'],
+    ['eetIdJednotky', 'Označení evidenční jednotky', 't'], ['eetIdPokl', 'Označení pokladny', 't']]],
+  ['Platby a banka', [
+    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API']]],
+    ['imapHost', 'Server e-mailu (IMAP)', 't'], ['imapPort', 'Port IMAP', 'i'], ['imapUser', 'Uživatel e-mailu', 't'], ['imapFolder', 'Složka', 't'],
+    ['transferDueDays', 'Převod po splatnosti po (dnech)', 'i'], ['tipsOwner', 'Spropitné patří', [['STAFF', 'Zaměstnancům'], ['BUSINESS', 'Provozovně']]],
+    ['eurAccount', 'Účet pro platby v EUR', 't'], ['eurRateManual', 'Vlastní kurz EUR pro převody', 't'], ['eurCashRate', 'Vlastní kurz EUR pro hotovost', 't'],
+    ['hiddenPayments', 'Skryté způsoby platby (oddělené čárkou)', 't']]],
+  ['Ceny a slevy', [
+    ['serviceTypes', 'Druhy prodeje', 'a'], ['discountRules', 'Automatické slevy', 'a'], ['maxCashierDiscount', 'Nejvyšší sleva pokladní (%)', 'i'],
+    ['serviceChargePercent', 'Servisní poplatek (%)', 'i'], ['serviceChargeVat', 'DPH servisního poplatku (%)', 'i'],
+    ['loyaltyCrownsPerPoint', 'Kč za 1 věrnostní bod (0 = vypnuto)', 'i'],
+    ['scaleWeightPrefixes', 'Váhové etikety – předpony s hmotností', 't'], ['scalePricePrefixes', 'Váhové etikety – předpony s cenou', 't'],
+    ['scalePluDigits', 'Počet číslic PLU', 'i']]],
+  ['Stoly a obsluha', [
+    ['tables', 'Stoly (oddělené čárkou)', 'a'], ['tablePlan', 'Plán stolů', 'a'], ['waiters', 'Obsluha (oddělená čárkou)', 't'],
+    ['waitersAway', 'Obsluha mimo směnu', 'a'], ['waiterTables', 'Stoly podle obsluhy', 'a'], ['staffRoles', 'Role obsluhy', 'a'],
+    ['permissions', 'Co role nesmějí', 'a'], ['qrOrderApprove', 'Objednávky ze stolu musí potvrdit obsluha', 'b'],
+    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b']]],
+  ['Kuchyň', [['addons', 'Přídavky pro kategorie', 'a'], ['quickNotes', 'Rychlé poznámky', 'a']]],
+  ['Zprávy a menu', [
+    ['msgReservation', 'Zpráva k rezervaci', 'a'], ['msgReminder', 'Připomínka rezervace', 'a'], ['msgOrderReady', 'Objednávka je hotová', 'a'],
+    ['msgDocument', 'Zpráva k dokladu', 'a'], ['menuUrl', 'Adresa menu', 't'], ['menuNote', 'Poznámka pod menu', 'a']]],
+  ['Pokročilé funkce', [['advanced', 'Zapnuté funkce', 'f']]],
+];
+const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky' };
+
+function settingField(key, label, type, value) {
+  const has = value !== undefined; const v = has ? value : '';
+  const hint = has ? '' : ' placeholder="– zatím nepřišlo z pokladny"';
+  if (type === 'b') return `<label class="check"><input type="checkbox" data-k="${key}" ${v === 'true' ? 'checked' : ''}> ${esc(label)}</label>`;
+  if (type === 'a') return `<label>${esc(label)}<textarea data-k="${key}" rows="3"${hint}>${esc(v)}</textarea></label>`;
+  if (type === 'i') return `<label>${esc(label)}<input type="number" data-k="${key}" value="${esc(v)}"${hint}></label>`;
+  if (type === 'f') {
+    const on = new Set(v.split(',').map((x) => x.trim()).filter(Boolean));
+    return `<div data-k="${key}" data-features="1">${Object.entries(FEATURES).map(([f, l]) =>
+      `<label class="check"><input type="checkbox" value="${f}" ${on.has(f) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
+  }
+  if (Array.isArray(type)) return `<label>${esc(label)}<select data-k="${key}">${has ? '' : '<option value="">–</option>'}${type.map(([o, l]) =>
+    `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  return `<label>${esc(label)}<input data-k="${key}" value="${esc(v)}"${hint}></label>`;
+}
+function fieldValue(el, before) {
+  if (el.dataset.features) {
+    const own = (before || '').split(',').map((x) => x.trim()).filter((x) => x && !(x in FEATURES)); // e.g. switches only a till knows
+    return [...own, ...[...el.querySelectorAll('input:checked')].map((i) => i.value)].join(',');
+  }
+  return el.type === 'checkbox' ? String(el.checked) : el.value;
+}
+
+pages.tills = async (main) => {
+  const view = await api('/till-settings');
+  const deviceKeys = new Set(view.deviceKeys);
+  const scopes = [{ id: '', name: 'Celá firma (všechny pokladny)' }, ...view.devices];
+  let scope = '';
+  const render = () => {
+    const dev = view.devices.find((d) => String(d.id) === scope);
+    const values = Object.fromEntries(Object.entries(dev ? dev.values : view.company).map(([k, x]) => [k, x.value]));
+    const groups = TILL_SETTINGS.map(([title, fields]) => [title, fields.filter(([k]) => deviceKeys.has(k) === !!dev)]).filter(([, f]) => f.length);
+    $('#ts').innerHTML = `${dev ? `<p class="muted">Naposledy online: ${dt(dev.lastSeenAt)}</p>
+      <div class="card"><h2>Hesla a tokeny</h2><p class="muted">Zůstávají jen v pokladně, tady vidíte jen, jestli jsou nastavené.</p>
+      ${Object.entries(SECRETS).map(([k, l]) => `<div>${esc(l)}: ${dev.secrets.includes(k) ? '<span class="badge ok">nastaveno</span>' : '<span class="badge">nenastaveno</span>'}</div>`).join('')}</div>` : ''}
+      ${groups.map(([title, fields]) => `<div class="card settings-group"><h2>${esc(title)}</h2>${fields.map(([k, l, t]) => settingField(k, l, t, values[k])).join('')}</div>`).join('')}
+      <div class="actions"><button class="primary" id="save-ts">Uložit</button></div>`;
+    $('#save-ts').onclick = async () => {
+      const changed = {};
+      document.querySelectorAll('#ts [data-k]').forEach((el) => {
+        const k = el.dataset.k; const v = fieldValue(el, values[k]);
+        if (values[k] === undefined ? (v !== '' && v !== 'false') : v !== values[k]) changed[k] = v;
+      });
+      if (!Object.keys(changed).length) return toast('Nic se nezměnilo');
+      try {
+        await api('/till-settings', { method: 'PUT', body: { deviceId: dev ? dev.id : null, values: changed } });
+        toast('Uloženo. Pokladny si změny stáhnou do minuty.'); route();
+      } catch (err) { toast(err.message); }
+    };
+  };
+  main.innerHTML = `<h1>Nastavení pokladen</h1>
+    <p class="muted">Nastavení se sem dostane z pokladen, které mají zapnuté Pokročilé nastavení → Nastavení z back office. Změny se do pokladen dostanou do minuty, platí vždy poslední změna (v pokladně nebo tady). Hesla a tokeny zůstávají jen v pokladně.</p>
+    <div class="toolbar"><label>Pro<select id="scope">${scopes.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label></div>
+    ${view.devices.length ? '' : '<p class="muted">Zatím tu nejsou žádné pokladny. Přidejte je v části Provozovny a pokladny.</p>'}
+    <div id="ts"></div>`;
+  $('#scope').onchange = (e) => { scope = e.target.value; render(); };
+  render();
+};
+
+// ---------- Live from the tills (read only; tills with "Přehled pokladny v back office" switched on) ----------
+const CASH_KIND = { FLOAT: 'Počáteční stav', IN: 'Vklad', OUT: 'Výběr', CLOSE: 'Uzavření směny' };
+const DOC_KIND = { QUOTE: 'Nabídka', PROFORMA: 'Zálohová faktura', SALES_ORDER: 'Objednávka' };
+const DOC_STATUS = { OPEN: 'otevřený', DONE: 'vyřízený', CANCELLED: 'zrušený' };
+const BOOKING = { BOOKED: 'rezervováno', SEATED: 'usazeni', NO_SHOW: 'nepřišli', CANCELLED: 'zrušeno' };
+const TABLE_ORDER = { NEW: 'čeká', FETCHED: 'na pokladně', ACCEPTED: 'přijato', REJECTED: 'odmítnuto' };
+const day = (d) => (d == null ? '–' : new Date(d * 86400000).toLocaleDateString(LOCALE));
+const LIVE_TABS = [['orders', 'Otevřené stoly'], ['cash', 'Hotovost a směny'], ['customers', 'Zákazníci'], ['reservations', 'Rezervace'],
+  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů']];
+
+function liveTab(tab, s) {
+  const none = '<p class="muted">Nic tu není.</p>';
+  if (tab === 'orders') return s.openOrders.length ? s.openOrders.map((o) => `<div class="card live-order"><h3>${o.table ? 'Stůl ' + esc(o.table) : 'Objednávka č. ' + (o.number ?? '')}
+      <span class="muted">· ${dt(o.openedAt)}${o.cashier ? ' · ' + esc(o.cashier) : ''}${o.serviceType ? ' · ' + esc(o.serviceType) : ''}</span>
+      ${o.kitchenReady ? '<span class="badge ok">hotovo v kuchyni</span>' : ''}<b class="right">${kc(o.total)}</b></h3>
+      ${o.note ? `<p class="muted">${esc(o.note)}</p>` : ''}
+      <table>${o.items.map((i) => `<tr><td>${qty(i.quantity)}×</td><td>${esc(i.name)}${i.discountPercent ? ` <span class="badge">−${i.discountPercent} %</span>` : ''}</td><td class="num">${kc(i.unitPrice)}</td></tr>`).join('')}</table></div>`).join('') : none;
+  if (tab === 'cash') {
+    const c = s.cash;
+    return `${c ? `<div class="grid">${[['Má být v zásuvce', c.expected], ['Počáteční stav', c.float], ['Hotovost z prodeje', c.sales], ['Vráceno', c.refunds], ['Vklady', c.cashIn], ['Výběry', c.cashOut]]
+        .map(([l, v]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${kc(v)}</div></div>`).join('')}</div>
+        <p class="muted">Směna od: ${c.since ? dt(c.since) : 'začátku'}${s.eetWaiting ? ` · <span class="badge warn">EET čeká: ${s.eetWaiting}</span>` : ''}</p>` : ''}
+      <h2>Pohyby v této směně</h2>${s.cashMoves.length ? `<table><tr><th>Čas</th><th>Druh</th><th class="num">Částka</th><th>Poznámka</th><th>Kdo</th></tr>
+        ${s.cashMoves.map((m) => `<tr><td>${dt(m.at)}</td><td>${CASH_KIND[m.kind] || esc(m.kind)}</td><td class="num">${kc(m.amount)}</td><td>${esc(m.note)}</td><td>${esc(m.cashier)}</td></tr>`).join('')}</table>` : none}
+      <h2>Uzavřené směny</h2>${s.shiftCloses.length ? `<table><tr><th>Uzavřeno</th><th class="num">Napočítáno</th><th class="num">Mělo být</th><th class="num">Rozdíl</th><th>Kdo</th></tr>
+        ${s.shiftCloses.map((x) => `<tr><td>${dt(x.at)}</td><td class="num">${kc(x.counted)}</td><td class="num">${x.expected == null ? '–' : kc(x.expected)}</td>
+          <td class="num">${x.expected == null ? '–' : kc(x.counted - x.expected)}</td><td>${esc(x.cashier)}</td></tr>`).join('')}</table>` : none}`;
+  }
+  if (tab === 'customers') return s.customers.length ? `<p class="muted">Zákazníků: ${s.customers.length}</p><table><tr><th>Jméno</th><th>Telefon</th><th>E-mail</th><th class="num">Body</th><th class="num">Sleva</th><th>Narozeniny</th><th>Karta</th><th>Poznámka</th></tr>
+      ${s.customers.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.phone)}</td><td>${esc(x.email)}</td><td class="num">${x.points}</td><td class="num">${x.discountPercent ? x.discountPercent + ' %' : ''}</td>
+        <td>${esc(x.birthday || '')}</td><td>${esc(x.cardCode || '')}</td><td>${esc(x.note)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'reservations') return s.reservations.length ? `<table><tr><th>Kdy</th><th>Jméno</th><th>Telefon</th><th class="num">Hosté</th><th>Stůl</th><th>Stav</th><th>Poznámka</th></tr>
+      ${s.reservations.map((r) => `<tr><td>${dt(r.at)}</td><td>${esc(r.name)}</td><td>${esc(r.phone)}</td><td class="num">${r.guests}</td><td>${esc(r.table || '')}</td>
+        <td>${BOOKING[r.status] || esc(r.status)}</td><td>${esc(r.note)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'documents') return s.documents.length ? `<table><tr><th>Číslo</th><th>Druh</th><th>Vytvořeno</th><th>Zákazník</th><th class="num">Celkem</th><th>Termín</th><th>Stav</th></tr>
+      ${s.documents.map((d) => `<tr><td>${esc(d.number)}</td><td>${DOC_KIND[d.kind] || esc(d.kind)}</td><td>${dt(d.createdAt)}</td><td>${esc(d.customer)}</td><td class="num">${kc(d.total)}</td>
+        <td>${day(d.dueDay)}</td><td>${DOC_STATUS[d.status] || esc(d.status)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'audit') return s.audit.length ? `<table><tr><th>Čas</th><th>Co se stalo</th><th>Kdo</th></tr>
+      ${s.audit.map((a) => `<tr><td>${dt(a.at)}</td><td>${esc(a.text)}</td><td>${esc(a.author)}</td></tr>`).join('')}</table>` : none;
+  return '';
+}
+
+async function tableOrdersHtml() {
+  const list = await api('/table-orders?days=2');
+  if (!list.length) return '<p class="muted">Za poslední dva dny žádné objednávky ze stolů.</p>';
+  return `<table><tr><th>Čas</th><th>Stůl</th><th>Položky</th><th>Poznámka</th><th>Stav</th></tr>
+    ${list.map((o) => `<tr><td>${dt(o.createdAt)}</td><td>${esc(o.table)}</td>
+      <td>${o.lines.map((l) => `${l.qty}× ${esc(l.name)}${l.choices ? ` <span class="muted">(${esc(l.choices)})</span>` : ''}${l.note ? ` – <i>${esc(l.note)}</i>` : ''}`).join('<br>')}</td>
+      <td>${esc(o.note)}</td><td>${TABLE_ORDER[o.status] || esc(o.status)}</td></tr>`).join('')}</table>`;
+}
+
+pages.live = async (main) => {
+  const devices = await api('/till-live');
+  const withData = devices.filter((d) => d.snapshot);
+  let dev = withData[0] ? String(withData[0].id) : '';
+  let tab = 'orders';
+  main.innerHTML = `<h1>Živě z pokladen</h1>
+    <p class="muted">Co se děje na pokladnách, které mají zapnuté Pokročilé nastavení → Přehled pokladny v back office. Pokladny to posílají každou minutu, tady se to jen čte.</p>
+    <div class="toolbar"><label>Pokladna<select id="live-dev">${devices.map((d) => `<option value="${d.id}" ${String(d.id) === dev ? 'selected' : ''}>${esc(d.name)}${d.snapshot ? '' : ' (nic neposlala)'}</option>`).join('')}</select></label>
+    <button id="live-refresh">Obnovit</button></div>
+    <div class="tabs">${LIVE_TABS.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div><div id="live"></div>`;
+  const show = async () => {
+    document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('primary', b.dataset.tab === tab));
+    const box = $('#live');
+    if (tab === 'qr') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await tableOrdersHtml(); return; }
+    const d = devices.find((x) => String(x.id) === dev);
+    if (!d || !d.snapshot) { box.innerHTML = '<p class="muted">Tato pokladna zatím nic neposlala. Zapněte na ní Pokročilé nastavení → Přehled pokladny v back office.</p>'; return; }
+    box.innerHTML = `<p class="muted">Stav z ${dt(d.snapshot.takenAt)}</p>` + liveTab(tab, d.snapshot);
+  };
+  $('#live-dev').onchange = (e) => { dev = e.target.value; show(); };
+  $('#live-refresh').onclick = () => route();
+  document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab; show().catch((e) => toast(e.message)); }));
+  await show();
+};
+
+// ---- App updates: new Android builds for the tills ----
+const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+
+pages.updates = async (main) => {
+  const v = await api('/app-releases');
+  const newest = v.releases.find((r) => r.active);
+  main.innerHTML = `<h1>Aktualizace</h1>
+    <p class="muted">Nahrajte novou verzi aplikace pro Android (soubor flos.apk). Pokladny, které mají zapnuté Pokročilé nastavení → Aktualizace z back office, ji nabídnou v Nastavení → Back office a nainstaluje se přes původní aplikaci, data zůstanou. Aplikace z Google Play se aktualizují jen přes Google Play.</p>
+    <h2>Pokladny</h2>
+    <table><thead><tr><th>Pokladna</th><th>Systém</th><th>Verze</th><th>Naposledy</th><th>Stav</th></tr></thead><tbody>
+    ${v.devices.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc(d.platform || '—')}</td><td>${esc(d.versionName || (d.versionCode ? String(d.versionCode) : '—'))}</td><td>${d.lastSeenAt ? dt(d.lastSeenAt) : '—'}</td>
+      <td>${!d.versionCode ? '<span class="muted">Neznámá verze</span>' : newest && d.versionCode < newest.versionCode && (!newest.devices.length || newest.devices.includes(d.id)) ? '<span>Čeká aktualizace</span>' : '<span>Aktuální</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Žádné pokladny</td></tr>'}
+    </tbody></table>
+    <h2>Nahrát novou verzi</h2>
+    <div class="card"><div class="toolbar">
+      <label>Soubor APK<input type="file" id="up-file" accept=".apk,application/vnd.android.package-archive"></label>
+      <label>Verze<input id="up-name" placeholder="1.0.123"></label>
+    </div>
+    <label>Co je nového<textarea id="up-notes" rows="3"></textarea></label>
+    <p class="muted">Číslo verze musí být vyšší než u nainstalované aplikace (poslední číslo, např. 123 z 1.0.123). Verzi najdete v pokladně v Nastavení → Back office, nebo v názvu buildu na GitHubu.</p>
+    <button class="primary" id="up-send">Nahrát</button> <span id="up-state" class="muted"></span></div>
+    <h2>Nahrané verze</h2>
+    <table><thead><tr><th>Verze</th><th>Velikost</th><th>Nahráno</th><th>Pro pokladny</th><th>Aktivní</th><th></th></tr></thead><tbody>
+    ${v.releases.map((r) => `<tr data-id="${r.id}"><td><b>${esc(r.versionName)}</b><div class="muted">${esc(r.notes)}</div></td><td>${mb(r.size)}</td><td>${dt(r.createdAt)}</td>
+      <td>${v.devices.map((d) => `<label class="inline"><input type="checkbox" class="rel-dev" value="${d.id}" ${r.devices.includes(d.id) ? 'checked' : ''}> ${esc(d.name)}</label>`).join(' ')}
+        <div class="muted">${r.devices.length ? '' : '<span>Nic nezaškrtnuto = všechny pokladny</span>'}</div></td>
+      <td><input type="checkbox" class="rel-active" ${r.active ? 'checked' : ''}></td>
+      <td><button class="rel-save">Uložit</button> <button class="rel-del danger">Smazat</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">Zatím žádná verze</td></tr>'}
+    </tbody></table>`;
+
+  $('#up-file').onchange = (e) => {
+    // A build from GitHub is often named like flos-1.0.123.apk: take the version from it.
+    const f = e.target.files[0]; const m = f && f.name.match(/(\d+\.\d+\.\d+)/);
+    if (m && !$('#up-name').value) $('#up-name').value = m[1];
+  };
+  $('#up-send').onclick = async () => {
+    const f = $('#up-file').files[0];
+    const name = $('#up-name').value.trim();
+    if (!f) return toast(t('Vyberte soubor APK'));
+    if (!/\d+$/.test(name)) return toast(t('Zadejte číslo verze (např. 1.0.123)'));
+    $('#up-send').disabled = true; $('#up-state').textContent = t('Nahrávám…') + ' ' + mb(f.size);
+    try {
+      const res = await fetch('/api/v1/app-releases?platform=android&versionName=' + encodeURIComponent(name) + '&notes=' + encodeURIComponent($('#up-notes').value.slice(0, 2000)), {
+        method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: f,
+      });
+      const text = await res.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch (e) {}
+      if (!res.ok) throw new Error((data && data.error) || (res.status === 413 ? 'Soubor je příliš velký' : 'Chyba ' + res.status));
+      toast(t('Verze nahrána')); route();
+    } catch (e) { toast(t(e.message)); $('#up-send').disabled = false; $('#up-state').textContent = ''; }
+  };
+  main.querySelectorAll('tr[data-id]').forEach((row) => {
+    const id = row.dataset.id;
+    const r = v.releases.find((x) => String(x.id) === id);
+    $('.rel-save', row).onclick = async () => {
+      const devices = [...row.querySelectorAll('.rel-dev:checked')].map((c) => Number(c.value));
+      try { await api('/app-releases/' + id, { method: 'PUT', body: { active: $('.rel-active', row).checked, devices, notes: r.notes } }); toast(t('Uloženo')); route(); } catch (e) { toast(t(e.message)); }
+    };
+    $('.rel-del', row).onclick = async () => {
+      if (!confirm(t('Smazat tuto verzi?'))) return;
+      try { await api('/app-releases/' + id, { method: 'DELETE' }); route(); } catch (e) { toast(t(e.message)); }
+    };
+  });
 };
 
 start();

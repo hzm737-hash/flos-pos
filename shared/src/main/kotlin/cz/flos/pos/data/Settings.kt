@@ -78,6 +78,8 @@ data class AppSettings(
     val boDeviceName: String = "",
     /** Server time of the last catalogue download, so only changes are fetched next time. */
     val boCatalogSince: Long = 0,
+    /** Back office ids of categories deleted on this till, waiting to be sent ("12,15"). */
+    val boDeletedCategories: String = "",
     /** Staff with their PIN hashes from the back office, as JSON. */
     val boStaff: String = "",
     val boLastSync: Long = 0,
@@ -137,7 +139,50 @@ data class AppSettings(
     val menuNote: String = "",
     /** Payment buttons the owner switched off, e.g. "INVOICE,MEAL_VOUCHER,MIXED". Empty = all shown. */
     val hiddenPayments: String = "",
+
+    // ---- Add-ons and kitchen notes ----
+    /** Add-ons for whole categories, see cz.flos.core.Addons ("[Pizza] Přísady*: Sýr +15"). */
+    val addons: String = "",
+    /** Ready-made kitchen notes offered with a product, comma separated. */
+    val quickNotes: String = "Pálivé, Extra pálivé, Bez cibule, Bez lepku, Málo propečené, Dobře propečené",
+
+    // ---- Advanced settings (Pokročilé nastavení): optional features, all off until switched on ----
+    /** Names of the [AdvFeature]s switched on, comma separated. */
+    val advanced: String = "",
+    /** Service charge in percent of the bill. */
+    val serviceChargePercent: Int = 10,
+    /** VAT rate of the service charge (it follows the meal: 12 % in restaurants). */
+    val serviceChargeVat: Int = 12,
+    /** Tables of each waiter, one per line: "Eva: 1, 2, 3". */
+    val waiterTables: String = "",
+    /** Own rate for cash in euros ("24,50"); empty = the ČNB rate or the rate from Platby z banky. */
+    val eurCashRate: String = "",
+    /** Where each table sits on the plan, one per line: "x;y;name" with x and y from 0 to 1. */
+    val tablePlan: String = "",
+    /** QR ordering: an order from a table waits until the staff accepts it (otherwise it goes straight on the bill). */
+    val qrOrderApprove: Boolean = true,
+    /** QR ordering: print a kitchen ticket for each accepted order. */
+    val qrOrderPrint: Boolean = true,
 ) {
+    /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
+    fun on(f: AdvFeature): Boolean = f.name in advancedSet
+    val advancedSet: Set<String> get() = advanced.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    val eurCashRateOverride: Double? get() = eurCashRate.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it > 0 }
+    /** Waiter name → their tables, from [waiterTables]. */
+    val waiterTableMap: Map<String, List<String>> get() = waiterTables.lines().mapNotNull { line ->
+        val i = line.indexOf(':')
+        if (i <= 0) null else line.substring(0, i).trim() to line.substring(i + 1).split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }
+    }.filter { it.first.isNotEmpty() }.toMap()
+
+    /** Table name → its place on the plan (x, y from 0 to 1), from [tablePlan]. */
+    val tablePositions: Map<String, Pair<Float, Float>> get() = tablePlan.lines().mapNotNull { line ->
+        val parts = line.split(';', limit = 3)
+        if (parts.size < 3) return@mapNotNull null
+        val x = parts[0].trim().toFloatOrNull() ?: return@mapNotNull null
+        val y = parts[1].trim().toFloatOrNull() ?: return@mapNotNull null
+        parts[2].trim().takeIf { it.isNotEmpty() }?.let { it to (x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)) }
+    }.toMap()
+
     val hiddenPaymentSet: Set<String> get() = hiddenPayments.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
     val scale: cz.flos.core.ScaleSettings get() = cz.flos.core.ScaleSettings(scaleWeightPrefixes, scalePricePrefixes, scalePluDigits)
     val serviceTypeList: List<cz.flos.core.ServiceType> get() = cz.flos.core.Pricing.parseServiceTypes(serviceTypes)
@@ -239,6 +284,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             boToken = str("boToken", d.boToken),
             boDeviceName = str("boDeviceName", d.boDeviceName),
             boCatalogSince = prefs.get("boCatalogSince")?.toLongOrNull() ?: d.boCatalogSince,
+            boDeletedCategories = str("boDeletedCategories", d.boDeletedCategories),
             boStaff = str("boStaff", d.boStaff),
             boLastSync = prefs.get("boLastSync")?.toLongOrNull() ?: d.boLastSync,
             loyaltyCrownsPerPoint = int("loyaltyCrownsPerPoint", d.loyaltyCrownsPerPoint),
@@ -271,12 +317,98 @@ class SettingsStore(private val prefs: KeyValueStore) {
             menuUrl = str("menuUrl", d.menuUrl),
             menuNote = str("menuNote", d.menuNote),
             hiddenPayments = str("hiddenPayments", d.hiddenPayments),
+            addons = str("addons", d.addons),
+            quickNotes = str("quickNotes", d.quickNotes),
+            advanced = str("advanced", d.advanced),
+            serviceChargePercent = int("serviceChargePercent", d.serviceChargePercent),
+            serviceChargeVat = int("serviceChargeVat", d.serviceChargeVat),
+            waiterTables = str("waiterTables", d.waiterTables),
+            tablePlan = str("tablePlan", d.tablePlan),
+            qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
+            qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
+            eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
 
+    @Synchronized
     fun update(transform: (AppSettings) -> AppSettings) {
-        val s = transform(_state.value)
-        prefs.put(
+        val old = _state.value
+        val s = transform(old)
+        val values = toMap(s)
+        // Remember what changed here, so the back office gets it (and the later change wins there).
+        val before = toMap(old)
+        val changed = values.filter { (k, v) -> before[k] != v && cz.flos.core.backoffice.TillSettingKeys.synced(k) }.keys
+        if (changed.isEmpty()) prefs.put(values) else {
+            val now = System.currentTimeMillis()
+            val pending = pendingChanges() + changed.associateWith { now }
+            prefs.put(values + (PENDING to encodePending(pending)))
+        }
+        _state.value = s
+    }
+
+    // ---- Settings shared with the back office ----
+
+    /** Settings changed here and not yet confirmed by the back office: key → when. */
+    private fun pendingChanges(): Map<String, Long> = prefs.get(PENDING).orEmpty().lines().mapNotNull { line ->
+        val i = line.lastIndexOf('=')
+        if (i <= 0) null else line.substring(0, i) to (line.substring(i + 1).toLongOrNull() ?: return@mapNotNull null)
+    }.toMap()
+
+    private fun encodePending(p: Map<String, Long>) = p.entries.joinToString("\n") { "${it.key}=${it.value}" }
+
+    /** Server time of the last settings answer from the back office; 0 = never (then everything is sent). */
+    fun settingsSince(): Long = prefs.get(SINCE)?.toLongOrNull() ?: 0
+
+    /** Starts again from scratch, e.g. after pairing with another back office. */
+    fun resetSettingsSync() = prefs.put(mapOf(SINCE to "0"))
+
+    /** What goes to the back office: the changes made here, or the first time everything (0 = not changed here). */
+    @Synchronized
+    fun settingsToSend(): Map<String, cz.flos.core.backoffice.BoSettingChange> {
+        val pending = pendingChanges()
+        val values = toMap(_state.value).filterKeys { cz.flos.core.backoffice.TillSettingKeys.synced(it) }
+        val keys = if (settingsSince() == 0L) values.keys else pending.keys.filter { it in values }
+        return keys.associateWith { cz.flos.core.backoffice.BoSettingChange(values.getValue(it), pending[it] ?: 0) }
+    }
+
+    /**
+     * Takes the back office's answer: what was sent is no longer pending (unless changed again meanwhile),
+     * and the settings changed elsewhere are used here, except those changed here again in the meantime.
+     * Returns how many settings changed.
+     */
+    @Synchronized
+    fun applyRemote(sent: Map<String, Long>, remote: Map<String, String>, serverTime: Long): Int {
+        val pending = pendingChanges().filter { (k, t) -> sent[k] != t }
+        val current = toMap(_state.value)
+        val take = remote.filter { (k, v) -> k !in pending && cz.flos.core.backoffice.TillSettingKeys.synced(k) && k in current && v.length <= 20_000 }
+            .mapValues { (k, v) -> if (k == "advanced") keepLocalFeatures(v) else v }
+            .filter { (k, v) -> current[k] != v }
+        prefs.put(take + mapOf(PENDING to encodePending(pending), SINCE to serverTime.toString()))
+        if (take.isNotEmpty()) _state.value = load()
+        return take.size
+    }
+
+    /** Whether this till takes its settings from the back office is decided on the till itself. */
+    private fun keepLocalFeatures(remote: String): String {
+        val own = AdvFeature.BO_SETTINGS.name
+        val set = remote.split(',').map { it.trim() }.filter { it.isNotEmpty() && it != own }.toMutableList()
+        if (_state.value.on(AdvFeature.BO_SETTINGS)) set += own
+        return set.joinToString(",")
+    }
+
+    /**
+     * Everything a backup needs: all settings (secrets in plain text, as the app uses them) and the
+     * receipt and order counters, so numbering continues after a restore.
+     */
+    fun exportAll(): Map<String, String> {
+        val s = _state.value
+        val year = java.time.LocalDate.now().year
+        val counters = ((year - 1)..(year + 1)).map { "receiptSeq_$it" } + "orderSeq" +
+            listOf("imapValidity_${s.imapUser}", "imapUid_${s.imapUser}")
+        return toMap(s) + counters.mapNotNull { k -> prefs.get(k)?.let { k to it } }
+    }
+
+    private fun toMap(s: AppSettings): Map<String, String> =
             mapOf(
                 "language" to s.language.code,
                 "businessName" to s.businessName,
@@ -321,6 +453,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "boToken" to s.boToken,
                 "boDeviceName" to s.boDeviceName,
                 "boCatalogSince" to s.boCatalogSince.toString(),
+                "boDeletedCategories" to s.boDeletedCategories,
                 "boStaff" to s.boStaff,
                 "boLastSync" to s.boLastSync.toString(),
                 "loyaltyCrownsPerPoint" to s.loyaltyCrownsPerPoint.toString(),
@@ -353,9 +486,21 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "menuUrl" to s.menuUrl,
                 "menuNote" to s.menuNote,
                 "hiddenPayments" to s.hiddenPayments,
-            ),
-        )
-        _state.value = s
+                "addons" to s.addons,
+                "quickNotes" to s.quickNotes,
+                "advanced" to s.advanced,
+                "serviceChargePercent" to s.serviceChargePercent.toString(),
+                "serviceChargeVat" to s.serviceChargeVat.toString(),
+                "waiterTables" to s.waiterTables,
+                "tablePlan" to s.tablePlan,
+                "qrOrderApprove" to s.qrOrderApprove.toString(),
+                "qrOrderPrint" to s.qrOrderPrint.toString(),
+                "eurCashRate" to s.eurCashRate,
+            )
+
+    private companion object {
+        const val PENDING = "boSettingsPending"
+        const val SINCE = "boSettingsSince"
     }
 
     /** Where reading the mailbox stopped: UIDVALIDITY and the last UID read. */

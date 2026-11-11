@@ -49,9 +49,12 @@ class BluetoothPrinter(private val context: Context) {
             val bt = adapter ?: throw IOException(tr("Zařízení nemá Bluetooth."))
             if (!bt.isEnabled) throw IOException(tr("Bluetooth je vypnutý."))
             val device = bt.getRemoteDevice(address)
-            // Needs BLUETOOTH_SCAN on Android 12+, which Flos does not ask for (it never scans; printers are
-            // paired in Android settings). Without the guard printing failed with an AttributionSource error.
-            runCatching { bt.cancelDiscovery() }
+            // Flos never scans for devices, so there is normally no discovery to stop. Android 12+
+            // needs the separate "scan" permission for cancelDiscovery(); without it, skip the call
+            // instead of failing the print.
+            val mayCancelDiscovery = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            if (mayCancelDiscovery) runCatching { if (bt.isDiscovering) bt.cancelDiscovery() }
             val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
             try {
                 socket.connect()

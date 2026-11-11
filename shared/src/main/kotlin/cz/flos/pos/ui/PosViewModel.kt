@@ -54,9 +54,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import androidx.room.useWriterConnection
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
+
+/** Product id of lines typed in by hand (not in the catalogue); the back office stores them without a product. */
+const val MANUAL_ITEM_ID = 0L
+
+/** Product id of the service charge line (Pokročilé nastavení → Servisní poplatek). */
+const val SERVICE_CHARGE_ID = -1L
 
 class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     val platform = flos.platform
@@ -144,16 +151,58 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val _bankState = MutableStateFlow<String?>(null)
     val bankState: StateFlow<String?> = _bankState.asStateFlow()
 
+    // ---- App updates from the back office (Pokročilé nastavení → Aktualizace z back office) ----
+    private val _update = MutableStateFlow<cz.flos.core.backoffice.BoUpdateInfo?>(null)
+    /** A newer app build waiting in the back office, or null. */
+    val appUpdate: StateFlow<cz.flos.core.backoffice.BoUpdateInfo?> = _update.asStateFlow()
+    private var updateAnnounced = 0
+
+    /** Asks the back office for a newer build; [silent] = no message when there is none. */
+    private suspend fun checkAppUpdate(silent: Boolean) {
+        val s = settings.value
+        val platform = flos.platform.updatePlatform
+        if (!s.paired || !s.on(cz.flos.pos.data.AdvFeature.APP_UPDATES) || platform == null) { _update.value = null; return }
+        runCatching { flos.backOffice.checkUpdate(platform, flos.platform.appVersionCode, flos.platform.appVersionName) }
+            .onSuccess { u ->
+                _update.value = u.takeIf { it.available && it.url.isNotBlank() }
+                val found = _update.value
+                if (found != null && (found.versionCode != updateAnnounced || !silent)) {
+                    updateAnnounced = found.versionCode
+                    _messages.tryEmit(tr("Je k dispozici nová verze aplikace %s. Najdete ji v Nastavení → Back office.", found.versionName))
+                } else if (found == null && !silent) _messages.tryEmit(tr("Aplikace je aktuální."))
+            }
+            .onFailure { if (!silent) _messages.tryEmit(tr("Kontrola aktualizace selhala: %s", it.message ?: it.javaClass.simpleName)) }
+    }
+
+    fun checkAppUpdateNow() = viewModelScope.launch { checkAppUpdate(silent = false) }
+
+    /** Opens the download of the new build; Android then offers to install it over this app (data stay). */
+    fun installAppUpdate() {
+        val u = _update.value ?: return
+        if (!flos.platform.openUrl(u.url)) _messages.tryEmit(tr("Odkaz se nepodařilo otevřít: %s", u.url))
+    }
+
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
-        // Checks the bank every minute and syncs with the back office every five minutes while the till is open.
+        // Checks the bank every minute and syncs with the back office every five minutes (settings every minute) while the till is open.
         viewModelScope.launch {
             var minute = 0
             while (true) {
                 if (settings.value.bankSource != BankSource.OFF) checkBank(silent = true)
                 if (settings.value.paired && minute % 5 == 0) syncBackOffice(silent = true)
+                else if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) runCatching { flos.backOffice.syncSettings() }
+                if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_LIVE)) runCatching { flos.backOffice.uploadSnapshot(tillSnapshot()) }
+                if (minute % 30 == 1) checkAppUpdate(silent = true)
                 minute++
                 delay(60_000)
+            }
+        }
+        // Orders from the tables: every 10 seconds while QR ordering is switched on.
+        viewModelScope.launch {
+            while (true) {
+                val s = settings.value
+                if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
+                delay(10_000)
             }
         }
     }
@@ -284,12 +333,111 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val _halfPortion = MutableStateFlow(false)
     /** "½ porce" switched on: the next product tapped is added as a half portion (0,5). */
     val halfPortion: StateFlow<Boolean> = _halfPortion.asStateFlow()
-    fun toggleHalfPortion() { _halfPortion.value = !_halfPortion.value }
+    fun toggleHalfPortion() { _halfPortion.value = !_halfPortion.value; if (_halfPortion.value) _pendingQty.value = null }
 
     /** Quantity for the product being added: 0,5 once after "½ porce", otherwise 1. */
-    private fun nextQty(): Double = if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
+    private fun nextQty(): Double {
+        _pendingQty.value?.let { q -> _pendingQty.value = null; _halfPortion.value = false; return q }
+        return if (_halfPortion.value) { _halfPortion.value = false; 0.5 } else 1.0
+    }
+
+    private val _pendingQty = MutableStateFlow<Double?>(null)
+    /** Quantity typed before tapping a product ("5 ×"); used once, then back to 1. */
+    val pendingQty: StateFlow<Double?> = _pendingQty.asStateFlow()
+    fun setPendingQty(q: Double?) { _pendingQty.value = q?.let(Qty::norm)?.takeIf { it >= Qty.MIN }; if (_pendingQty.value != null) _halfPortion.value = false }
+
+    // ---- Add-ons, kitchen notes, open prices and manual items ----
+    /** The product's own variants and extras, then the add-ons from Settings for its category. */
+    fun optionGroupsFor(p: ProductEntity): List<cz.flos.core.OptionGroup> {
+        val category = p.categoryId?.let { id -> categories.value.firstOrNull { it.id == id }?.name }
+        val own = cz.flos.core.ProductOptions.parse(p.options)
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.ADDONS)) return own
+        return own + cz.flos.core.Addons.forCategory(cz.flos.core.Addons.parse(settings.value.addons), category)
+    }
+
+    /** Writes a kitchen note on one cart line ("pálivé, bez cibule"); an empty note removes it. */
+    fun setLineNote(index: Int, note: String) = _cart.update { cart ->
+        val item = cart.items.getOrNull(index) ?: return@update cart
+        cart.rename(index, cz.flos.core.LineNote.join(cz.flos.core.LineNote.split(item.name).first, note))
+    }
+
+    /** An open-price product with the price typed in at the till ([name] may carry extras and a note). */
+    fun addOpenPrice(p: ProductEntity, name: String, price: Long) {
+        if (!allow(cz.flos.core.Permission.MANUAL_PRICE) || price < 0) return
+        val q = nextQty()
+        _cart.update { it.add(p.id, name, price, p.vatRate, q) }
+    }
+
+    /** Something that is not in the catalogue: name, price and VAT typed in at the till. */
+    fun addManualItem(name: String, price: Long, vat: VatRate) {
+        if (!allow(cz.flos.core.Permission.MANUAL_PRICE) || price < 0 || name.isBlank()) return
+        val q = nextQty()
+        _cart.update { it.add(MANUAL_ITEM_ID, name.trim(), price, vat, q) }
+    }
+
+    // ---- Backup and restore (Pokročilé nastavení) ----
+    /** The whole till in one .zip: database, settings with counters, certificate and attachments. */
+    /** The backup encrypted with [password] (it holds bank and EET secrets and customer data). */
+    suspend fun createBackup(password: String): ByteArray = cz.flos.core.BackupCrypto.encrypt(createPlainBackup(), password)
+
+    private suspend fun createPlainBackup(): ByteArray = withContext(Dispatchers.IO) {
+        // Writes the recent changes from the write-ahead log into the main file first, so the copy is
+        // one consistent file even if a sale is saved meanwhile (the -wal file is still copied too).
+        runCatching { flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } } }
+        cz.flos.pos.backup.FlosBackup.create(platform.dataDir, flos.settings.exportAll())
+    }
+
+    /** Checks a backup and leaves it to be restored at the next start; returns why not, or null when ready. */
+    suspend fun stageRestore(bytes: ByteArray, password: String?): String? = withContext(Dispatchers.IO) {
+        if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
+        // Backups made before the password existed are plain .zip files and still restore.
+        val zip = if (!cz.flos.core.BackupCrypto.isEncrypted(bytes)) bytes else when (val o = cz.flos.core.BackupCrypto.decrypt(bytes, password.orEmpty())) {
+            is cz.flos.core.BackupCrypto.Opened.Ok -> o.zip
+            cz.flos.core.BackupCrypto.Opened.WrongPassword -> return@withContext tr("Špatné heslo zálohy.")
+            cz.flos.core.BackupCrypto.Opened.Damaged -> return@withContext tr("Soubor zálohy je poškozený.")
+        }
+        cz.flos.pos.backup.FlosBackup.check(zip, platform.dataDir)?.let { return@withContext tr(it) }
+        cz.flos.pos.backup.FlosBackup.stage(zip, platform.dataDir)
+        null
+    }
+
+    /** True when a backup file needs its password before it can be restored. */
+    fun backupNeedsPassword(bytes: ByteArray): Boolean = cz.flos.core.BackupCrypto.isEncrypted(bytes)
+
+    // ---- Service charge (Pokročilé nastavení) ----
+    /** Adds the service charge line to the cart, or removes it when it is there. */
+    fun toggleServiceCharge() {
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.SERVICE_CHARGE)) return
+        _cart.update { c ->
+            val i = c.items.indexOfFirst { it.productId == SERVICE_CHARGE_ID }
+            if (i >= 0) c.remove(i)
+            else withServiceCharge(c.copy(items = c.items + CartItem(SERVICE_CHARGE_ID, "", 0, VatRate.fromPercent(settings.value.serviceChargeVat), 1.0)))
+        }
+    }
+
+    /** The service charge line follows the rest of the cart: [percent] of everything else, one piece, no line discount. */
+    private fun withServiceCharge(c: Cart): Cart {
+        val i = c.items.indexOfFirst { it.productId == SERVICE_CHARGE_ID }
+        if (i < 0) return c
+        val s = settings.value
+        val pct = s.serviceChargePercent.coerceIn(0, 100)
+        val base = c.items.filter { it.productId != SERVICE_CHARGE_ID }.sumOf { it.total }
+        val line = c.items[i]
+        val want = line.copy(
+            name = "Servisní poplatek $pct %", unitPrice = Math.round(base * pct / 100.0).coerceAtLeast(0),
+            quantity = 1.0, discountPercent = 0,
+        )
+        return if (want == line) c else c.copy(items = c.items.toMutableList().also { it[i] = want })
+    }
+
+    init {
+        // Keeps the service charge up to date whenever the cart changes.
+        viewModelScope.launch { _cart.collect { c -> val n = withServiceCharge(c); if (n != c) _cart.value = n } }
+    }
 
     fun addToCart(p: ProductEntity) {
+        // An open-price product needs its price typed in (tap the tile); never sell it for 0 by accident.
+        if (p.openPrice) { _messages.tryEmit(tr("%s: cena se zadává při prodeji, klepněte na produkt.", p.name)); return }
         val q = nextQty()
         val (unit, auto) = priced(p)
         _cart.update { it.add(p.id, p.name, unit, p.vatRate, q, auto) }
@@ -388,6 +536,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun selectCustomer(c: cz.flos.pos.data.CustomerEntity?) {
         _customer.value = c
         if (c != null && c.discountPercent > 0) _cart.update { it.setDiscount(c.discountPercent) }
+        if (c != null && settings.value.on(cz.flos.pos.data.AdvFeature.BIRTHDAYS)) {
+            val bd = cz.flos.core.Birthdays.parse(c.birthday)
+            if (bd != null && cz.flos.core.Birthdays.daysUntil(bd, LocalDate.now()) == 0) _messages.tryEmit(tr("%s má dnes narozeniny!", c.name))
+        }
     }
 
     /** Saves a customer; [select] also picks them for the cart (a new customer made at the till). */
@@ -442,7 +594,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     private suspend fun syncBackOffice(silent: Boolean) {
         val time = java.time.LocalTime.now().withNano(0).withSecond(0)
-        runCatching { flos.backOffice.sync() }
+        runCatching {
+            flos.backOffice.sync().also { if (settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) flos.backOffice.syncSettings() }
+        }
             .onSuccess { r ->
                 _syncState.value = tr("Synchronizováno %s: %d změn katalogu, odesláno %d účtenek", time.toString(), r.productsChanged, r.salesSent)
                 if (!silent) _messages.tryEmit(_syncState.value!!)
@@ -496,6 +650,31 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _editingOrder.value = null
         _pendingTable.value = name
     }
+
+    /**
+     * Moves every open bill of table [from] to table [to] (Pokročilé nastavení → Plán stolů).
+     * When [to] already has a bill, both stay there as separate bills.
+     */
+    fun moveTable(from: String, to: String) = viewModelScope.launch {
+        if (from == to) return@launch
+        val bills = openOrders.value.filter { it.sale.tableName == from }
+        if (bills.isEmpty()) return@launch
+        bills.forEach { salesDao.update(it.sale.copy(tableName = to)) }
+        _editingOrder.value?.let { e -> if (e.tableName == from) _editingOrder.value = e.copy(tableName = to) }
+        if (_pendingTable.value == from) _pendingTable.value = to
+        audit(tr("Účet přesunut ze stolu %s na stůl %s", from, to), "")
+        _messages.tryEmit(tr("Účet přesunut na stůl %s.", to))
+    }
+
+    /** Saves where table [name] sits on the plan; x and y run from 0 to 1. */
+    fun placeTable(name: String, x: Float, y: Float) = updateSettings { s ->
+        val others = s.tablePositions - name
+        val all = others + (name to (x.coerceIn(0f, 1f) to y.coerceIn(0f, 1f)))
+        s.copy(tablePlan = all.entries.joinToString("\n") { (n, p) -> "%.4f;%.4f;%s".format(java.util.Locale.ROOT, p.first, p.second, n) })
+    }
+
+    /** Puts every table back in rows on the plan. */
+    fun resetTablePlan() = updateSettings { it.copy(tablePlan = "") }
 
     /** Table of the cart: the loaded order's table or the one just picked on the map. */
     val currentTable: String? get() = _editingOrder.value?.tableName ?: _pendingTable.value
@@ -741,6 +920,127 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun reprintOrder(sw: SaleWithItems) = printOrder(sw.sale, sw.toCart())
 
+    // ---- Orders from the tables (QR code on the table, Pokročilé nastavení → Objednávky z QR) ----
+    private val _qrInbox = MutableStateFlow<List<cz.flos.core.TableOrder>>(emptyList())
+    /** Orders from the tables waiting for the staff to accept or decline them. */
+    val qrInbox: StateFlow<List<cz.flos.core.TableOrder>> = _qrInbox.asStateFlow()
+    /** Orders this till has already shown or taken, so a second fetch does not bring them twice. */
+    private val qrSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+    private val qrMutex = kotlinx.coroutines.sync.Mutex()
+    private val qrTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    private val _tableLinks = MutableStateFlow<List<cz.flos.core.TableLink>>(emptyList())
+    /** The QR code link of each table, loaded from the back office. */
+    val tableLinks: StateFlow<List<cz.flos.core.TableLink>> = _tableLinks.asStateFlow()
+
+    private fun boClient(s: AppSettings = settings.value) = cz.flos.core.backoffice.BackOfficeClient(s.boUrl, s.boToken)
+
+    /** Fetches new orders from the tables; asks the staff or puts them straight on the bill. */
+    private suspend fun pollTableOrders() {
+        val s = settings.value
+        val orders = runCatching { withContext(Dispatchers.IO) { boClient(s).tableOrders() } }.getOrNull() ?: return
+        val fresh = orders.filter { qrSeen.add(it.id) }
+        if (fresh.isEmpty()) return
+        platform.beep()
+        if (s.qrOrderApprove) _qrInbox.update { it + fresh }
+        else fresh.forEach { acceptTableOrder(it).join() }
+    }
+
+    /** The order's lines as cart lines priced by this till; lines that no longer match a product are left out. */
+    fun tableOrderCart(o: cz.flos.core.TableOrder, service: String? = null): Pair<Cart, List<String>> {
+        val byId = products.value.associateBy { it.id }
+        var cart = Cart()
+        val missing = mutableListOf<String>()
+        for (l in o.lines) {
+            val p = byId[l.id]
+            if (p == null || !p.active || p.openPrice) { missing += "#${l.id}"; continue }
+            val groups = optionGroupsFor(p)
+            if (!cz.flos.core.TableOrders.choicesValid(groups, l.choices) || l.qty !in 1..cz.flos.core.TableOrders.MAX_QTY) { missing += p.name; continue }
+            val (name, price) = cz.flos.core.ProductOptions.apply(p.name, p.price, groups, cz.flos.core.TableOrders.chosen(l.choices))
+            val (unit, auto) = priced(p, extras = price - p.price, service = service, list = null)
+            cart = cart.add(p.id, cz.flos.core.LineNote.join(name, cz.flos.core.TableOrders.cleanNote(l.note)), unit, p.vatRate, l.qty.toDouble(), auto)
+        }
+        return cart to missing
+    }
+
+    /**
+     * Takes an order from a table: tells the back office first (so no other till takes it too), then adds
+     * the dishes to the table's open bill, or opens a new bill, and prints a ticket for the kitchen.
+     */
+    fun acceptTableOrder(o: cz.flos.core.TableOrder) = viewModelScope.launch {
+        if (!qrTaking.add(o.id)) return@launch // a second tap while the first one is still running
+        qrMutex.lock()
+        try {
+            val existing = openOrders.value.firstOrNull { it.sale.tableName == o.table }
+            val (lines, missing) = tableOrderCart(o, existing?.sale?.serviceType)
+            if (lines.isEmpty()) {
+                _qrInbox.update { list -> list.filterNot { it.id == o.id } }
+                runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, false) } }
+                _messages.tryEmit(tr("Objednávku ze stolu %s nelze přijmout: položky už nejsou v nabídce. Zveřejněte menu znovu.", o.table))
+                return@launch
+            }
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, true) } }
+            if (taken.isFailure) {
+                // Not confirmed: stays in the list (or is fetched again) and can be tried once more.
+                if (!settings.value.qrOrderApprove) qrSeen.remove(o.id)
+                _messages.tryEmit(tr("Objednávku ze stolu %s se nepodařilo potvrdit: %s", o.table, taken.exceptionOrNull()?.message ?: ""))
+                return@launch
+            }
+            _qrInbox.update { list -> list.filterNot { it.id == o.id } }
+            if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku ze stolu %s už vyřídila jiná pokladna.", o.table)); return@launch }
+
+            val note = listOf(tr("QR objednávka"), o.note.trim()).filter { it.isNotEmpty() }.joinToString(": ")
+            val sale = if (existing != null) {
+                var cart = existing.toCart()
+                lines.items.forEach { cart = cart.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) }
+                val joinedNote = listOf(existing.sale.note, o.note.trim()).filter { it.isNotBlank() }.joinToString(" · ")
+                val updated = existing.sale.copy(total = cart.total, received = cart.total, kitchenReadyAt = null, note = joinedNote)
+                salesDao.replace(updated, itemsOf(cart))
+                // The same bill is open in the cart: show the new dishes there too, so saving it keeps them.
+                if (_editingOrder.value?.id == existing.sale.id) {
+                    _cart.update { c -> lines.items.fold(c) { acc, it -> acc.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) } }
+                    _editingOrder.value = updated
+                }
+                updated
+            } else {
+                val millis = System.currentTimeMillis()
+                SaleEntity(
+                    number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                    payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                    orderNumber = flos.settings.nextOrderNumber(), note = note, tableName = o.table,
+                ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            }
+            _messages.tryEmit(tr("Objednávka ze stolu %s přijata", o.table) +
+                (if (missing.isNotEmpty()) " " + tr("(vynecháno: %s)", missing.joinToString(", ")) else ""))
+            if (settings.value.qrOrderPrint) printOrder(sale.copy(note = note), lines)
+        } finally { qrMutex.unlock(); qrTaking.remove(o.id) }
+    }
+
+    /** Declines an order from a table; the guest's page says to ask the staff. */
+    fun rejectTableOrder(o: cz.flos.core.TableOrder) = viewModelScope.launch {
+        runCatching { withContext(Dispatchers.IO) { boClient().ackTableOrder(o.id, false) } }
+            .onSuccess { _qrInbox.update { list -> list.filterNot { it.id == o.id } } }
+            .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
+    }
+
+    /** Loads the QR code link of every table from the back office (the menu must be published). */
+    fun loadTableLinks() = viewModelScope.launch {
+        val s = settings.value
+        if (!s.paired) { _messages.tryEmit(tr("Nejdřív spárujte pokladnu s back office.")); return@launch }
+        if (s.tableList.isEmpty()) { _messages.tryEmit(tr("Nejdřív zadejte stoly v Nastavení.")); return@launch }
+        runCatching { withContext(Dispatchers.IO) { boClient(s).tableLinks(s.tableList) } }
+            .onSuccess { _tableLinks.value = it }
+            .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
+    }
+
+    /** Prints a QR code for every table on the receipt printer, to stand on the tables. */
+    fun printTableQrs() {
+        val links = _tableLinks.value
+        if (links.isEmpty()) return
+        val name = settings.value.businessName
+        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, it.path, tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+    }
+
     /** Loads an open order into the cart so items can be added or removed. */
     fun editOrder(sw: SaleWithItems) {
         _cart.value = sw.toCart()
@@ -755,6 +1055,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Cancels an unpaid order. It stays in history as cancelled; nothing is sent to EET. */
     fun cancelOrder(sw: SaleWithItems, reason: String) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.CANCEL_ORDER)) return@launch
+        audit(tr("Zrušena objednávka č. %d (%s)", sw.sale.orderNumber ?: 0, Money.format(sw.sale.total)), reason)
         val note = listOf(sw.sale.note, reason.trim().takeIf { it.isNotEmpty() }?.let { tr("Zrušeno: %s", it) })
             .filterNot { it.isNullOrBlank() }.joinToString(" · ")
         salesDao.update(sw.sale.copy(status = SaleStatus.VOID.name, note = note, createdAt = System.currentTimeMillis()))
@@ -819,8 +1120,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * Cancels (storno) a sale. The original stays in history marked as cancelled; a storno
      * document with its own number and a negative amount is recorded in EET and printed.
      */
-    fun cancelSale(sw: SaleWithItems) = viewModelScope.launch {
+    fun cancelSale(sw: SaleWithItems, reason: String = "") = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.STORNO)) return@launch
+        audit(tr("Storno účtenky %s (%s)", sw.sale.number, Money.format(sw.sale.received)), reason)
         val s = settings.value
         val now = LocalDateTime.now()
         val millis = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -856,9 +1158,11 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * with a negative amount when the original was, and printed. The money goes back the same
      * way it was paid.
      */
-    fun refund(sw: SaleWithItems, quantities: Map<Int, Double>) = viewModelScope.launch {
+    fun refund(sw: SaleWithItems, quantities: Map<Int, Double>, reason: String = "") = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.REFUND)) return@launch
         if (!sw.sale.isPaid || sw.sale.cancelled || sw.sale.isRefund) return@launch
+        audit(tr("Vratka z účtenky %s", sw.sale.number) + ": " + quantities.entries.joinToString(", ") { (i, q) ->
+            Qty.format(q) + "× " + (sw.items.getOrNull(i)?.name ?: "?") }, reason)
         val left = refundable(sw)
         val items = sw.items.mapIndexedNotNull { i, item ->
             val q = Qty.norm((quantities[i] ?: 0.0).coerceIn(0.0, left.getOrElse(i) { 0.0 }))
@@ -1084,13 +1388,68 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     // ---- Catalogue ----
-    fun saveProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertProduct(p) }
-    fun deleteProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.deactivateProduct(p.id) }
-    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertCategory(c) }
+    // Every change made here is marked, so the back office gets it with the next sync (the later change wins).
+    private fun ProductEntity.edited() = copy(dirty = true, updatedAt = System.currentTimeMillis())
+    private fun CategoryEntity.edited() = copy(dirty = true, updatedAt = System.currentTimeMillis())
+
+    fun saveProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertProduct(p.edited()) }
+    fun deleteProduct(p: ProductEntity) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
+        val current = catalog.allProducts().firstOrNull { it.id == p.id } ?: p
+        catalog.upsertProduct(current.copy(active = false).edited())
+    }
+    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertCategory(c.edited()) }
     fun deleteCategory(c: CategoryEntity) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         catalog.clearCategory(c.id)
         catalog.deleteCategory(c.id)
+        c.remoteId?.let { id -> flos.settings.update { s -> s.copy(boDeletedCategories = (s.boDeletedCategories.split(',').filter { it.isNotBlank() } + id.toString()).joinToString(",")) } }
+    }
+
+    /** What is going on at this till, for the back office to show (Pokročilé nastavení → Přehled pokladny v back office). */
+    // Reads the database directly: this runs from init, before the properties further down exist.
+    private suspend fun tillSnapshot(): cz.flos.core.backoffice.BoTillSnapshot {
+        val max = cz.flos.core.backoffice.BoTillSnapshot.MAX_LIST
+        val since = cashDao.lastClose().first()
+        val moves = cashDao.since(since).first()
+        val cashSales = salesDao.cashReceivedSince(since).first()
+        val cashRefunds = salesDao.cashRefundedSince(since).first()
+        val cash = CashState(since, moves.filter { it.cashKind == CashKind.FLOAT }.sumOf { it.amount }, cashSales, cashRefunds,
+            moves.filter { it.cashKind == CashKind.IN }.sumOf { it.amount }, moves.filter { it.cashKind == CashKind.OUT }.sumOf { it.amount })
+        return cz.flos.core.backoffice.BoTillSnapshot(
+            takenAt = System.currentTimeMillis(),
+            openOrders = salesDao.openOrders().first().take(max).map { o ->
+                cz.flos.core.backoffice.BoOpenOrder(o.sale.orderNumber, o.sale.tableName, o.sale.note, o.sale.openedAt ?: o.sale.createdAt, o.toCart().total,
+                    o.sale.cashier, o.sale.serviceType, o.sale.kitchenReadyAt != null,
+                    o.items.map { cz.flos.core.backoffice.BoOrderLine(it.name, it.quantity, it.unitPrice, it.discountPercent) })
+            },
+            cash = cz.flos.core.backoffice.BoCashState(cash.since, cash.float, cash.sales, cash.refunds, cash.cashIn, cash.cashOut, cash.expected),
+            shiftCloses = cashDao.closes(30).first().map { cz.flos.core.backoffice.BoShiftClose(it.at, it.amount, it.expected, it.cashier) },
+            cashMoves = moves.takeLast(max).map { cz.flos.core.backoffice.BoCashMove(it.at, it.kind, it.amount, it.note, it.cashier) },
+            customers = customerDao.all().first().take(cz.flos.core.backoffice.BoTillSnapshot.MAX_CUSTOMERS).map {
+                cz.flos.core.backoffice.BoCustomer(it.name, it.phone, it.email, it.points, it.discountPercent, it.birthday, it.note, it.cardCode)
+            },
+            reservations = flos.database.reservations().from(System.currentTimeMillis() - 86_400_000L).first().take(max).map {
+                cz.flos.core.backoffice.BoReservation(it.at, it.name, it.phone, it.guests, it.minutes, it.tableName, it.note, it.status)
+            },
+            documents = flos.database.documents().all().first().take(max).map {
+                cz.flos.core.backoffice.BoDocument(it.kind, it.number, it.createdAt, it.customerName, it.total, it.status, it.dueDay, it.note)
+            },
+            audit = flos.database.notes().of(cz.flos.pos.data.NoteTarget.AUDIT.name, null).first().take(max).map { cz.flos.core.backoffice.BoAuditEntry(it.createdAt, it.text, it.author) },
+            eetWaiting = eetDao.open().first().size,
+        )
+    }
+
+    /** The photo of a product from the back office, when it is downloaded. */
+    fun productImage(ref: String?): ByteArray? = flos.backOffice.imageBytes(ref)
+
+    /** Marks everything made on this till before it was paired, so it is sent to the back office once. */
+    fun uploadLocalCatalog() = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
+        val now = System.currentTimeMillis()
+        catalog.markLocalCategoriesForUpload(now)
+        catalog.markLocalProductsForUpload(now)
+        syncBackOffice(silent = false)
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = flos.settings.update(transform)
@@ -1225,7 +1584,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         suspend fun categoryId(name: String): Long? {
             if (name.isBlank()) return null
             cats[cz.flos.core.Pricing.key(name)]?.let { return it.id }
-            val c = CategoryEntity(name = name.trim(), sortOrder = cats.size)
+            val c = CategoryEntity(name = name.trim(), sortOrder = cats.size).edited()
             val id = catalog.upsertCategory(c)
             cats[cz.flos.core.Pricing.key(name)] = c.copy(id = id)
             return id
@@ -1233,12 +1592,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val existing = catalog.allProducts().associateBy { it.id }
         plan.added.forEach { r ->
             catalog.upsertProduct(ProductEntity(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
-                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }).edited())
         }
         plan.changed.forEach { (id, r) ->
             val p = existing[id] ?: return@forEach
             catalog.upsertProduct(p.copy(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
-                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }).edited())
         }
         _messages.tryEmit(tr("Import hotový: %d nových, %d změněných", plan.added.size, plan.changed.size))
     }
@@ -1250,7 +1609,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun bulkEdit(ids: Set<Long>, label: String, change: (ProductEntity) -> ProductEntity) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         val list = catalog.allProducts().filter { it.id in ids }
-        list.forEach { catalog.upsertProduct(change(it)) }
+        list.forEach { catalog.upsertProduct(change(it).edited()) }
         _messages.tryEmit(tr("%s: upraveno %d produktů", label, list.size))
     }
 
@@ -1269,6 +1628,16 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun notes(target: cz.flos.pos.data.NoteTarget, id: Long?): Flow<List<cz.flos.pos.data.NoteEntity>> = noteDao.of(target.name, id)
     val allNotes = noteDao.all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Storno, refunds and cancelled orders with who, when and why (Pokročilé nastavení → Důvod storna a záznam). */
+    val auditLog = noteDao.of(cz.flos.pos.data.NoteTarget.AUDIT.name, null).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private suspend fun audit(what: String, reason: String) {
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.STORNO_REASON)) return
+        val text = what + (reason.trim().takeIf { it.isNotEmpty() }?.let { "\n" + tr("Důvod: %s", it) } ?: "")
+        noteDao.upsert(cz.flos.pos.data.NoteEntity(target = cz.flos.pos.data.NoteTarget.AUDIT.name, text = text,
+            createdAt = System.currentTimeMillis(), author = settings.value.cashier))
+    }
 
     /** Saves a note; [file] is an attached document with the name to show. */
     fun addNote(target: cz.flos.pos.data.NoteTarget, id: Long?, text: String, file: Pair<String, ByteArray>?) = viewModelScope.launch {
@@ -1348,13 +1717,21 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cats = categories.value.map { c -> cz.flos.core.MenuCategory(c.name, byCat[c.id].orEmpty().map { it.menuItem() }) } +
             listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
         return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
-            s.business.contacts, s.openingHours, cats, s.menuNote)
+            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING))
     }
 
-    private fun ProductEntity.menuItem() = cz.flos.core.MenuItem(name, price,
-        options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · "))
+    private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {
+        val note = options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
+        // With QR ordering on, guests can order the product: its id and the variants and extras the till offers.
+        val photo = image.orEmpty()
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || openPrice) return cz.flos.core.MenuItem(name, price, note, image = photo)
+        return cz.flos.core.MenuItem(name, price, note, id = id, options = cz.flos.core.ProductOptions.format(optionGroupsFor(this)), image = photo)
+    }
 
-    fun menuHtml(): ByteArray = cz.flos.core.MenuPage.html(menuData()).toByteArray(Charsets.UTF_8)
+    /** The menu as a file for the owner's own web: without the photos, which live on the back office. */
+    fun menuHtml(): ByteArray = menuData().let { d ->
+        d.copy(categories = d.categories.map { c -> c.copy(items = c.items.map { it.copy(image = "") }) })
+    }.let { cz.flos.core.MenuPage.html(it).toByteArray(Charsets.UTF_8) }
 
     /** Publishes the menu on the back office; the link is kept in Settings. */
     fun publishMenu() = viewModelScope.launch {

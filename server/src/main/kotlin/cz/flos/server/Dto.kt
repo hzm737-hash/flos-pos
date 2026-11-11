@@ -23,14 +23,42 @@ import kotlinx.serialization.Serializable
 @Serializable data class ApiKeyDto(val id: Long = 0, val name: String, val prefix: String = "", val scope: String = "READ", val createdAt: Long = 0, val lastUsedAt: Long? = null, val revoked: Boolean = false, val key: String? = null)
 
 // ---- Catalogue ----
-@Serializable data class CategoryDto(val id: Long = 0, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0, val deleted: Boolean = false, val updatedAt: Long = 0)
+@Serializable data class CategoryDto(
+    val id: Long = 0, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0, val deleted: Boolean = false, val updatedAt: Long = 0,
+    /** Icon key of the till (cz.flos.pos ProductIcons), "" = none. */
+    val icon: String = "",
+)
 @Serializable data class RecipeItemDto(val ingredientId: Long, val qty: Double)
 @Serializable data class ProductDto(
     val id: Long = 0, val categoryId: Long? = null, val name: String, val price: Long, val vatPercent: Int = 21,
     val sku: String = "", val barcode: String = "", val unit: String = "ks", val costPrice: Long = 0,
     val trackStock: Boolean = false, val sellable: Boolean = true, val minStock: Double = 0.0, val sortOrder: Int = 0,
     val active: Boolean = true, val updatedAt: Long = 0, val recipe: List<RecipeItemDto> = emptyList(),
+    /** Variants and extras in the till's text form ("Velikost: Malá, Velká +40"). */
+    val options: String = "",
+    /** Prices in other price lists ("Rozvoz: 89"). */
+    val prices: String = "",
+    /** The till asks for the price every time. */
+    val openPrice: Boolean = false,
+    val icon: String = "",
+    /** Photo as "<id>-<key>", served at /img/<image>; "" = none. */
+    val image: String = "",
 )
+
+// ---- Photos and the till's own catalogue changes ----
+@Serializable data class ImageUpload(val mime: String, val data: String)
+@Serializable data class ImageRef(val image: String)
+/** A category or product changed on a till; [remoteId] null = new. [updatedAt] is when it was changed there. */
+@Serializable data class DeviceCategory(val localId: Long, val remoteId: Long? = null, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0,
+    val icon: String = "", val deleted: Boolean = false, val updatedAt: Long = 0)
+@Serializable data class DeviceProduct(
+    val localId: Long, val remoteId: Long? = null, val categoryRemoteId: Long? = null, val name: String, val price: Long, val vatPercent: Int = 21,
+    val barcode: String = "", val sortOrder: Int = 0, val active: Boolean = true, val options: String = "", val prices: String = "",
+    val openPrice: Boolean = false, val icon: String = "", val updatedAt: Long = 0,
+)
+@Serializable data class DeviceCatalogUpload(val categories: List<DeviceCategory> = emptyList(), val products: List<DeviceProduct> = emptyList())
+/** Local id → id in the back office, for what the till sent. */
+@Serializable data class DeviceCatalogResult(val categories: Map<Long, Long> = emptyMap(), val products: Map<Long, Long> = emptyMap())
 
 // ---- Stock ----
 @Serializable data class StockLevelDto(val branchId: Long, val productId: Long, val productName: String, val unit: String, val qty: Double, val minStock: Double, val low: Boolean, val value: Long)

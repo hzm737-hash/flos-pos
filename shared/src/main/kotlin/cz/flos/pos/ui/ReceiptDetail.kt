@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -264,13 +265,22 @@ internal fun ReceiptDetailDialog(
         onDismiss = { editTip = false },
     ) { vm.setTip(s, it); editTip = false }
     if (refunding) RefundDialog(vm, sw, onDismiss = { refunding = false })
-    if (confirmCancel) AlertDialog(
+    if (confirmCancel) {
+        var reason by remember { mutableStateOf("") }
+        val needReason = vm.settings.collectAsState().value.on(cz.flos.pos.data.AdvFeature.STORNO_REASON)
+        AlertDialog(
         onDismissRequest = { confirmCancel = false },
         title = { Text(tr("Stornovat účtenku %s?", s.number)) },
-        text = { Text(tr("Účtenka zůstane v historii označená jako storno a nezapočítá se do tržby.")) },
-        confirmButton = { Button(onClick = { vm.cancelSale(sw); confirmCancel = false }) { Text(tr("Stornovat")) } },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(tr("Účtenka zůstane v historii označená jako storno a nezapočítá se do tržby."))
+                if (needReason) OutlinedTextField(reason, { reason = it }, label = { Text(tr("Důvod (povinný)")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = { Button(onClick = { vm.cancelSale(sw, reason); confirmCancel = false }, enabled = !needReason || reason.isNotBlank()) { Text(tr("Stornovat")) } },
         dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text(tr("Zpět")) } },
-    )
+        )
+    }
 }
 
 @Composable

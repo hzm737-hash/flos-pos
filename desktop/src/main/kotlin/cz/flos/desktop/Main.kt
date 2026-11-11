@@ -33,13 +33,15 @@ fun dataDir(): File {
 
 fun main() {
     val dir = dataDir()
+    // A backup chosen in Pokročilé nastavení → Obnovit is put in place before the database opens.
+    runCatching { cz.flos.pos.backup.FlosBackup.applyPending(dir, RegistryStore()) }
     val database = Room.databaseBuilder<FlosDatabase>(name = File(dir, FlosDatabase.FILE_NAME).absolutePath, factory = { FlosDatabase_Impl() })
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .addMigrations(*FlosDatabase.MIGRATIONS)
         .build()
     val platform = DesktopPlatform(dir)
-    val container = FlosContainer(platform, database, RegistryStore())
+    val container = FlosContainer(platform, database, cz.flos.pos.security.EncryptedStore(RegistryStore(), key = { DesktopSecretKey.getOrCreate(dir) }))
 
     // Resends sales that are still waiting for EET confirmation: shortly after a failure, and every 5 minutes.
     val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)

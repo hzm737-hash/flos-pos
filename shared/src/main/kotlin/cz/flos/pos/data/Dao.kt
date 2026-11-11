@@ -44,6 +44,29 @@ interface CatalogDao {
 
     @Query("SELECT COUNT(*) FROM products")
     suspend fun productCount(): Int
+
+    /** Changed on this till, to send to the back office. */
+    @Query("SELECT * FROM products WHERE dirty = 1")
+    suspend fun dirtyProducts(): List<ProductEntity>
+
+    @Query("SELECT * FROM categories WHERE dirty = 1")
+    suspend fun dirtyCategories(): List<CategoryEntity>
+
+    @Query("SELECT * FROM categories")
+    suspend fun allCategories(): List<CategoryEntity>
+
+    @Query("UPDATE products SET dirty = 0, remoteId = :remoteId WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun productSent(id: Long, remoteId: Long, updatedAt: Long)
+
+    @Query("UPDATE categories SET dirty = 0, remoteId = :remoteId WHERE id = :id AND updatedAt = :updatedAt")
+    suspend fun categorySent(id: Long, remoteId: Long, updatedAt: Long)
+
+    /** Every product made on this till that the back office does not have yet, to send it once. */
+    @Query("UPDATE products SET dirty = 1, updatedAt = :now WHERE remoteId IS NULL")
+    suspend fun markLocalProductsForUpload(now: Long)
+
+    @Query("UPDATE categories SET dirty = 1, updatedAt = :now WHERE remoteId IS NULL")
+    suspend fun markLocalCategoriesForUpload(now: Long)
 }
 
 @Dao

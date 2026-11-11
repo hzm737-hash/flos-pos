@@ -34,6 +34,8 @@ val FlosJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitN
  *   people are added by the owner under Users. Set FLOS_OPEN_SIGNUP=true to allow anyone to sign up.
  */
 fun Application.flosModule(db: Db, openSignup: Boolean = false) {
+    installHardening()
+    val throttle = Throttle()
     install(ContentNegotiation) { json(FlosJson) }
     install(StatusPages) {
         exception<ApiError> { call, e -> call.respond(e.status, ErrorBody(e.message)) }
@@ -47,23 +49,25 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
     routing {
         staticResources("/", "static", index = "index.html")
         get("/health") { call.respondText("ok") }
-        /** Public digital menu (QR menu); rendered here from the till's data, so no foreign HTML is ever served. */
-        get("/menu/{slug}") {
-            val slug = call.parameters["slug"].orEmpty()
-            val data = db.tx { queryOne("SELECT data FROM menus WHERE slug = ?", slug) { it.getString(1) } }
-            val menu = data?.let { runCatching { FlosJson.decodeFromString(cz.flos.core.MenuData.serializer(), it) }.getOrNull() }
-                ?: return@get call.respondText("Menu nenalezeno", status = HttpStatusCode.NotFound)
-            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
-            call.response.headers.append("Cache-Control", "public, max-age=60")
-            call.respondText(cz.flos.core.MenuPage.html(menu), io.ktor.http.ContentType.Text.Html.withCharset(Charsets.UTF_8))
-        }
+        /** Public digital menu (QR menu), rendered here from the till's data; ordering from the table. */
+        menuRoutes(db)
+        publicImageRoutes(db)
+        appDownloadRoutes(db)
         route("/api/v1") {
-            authRoutes(db, openSignup)
+            authRoutes(db, openSignup, throttle)
             orgRoutes(db)
             catalogRoutes(db)
             stockRoutes(db)
             salesRoutes(db)
-            deviceRoutes(db)
+            deviceRoutes(db, throttle)
+            tableOrderDeviceRoutes(db)
+            imageRoutes(db)
+            deviceCatalogRoutes(db)
+            deviceSettingsRoutes(db)
+            tillSettingsRoutes(db)
+            deviceSnapshotRoutes(db)
+            tillLiveRoutes(db)
+            appReleaseRoutes(db)
         }
     }
 }
@@ -102,7 +106,7 @@ private fun Connection.newSession(userId: Long, orgId: Long): String {
 private suspend fun Db.signupAllowed(openSignup: Boolean): Boolean =
     openSignup || tx { queryOne("SELECT COUNT(*) FROM users") { it.getLong(1) } ?: 0L } == 0L
 
-private fun Route.authRoutes(db: Db, openSignup: Boolean) {
+private fun Route.authRoutes(db: Db, openSignup: Boolean, throttle: Throttle) {
     get("/auth/signup") { call.respond(SignupStatus(db.signupAllowed(openSignup))) }
     post("/auth/register") {
         if (!db.signupAllowed(openSignup)) throw ApiError(HttpStatusCode.Forbidden, "Registrace je uzavřena. Nového uživatele přidá majitel v sekci Uživatelé.")
@@ -125,15 +129,18 @@ private fun Route.authRoutes(db: Db, openSignup: Boolean) {
     }
     post("/auth/login") {
         val r = call.receive<LoginRequest>()
-        val res = db.tx {
+        val keys = listOf("login:" + r.email.lowercase().trim() to Throttle.LOGIN_PER_ACCOUNT, "ip:" + call.clientIp() to Throttle.PER_ADDRESS)
+        val res = throttle.guard(keys) { db.tx {
             val u = queryOne("SELECT id, org_id, password_hash, role FROM users WHERE email = ? AND active", r.email.lowercase().trim()) {
                 Triple(it.getLong(1), it.getLong(2), it.getString(3)) to it.getString(4)
             }
+            // An unknown e-mail takes as long as a wrong password, so answers don't reveal which e-mails exist.
+            if (u == null) Passwords.verify(r.password, DUMMY_HASH)
             if (u == null || !Passwords.verify(r.password, u.first.third) || u.second == Role.CASHIER.name) {
                 throw ApiError(HttpStatusCode.Unauthorized, "Nesprávný e-mail nebo heslo")
             }
             TokenResponse(newSession(u.first.first, u.first.second), userDto(u.first.first))
-        }
+        } }
         call.respond(res)
     }
     post("/auth/logout") {
@@ -220,7 +227,7 @@ private fun Route.orgRoutes(db: Db) {
     get("/devices") {
         val c = call.reader(db)
         call.respond(db.tx {
-            query("SELECT * FROM devices WHERE org_id = ? ORDER BY id", c.orgId) {
+            query("SELECT * FROM devices WHERE org_id = ? AND deleted_at IS NULL ORDER BY id", c.orgId) {
                 DeviceDto(it.getLong("id"), it.getLong("branch_id"), it.getString("name"), it.getString("eet_id_pokl"),
                     if ((it.longOrNull("pairing_expires_at") ?: 0) > System.currentTimeMillis()) it.getString("pairing_code") else null,
                     it.longOrNull("paired_at"), it.longOrNull("last_seen_at"), it.getString("app_version"), it.getBoolean("active"))
@@ -243,16 +250,31 @@ private fun Route.orgRoutes(db: Db) {
         val d = call.receive<DeviceDto>()
         val n = db.tx {
             Stock.requireBranch(this, c.orgId, d.branchId)
-            update("UPDATE devices SET name = ?, branch_id = ?, eet_id_pokl = ?, active = ? WHERE id = ? AND org_id = ?", d.name, d.branchId, d.eetIdPokl, d.active, call.longParam("id"), c.orgId)
+            update("UPDATE devices SET name = ?, branch_id = ?, eet_id_pokl = ?, active = ? WHERE id = ? AND org_id = ? AND deleted_at IS NULL", d.name, d.branchId, d.eetIdPokl, d.active, call.longParam("id"), c.orgId)
         }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
         call.respond(d.copy(id = call.longParam("id")))
+    }
+    /**
+     * Deletes a till: it disappears from the back office and can no longer sign in or pair. Its receipts stay
+     * (they are part of the accounts), so the row is only marked as deleted.
+     */
+    delete("/devices/{id}") {
+        val c = call.writer(db)
+        val id = call.longParam("id")
+        val n = db.tx {
+            update("DELETE FROM till_snapshots WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE org_id = ?)", id, c.orgId)
+            update("UPDATE devices SET active = FALSE, deleted_at = ?, token_hash = NULL, pairing_code = NULL, pairing_expires_at = NULL WHERE id = ? AND org_id = ? AND deleted_at IS NULL",
+                System.currentTimeMillis(), id, c.orgId)
+        }
+        if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
+        call.respond(Ok())
     }
     /** New pairing code, e.g. to move the till to a new phone. The old token stops working. */
     post("/devices/{id}/pair") {
         val c = call.writer(db)
         val code = Tokens.pairingCode()
-        val n = db.tx { update("UPDATE devices SET pairing_code = ?, pairing_expires_at = ?, token_hash = NULL WHERE id = ? AND org_id = ?", code, System.currentTimeMillis() + PAIRING_TTL, call.longParam("id"), c.orgId) }
+        val n = db.tx { update("UPDATE devices SET pairing_code = ?, pairing_expires_at = ?, token_hash = NULL WHERE id = ? AND org_id = ? AND deleted_at IS NULL", code, System.currentTimeMillis() + PAIRING_TTL, call.longParam("id"), c.orgId) }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
         call.respond(mapOf("pairingCode" to code))
     }
@@ -287,7 +309,12 @@ private fun Route.orgRoutes(db: Db) {
             val n = update("UPDATE users SET name = ?, email = ?, role = ?, active = ? WHERE id = ? AND org_id = ?", u.name, u.email?.lowercase()?.ifBlank { null }, role, u.active, id, c.orgId)
             if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Uživatel nenalezen")
             update("UPDATE memberships SET role = ? WHERE user_id = ? AND org_id = ?", role, id, c.orgId)
-            u.password?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET password_hash = ? WHERE id = ?", Passwords.hash(it), id) }
+            u.password?.takeIf { it.isNotEmpty() }?.let {
+                update("UPDATE users SET password_hash = ? WHERE id = ?", Passwords.hash(it), id)
+                // A new password signs the user out everywhere else (a stolen session stops working), but not in this browser.
+                val own = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim().orEmpty()
+                update("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", id, Tokens.hash(own))
+            }
             u.pin?.takeIf { it.isNotEmpty() }?.let { update("UPDATE users SET pin_hash = ? WHERE id = ?", Passwords.hash(it), id) }
             if (!u.active) update("DELETE FROM sessions WHERE user_id = ?", id)
         }
@@ -340,6 +367,9 @@ private fun validateStaff(u: UserWrite, role: Role, isNew: Boolean) {
 
 private const val PAIRING_TTL = 24 * 3_600_000L
 
+/** A real hash of a random secret, used to spend the same time on an unknown e-mail as on a wrong password. */
+private val DUMMY_HASH: String = Passwords.hash(Tokens.new("x_"))
+
 // ---------- catalogue ----------
 
 private fun Connection.productDto(rs: java.sql.ResultSet, recipe: List<RecipeItemDto>) = ProductDto(
@@ -348,6 +378,8 @@ private fun Connection.productDto(rs: java.sql.ResultSet, recipe: List<RecipeIte
     costPrice = rs.getLong("cost_price"), trackStock = rs.getBoolean("track_stock"), sellable = rs.getBoolean("sellable"),
     minStock = rs.getLong("min_stock_milli").fromMilli(), sortOrder = rs.getInt("sort_order"), active = rs.getBoolean("active"),
     updatedAt = rs.getLong("updated_at"), recipe = recipe,
+    options = rs.getString("option_text"), prices = rs.getString("price_lists"), openPrice = rs.getBoolean("open_price"),
+    icon = rs.getString("icon"), image = rs.getString("image"),
 )
 
 fun Connection.products(orgId: Long, since: Long = 0): List<ProductDto> {
@@ -360,7 +392,7 @@ fun Connection.products(orgId: Long, since: Long = 0): List<ProductDto> {
 
 fun Connection.categories(orgId: Long, since: Long = 0): List<CategoryDto> =
     query("SELECT * FROM categories WHERE org_id = ? AND updated_at > ? ORDER BY sort_order, name", orgId, since) {
-        CategoryDto(it.getLong("id"), it.getString("name"), it.getLong("color"), it.getInt("sort_order"), it.getBoolean("deleted"), it.getLong("updated_at"))
+        CategoryDto(it.getLong("id"), it.getString("name"), it.getLong("color"), it.getInt("sort_order"), it.getBoolean("deleted"), it.getLong("updated_at"), it.getString("icon"))
     }
 
 private fun Connection.saveRecipe(orgId: Long, productId: Long, recipe: List<RecipeItemDto>) {
@@ -373,8 +405,14 @@ private fun Connection.saveRecipe(orgId: Long, productId: Long, recipe: List<Rec
     }
 }
 
+private fun Connection.validateProduct(orgId: Long, p: ProductDto) {
+    if (p.image.isNotEmpty() && !Images.belongs(this, orgId, p.image)) throw ApiError(HttpStatusCode.BadRequest, "Neznámá fotka")
+    validateProduct(p)
+}
+
 private fun validateProduct(p: ProductDto) {
     if (p.name.isBlank()) throw ApiError(HttpStatusCode.BadRequest, "Vyplňte název")
+    if (p.options.length > 4000 || p.prices.length > 2000 || p.icon.length > 40) throw ApiError(HttpStatusCode.BadRequest, "Příliš dlouhý text")
     if (p.price < 0) throw ApiError(HttpStatusCode.BadRequest, "Cena nesmí být záporná")
     if (p.vatPercent !in listOf(0, 12, 21)) throw ApiError(HttpStatusCode.BadRequest, "Sazba DPH musí být 0, 12 nebo 21 %")
 }
@@ -384,13 +422,13 @@ private fun Route.catalogRoutes(db: Db) {
     post("/categories") {
         val c = call.writer(db)
         val x = call.receive<CategoryDto>()
-        val id = db.tx { insert("INSERT INTO categories (org_id, name, color, sort_order, updated_at) VALUES (?,?,?,?,?)", c.orgId, x.name, x.color, x.sortOrder, System.currentTimeMillis()) }
+        val id = db.tx { insert("INSERT INTO categories (org_id, name, color, sort_order, icon, updated_at) VALUES (?,?,?,?,?,?)", c.orgId, x.name, x.color, x.sortOrder, x.icon.take(40), System.currentTimeMillis()) }
         call.respond(HttpStatusCode.Created, x.copy(id = id))
     }
     put("/categories/{id}") {
         val c = call.writer(db)
         val x = call.receive<CategoryDto>()
-        val n = db.tx { update("UPDATE categories SET name = ?, color = ?, sort_order = ?, updated_at = ? WHERE id = ? AND org_id = ?", x.name, x.color, x.sortOrder, System.currentTimeMillis(), call.longParam("id"), c.orgId) }
+        val n = db.tx { update("UPDATE categories SET name = ?, color = ?, sort_order = ?, icon = ?, updated_at = ? WHERE id = ? AND org_id = ?", x.name, x.color, x.sortOrder, x.icon.take(40), System.currentTimeMillis(), call.longParam("id"), c.orgId) }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Kategorie nenalezena")
         call.respond(x.copy(id = call.longParam("id")))
     }
@@ -412,12 +450,14 @@ private fun Route.catalogRoutes(db: Db) {
     post("/products") {
         val c = call.writer(db)
         val p = call.receive<ProductDto>()
-        validateProduct(p)
         val id = db.tx {
+            validateProduct(c.orgId, p)
             val id = insert(
-                """INSERT INTO products (org_id, category_id, name, price, vat_percent, sku, barcode, unit, cost_price, track_stock, sellable, min_stock_milli, sort_order, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                c.orgId, p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(), p.sortOrder, System.currentTimeMillis(),
+                """INSERT INTO products (org_id, category_id, name, price, vat_percent, sku, barcode, unit, cost_price, track_stock, sellable, min_stock_milli, sort_order,
+                   option_text, price_lists, open_price, icon, image, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                c.orgId, p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(), p.sortOrder,
+                p.options, p.prices, p.openPrice, p.icon, p.image, System.currentTimeMillis(),
             )
             saveRecipe(c.orgId, id, p.recipe)
             id
@@ -427,14 +467,15 @@ private fun Route.catalogRoutes(db: Db) {
     put("/products/{id}") {
         val c = call.writer(db)
         val p = call.receive<ProductDto>()
-        validateProduct(p)
         val id = call.longParam("id")
         db.tx {
+            validateProduct(c.orgId, p)
             val n = update(
                 """UPDATE products SET category_id = ?, name = ?, price = ?, vat_percent = ?, sku = ?, barcode = ?, unit = ?, cost_price = ?, track_stock = ?,
-                   sellable = ?, min_stock_milli = ?, sort_order = ?, active = ?, updated_at = ? WHERE id = ? AND org_id = ?""",
+                   sellable = ?, min_stock_milli = ?, sort_order = ?, active = ?, option_text = ?, price_lists = ?, open_price = ?, icon = ?, image = ?,
+                   updated_at = ? WHERE id = ? AND org_id = ?""",
                 p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(),
-                p.sortOrder, p.active, System.currentTimeMillis(), id, c.orgId,
+                p.sortOrder, p.active, p.options, p.prices, p.openPrice, p.icon, p.image, System.currentTimeMillis(), id, c.orgId,
             )
             if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Produkt nenalezen")
             saveRecipe(c.orgId, id, p.recipe)
@@ -545,17 +586,17 @@ private fun Route.salesRoutes(db: Db) {
 
 // ---------- tills ----------
 
-private fun Route.deviceRoutes(db: Db) {
+private fun Route.deviceRoutes(db: Db, throttle: Throttle) {
     post("/device/pair") {
         val r = call.receive<PairRequest>()
         val token = Tokens.new("d_")
-        val res = db.tx {
+        val res = throttle.guard(listOf("ip:pair:" + call.clientIp() to Throttle.PER_ADDRESS)) { db.tx {
             val id = queryOne("SELECT id FROM devices WHERE pairing_code = ? AND pairing_expires_at > ? AND active", r.code.trim().uppercase(), System.currentTimeMillis()) { it.getLong(1) }
                 ?: throw ApiError(HttpStatusCode.NotFound, "Neplatný nebo prošlý párovací kód")
             update("UPDATE devices SET token_hash = ?, pairing_code = NULL, pairing_expires_at = NULL, paired_at = ?, app_version = ? WHERE id = ?",
                 Tokens.hash(token), System.currentTimeMillis(), r.appVersion, id)
             deviceConfig(id)
-        }
+        } }
         call.respond(PairResponse(token, res))
     }
     get("/device/config") {
@@ -603,7 +644,7 @@ private fun Route.deviceRoutes(db: Db) {
     post("/device/clock") {
         val d = call.device(db)
         val r = call.receive<ClockRequest>()
-        val res = db.tx {
+        val res = throttle.guard(listOf("pin:" + d.deviceId to Throttle.PIN_PER_DEVICE)) { db.tx {
             val staff = query("SELECT id, name, pin_hash FROM users WHERE org_id = ? AND active AND pin_hash IS NOT NULL", d.orgId) {
                 Triple(it.getLong(1), it.getString(2), it.getString(3))
             }.firstOrNull { Passwords.verify(r.pin, it.third) } ?: throw ApiError(HttpStatusCode.Unauthorized, "Neplatný PIN")
@@ -616,7 +657,7 @@ private fun Route.deviceRoutes(db: Db) {
                 insert("INSERT INTO attendance (org_id, branch_id, user_id, clock_in, device_id) VALUES (?,?,?,?,?)", d.orgId, d.branchId, staff.first, time, d.deviceId)
                 ClockResponse(staff.first, staff.second, "IN", time)
             }
-        }
+        } }
         call.respond(res)
     }
 }

@@ -43,7 +43,7 @@ class Db(val dataSource: DataSource) {
     }
 
     companion object {
-        private val MIGRATIONS = listOf("V1__schema.sql", "V2__memberships.sql", "V3__fractional_quantity.sql", "V4__menus.sql")
+        private val MIGRATIONS = listOf("V1__schema.sql", "V2__memberships.sql", "V3__fractional_quantity.sql", "V4__menus.sql", "V5__table_orders.sql", "V6__catalog_full.sql", "V7__till_settings.sql", "V8__till_snapshots.sql", "V9__app_releases.sql", "V10__device_deleted.sql")
 
         /**
          * DATABASE_URL like jdbc:postgresql://host:5432/flos (with DATABASE_USER / DATABASE_PASSWORD),
@@ -72,6 +72,7 @@ private fun PreparedStatement.bind(params: Array<out Any?>) {
             is Int -> setInt(i + 1, p)
             is Boolean -> setBoolean(i + 1, p)
             is String -> setString(i + 1, p)
+            is ByteArray -> setBytes(i + 1, p)
             is Enum<*> -> setString(i + 1, p.name)
             else -> setObject(i + 1, p)
         }

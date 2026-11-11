@@ -73,3 +73,12 @@ dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top
 
 .company-switch { max-width: 280px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: inherit; font: inherit; }
 @media (max-width: 700px) { .company-switch { max-width: 150px; } #org-name { display: none; } }
+.thumb { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; display: block; }
+.photo { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.photo img { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; }
+
+.settings-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; max-width: 720px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+.live-order { margin-bottom: 12px; }
+.live-order h3 { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin: 0 0 8px; }
+.live-order .right { margin-left: auto; }

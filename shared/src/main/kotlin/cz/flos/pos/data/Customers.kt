@@ -22,6 +22,8 @@ data class CustomerEntity(
     /** Loyalty card number or barcode. */
     val cardCode: String? = null,
     val createdAt: Long = 0,
+    /** Birthday as typed ("15.3." or "15.3.1990"), see cz.flos.core.Birthdays (Pokročilé nastavení). */
+    val birthday: String? = null,
 )
 
 data class CustomerTotals(val count: Int, val total: Long)

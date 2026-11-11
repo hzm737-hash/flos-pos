@@ -12,11 +12,13 @@ class FlosApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // A backup chosen in Pokročilé nastavení → Obnovit is put in place before the database opens.
+        runCatching { cz.flos.pos.backup.FlosBackup.applyPending(filesDir, PrefsStore(this)) }
         val database = Room.databaseBuilder(this, FlosDatabase::class.java, FlosDatabase.FILE_NAME)
             .setDriver(AndroidSQLiteDriver())
             .addMigrations(*FlosDatabase.MIGRATIONS)
             .build()
-        container = FlosContainer(AndroidPlatform(this), database, PrefsStore(this))
+        container = FlosContainer(AndroidPlatform(this), database, cz.flos.pos.security.EncryptedStore(PrefsStore(this), AndroidSecretKey::getOrCreate))
         EetRetryWorker.schedulePeriodic(this)
     }
 }

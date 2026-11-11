@@ -6,6 +6,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /** Mailbox that receives the bank's payment notifications. */
@@ -27,9 +29,7 @@ data class FetchedMail(val uid: Long, val raw: ByteArray)
 class ImapClient(
     private val account: ImapAccount,
     private val timeoutMs: Int = 20_000,
-    private val socketFactory: () -> Socket = {
-        SSLSocketFactory.getDefault().createSocket().also { it.soTimeout = timeoutMs }
-    },
+    private val socketFactory: () -> Socket = { verifiedTlsSocket(account.host, account.port, timeoutMs) },
 ) {
     private lateinit var input: InputStream
     private lateinit var output: OutputStream
@@ -142,3 +142,31 @@ class ImapClient(
         }
     }
 }
+
+/**
+ * Opens a TLS connection and checks that the server's certificate really belongs to [host].
+ * A plain SSL socket only checks that the certificate is signed by a trusted authority, not
+ * whose it is, so on a public Wi-Fi someone could pose as the mail server and read the password.
+ */
+internal fun verifiedTlsSocket(host: String, port: Int, timeoutMs: Int): Socket {
+    val plain = Socket()
+    try {
+        plain.connect(InetSocketAddress(host, port), timeoutMs)
+        plain.soTimeout = timeoutMs
+        val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, port, true) as SSLSocket
+        tls.sslParameters = tls.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+        tls.startHandshake()
+        // Android's TLS stack may not apply the setting above on every version, so check again there.
+        if (System.getProperty("java.vendor").orEmpty().contains("Android", ignoreCase = true) &&
+            !HttpsURLConnection.getDefaultHostnameVerifier().verify(host, tls.session)
+        ) {
+            tls.close()
+            throw javax.net.ssl.SSLPeerUnverifiedException("Certifikát serveru nepatří k $host")
+        }
+        return tls
+    } catch (e: Exception) {
+        runCatching { plain.close() }
+        throw e
+    }
+}
+

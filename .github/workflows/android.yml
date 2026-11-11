@@ -23,8 +23,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Test core logic
         run: ./gradlew :core:test
+      # The permanent signing key (repository secrets) lets every new flos.apk install as an update over the
+      # old one without losing data. Without the secrets the build still works, signed with a random key.
       - name: Build APKs
-        run: ./gradlew :app:assembleDebug :app:assembleRelease
+        env:
+          FLOS_UPLOAD_KEYSTORE_BASE64: ${{ secrets.FLOS_UPLOAD_KEYSTORE_BASE64 }}
+          FLOS_UPLOAD_PASSWORD: ${{ secrets.FLOS_UPLOAD_PASSWORD }}
+        run: |
+          if [ -n "$FLOS_UPLOAD_KEYSTORE_BASE64" ]; then
+            echo "$FLOS_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flos-upload.p12"
+            export FLOS_UPLOAD_KEYSTORE="$RUNNER_TEMP/flos-upload.p12"
+            echo "Signing with the permanent Flos key"
+          else
+            echo "::warning::No FLOS_UPLOAD_KEYSTORE_BASE64 secret: APKs are signed with a random key and cannot update an installed Flos."
+          fi
+          ./gradlew :app:assembleDebug :app:assembleRelease
+          rm -f "$RUNNER_TEMP/flos-upload.p12"
       # Pull requests keep the files for 3 days. A full artifact storage must not fail the build.
       - name: Upload APKs
         if: github.event_name == 'pull_request'
@@ -53,6 +67,20 @@ jobs:
           Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
 
           Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
+      # Optional: the same flos.apk also goes to the back office (page Aktualizace), so tills with
+      # "Aktualizace z back office" switched on offer it. Needs the secrets FLOS_BO_URL (e.g. https://flos.gnocco.cz)
+      # and FLOS_BO_KEY (a back office API key with write access); without them this step does nothing.
+      - name: Send flos.apk to the back office
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          FLOS_BO_URL: ${{ secrets.FLOS_BO_URL }}
+          FLOS_BO_KEY: ${{ secrets.FLOS_BO_KEY }}
+        run: |
+          if [ -z "$FLOS_BO_URL" ] || [ -z "$FLOS_BO_KEY" ]; then echo "No FLOS_BO_URL / FLOS_BO_KEY secrets: skipped"; exit 0; fi
+          curl -sS --fail-with-body -X POST -H "Authorization: Bearer $FLOS_BO_KEY" -H "Content-Type: application/octet-stream" \
+            --data-binary @flos.apk "${FLOS_BO_URL%/}/api/v1/app-releases?platform=android&versionName=1.0.${GITHUB_RUN_NUMBER}&notes=Build%20${GITHUB_SHA::7}" -o /dev/null
+          echo "Sent version 1.0.${GITHUB_RUN_NUMBER} to the back office"
       # Google Play bundle, signed with the upload key from the repository secrets
       # FLOS_UPLOAD_KEYSTORE_BASE64 and FLOS_UPLOAD_PASSWORD. Skipped until those secrets exist.
       - name: Build Google Play bundle
@@ -64,7 +92,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           echo "$FLOS_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/flos-upload.p12"
-          FLOS_UPLOAD_KEYSTORE="$RUNNER_TEMP/flos-upload.p12" ./gradlew :app:bundleRelease
+          FLOS_UPLOAD_KEYSTORE="$RUNNER_TEMP/flos-upload.p12" ./gradlew :app:bundleRelease -PflosPlay=true
           rm -f "$RUNNER_TEMP/flos-upload.p12"
           cp app/build/outputs/bundle/release/*.aab flos-play.aab
           gh release upload latest flos-play.aab --clobber

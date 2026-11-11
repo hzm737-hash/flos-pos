@@ -135,7 +135,10 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
                     OutlinedTextField(value = reason, onValueChange = { reason = it }, label = { Text(tr("Důvod (nezaplaceno, vráceno, …)")) }, singleLine = true)
                 }
             },
-            confirmButton = { Button(onClick = { vm.cancelOrder(sw, reason); cancelling = null }) { Text(tr("Zrušit objednávku")) } },
+            confirmButton = {
+                val needReason = vm.settings.collectAsState().value.on(cz.flos.pos.data.AdvFeature.STORNO_REASON)
+                Button(onClick = { vm.cancelOrder(sw, reason); cancelling = null }, enabled = !needReason || reason.isNotBlank()) { Text(tr("Zrušit objednávku")) }
+            },
             dismissButton = { TextButton(onClick = { cancelling = null }) { Text(tr("Zpět")) } },
         )
     }

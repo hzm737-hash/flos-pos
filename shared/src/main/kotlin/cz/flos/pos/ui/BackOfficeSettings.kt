@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import cz.flos.pos.LocalPlatform
 import cz.flos.pos.data.AppSettings
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -63,6 +64,12 @@ fun BackOfficeSettings(vm: PosViewModel, s: AppSettings) {
             Button(onClick = { vm.syncNow() }) { Text(tr("Synchronizovat teď")) }
             OutlinedButton(onClick = { confirm = true }) { Text(tr("Odpojit")) }
         }
+        Text(
+            tr("Kategorie a produkty můžete upravovat v pokladně i v back office, platí vždy poslední změna. Produkty, které vznikly v pokladně ještě před spárováním, pošlete do back office jednou tímto tlačítkem."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = { vm.uploadLocalCatalog() }) { Text(tr("Nahrát produkty z pokladny do back office")) }
+        if (s.on(cz.flos.pos.data.AdvFeature.APP_UPDATES)) AppUpdateRow(vm)
         if (confirm) AlertDialog(
             onDismissRequest = { confirm = false },
             title = { Text(tr("Odpojit od back office?")) },
@@ -83,6 +90,31 @@ fun BackOfficeSettings(vm: PosViewModel, s: AppSettings) {
         tr("Na Windows se otevře druhé okno, které přetáhnete na monitor otočený k zákazníkovi. Na Androidu se použije druhý displej (např. pokladna se zákaznickým displejem nebo monitor přes HDMI)."),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** A newer app build from the back office: what is new and a button that downloads and installs it over this app. */
+@Composable
+private fun AppUpdateRow(vm: PosViewModel) {
+    val update by vm.appUpdate.collectAsState()
+    val platform = LocalPlatform.current
+    Section(tr("Aktualizace aplikace"))
+    if (platform.updatePlatform == null) {
+        Text(tr("Tato pokladna dostává aktualizace jinak (Google Play nebo instalační program pro Windows)."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    Text(tr("Nainstalovaná verze: %s", platform.appVersionName.ifBlank { "—" }), style = MaterialTheme.typography.bodySmall)
+    val u = update
+    if (u == null) {
+        Text(tr("Pokladna se dívá na novou verzi každých 30 minut."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = { vm.checkAppUpdateNow() }) { Text(tr("Zkontrolovat aktualizaci")) }
+    } else {
+        Text(tr("Nová verze %s (%d MB)", u.versionName, ((u.size + 524_287) / 1_048_576).toInt()), style = MaterialTheme.typography.bodyMedium)
+        if (u.notes.isNotBlank()) Text(u.notes, style = MaterialTheme.typography.bodySmall)
+        Text(tr("Po stažení klepněte na soubor a zvolte Instalovat. Aplikace se aktualizuje a všechna data zůstanou. Telefon se může zeptat, zda smí prohlížeč instalovat aplikace."),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(onClick = { vm.installAppUpdate() }) { Text(tr("Stáhnout a nainstalovat")) }
+    }
 }
 
 /**

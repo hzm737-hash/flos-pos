@@ -1,5 +1,6 @@
 package cz.flos.pos
 
+import androidx.compose.ui.graphics.asImageBitmap
 import android.Manifest
 import android.app.Activity
 import cz.flos.pos.billing.PlayDonations
@@ -71,6 +72,43 @@ class AndroidPlatform(private val context: Context) : Platform {
             onDone(ok)
         }
         return { name, bytes -> pending[0] = bytes; if (runCatching { launcher.launch(name) }.isFailure) { pending[0] = null; onDone(false) } }
+    }
+
+    override fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = runCatching {
+        // Tiles are small: decode at most about 400 px wide to save memory.
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 400) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+            ?.asImageBitmap()
+    }.getOrNull()
+
+    override fun beep() {
+        runCatching {
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+            tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 600)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 1_000)
+        }
+    }
+
+    private val packageInfo by lazy { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }
+
+    override val appVersionCode: Int get() = packageInfo?.let {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode.toInt() else @Suppress("DEPRECATION") it.versionCode
+    } ?: 0
+
+    override val appVersionName: String get() = packageInfo?.versionName.orEmpty()
+
+    /** An app installed from Google Play gets its updates from Play only. */
+    override val updatePlatform: String? get() {
+        if (BuildConfig.PLAY_STORE) return null
+        val installer = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+            else @Suppress("DEPRECATION") context.packageManager.getInstallerPackageName(context.packageName)
+        }.getOrNull()
+        return if (installer == "com.android.vending") null else "android"
     }
 
     override fun openUrl(url: String): Boolean = runCatching {

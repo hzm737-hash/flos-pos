@@ -57,6 +57,18 @@ interface Platform {
     @Composable
     fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit
 
+    /** A short sound when something new arrives (an order from a table); silent where not supported. */
+    fun beep() {}
+
+    /** A product photo (JPEG, PNG or WebP) as an image for the screen; null where it cannot be read. */
+    fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = null
+
+    /** Version of the installed app (Android versionCode); 0 where unknown. */
+    val appVersionCode: Int get() = 0
+    val appVersionName: String get() = ""
+
+    /** Which app builds from the back office fit this till ("android"); null when updates come another way (Google Play, Windows). */
+    val updatePlatform: String? get() = null
     /** Donation amounts the user can choose; empty when donations are not available here. */
     suspend fun donationOptions(): List<DonationOption> = emptyList()
 
