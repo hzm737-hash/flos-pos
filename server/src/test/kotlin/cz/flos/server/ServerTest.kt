@@ -287,10 +287,47 @@ class ServerTest {
         client.postJson("/api/v1/device/table-orders/$id/ack", cz.flos.core.TableOrderAck(true), dt.token)
         assertEquals("ACCEPTED", client.get("/menu/$slug/order/$id?t=5&k=$key").body<GuestOrderStatus>().status)
 
+        // The web admin reads the orders from the tables with the dish names from the menu.
+        val seen = client.get("/api/v1/table-orders") { bearerAuth(token) }.body<List<TableOrderView>>().single()
+        assertEquals("ACCEPTED", seen.status)
+        assertEquals("Margherita", seen.lines.single().name)
+        assertEquals("Velká, Sýr, Šunka", seen.lines.single().choices)
+        assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/table-orders") { bearerAuth(dt.token) }.status)
+
         // Ordering switched off on the till: the same QR shows only the menu and orders are refused.
         client.put("/api/v1/device/menu") { bearerAuth(dt.token); contentType(ContentType.Application.Json); setBody(menu.copy(ordering = false)) }
         assertTrue(!client.get(link).bodyAsText().contains("flos-order"))
         assertEquals(HttpStatusCode.BadRequest, client.postJson("/menu/$slug/order", cz.flos.core.GuestOrder("5", key, listOf(line))).status)
+    }
+
+    @Test fun tillSnapshotIsShownReadOnly() = run { client ->
+        val token = client.register()
+        val branch = client.get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
+        val device = client.postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
+        val dt = client.postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>()
+        assertNull(client.get("/api/v1/till-live") { bearerAuth(token) }.body<List<TillLiveDevice>>().single().snapshot)
+
+        val snap = cz.flos.core.backoffice.BoTillSnapshot(
+            takenAt = System.currentTimeMillis() + 3_600_000, // a till clock ahead is cut to the server time
+            openOrders = listOf(cz.flos.core.backoffice.BoOpenOrder(table = "5", total = 37800, items = listOf(cz.flos.core.backoffice.BoOrderLine("Margherita", 2.0, 18900)))),
+            cash = cz.flos.core.backoffice.BoCashState(0, 100000, 37800, 0, 0, 0, 137800),
+            customers = List(2500) { cz.flos.core.backoffice.BoCustomer("Host $it") },
+            eetWaiting = 1,
+        )
+        suspend fun send(body: cz.flos.core.backoffice.BoTillSnapshot, t: String) =
+            client.put("/api/v1/device/snapshot") { bearerAuth(t); contentType(ContentType.Application.Json); setBody(body) }.status
+        assertEquals(HttpStatusCode.OK, send(snap, dt.token))
+        assertEquals(HttpStatusCode.OK, send(snap.copy(eetWaiting = 0), dt.token)) // replaces the previous one
+        assertEquals(HttpStatusCode.Forbidden, send(snap, token)) // only paired tills send
+
+        val live = client.get("/api/v1/till-live") { bearerAuth(token) }.body<List<TillLiveDevice>>().single()
+        val s = live.snapshot!!
+        assertEquals("5", s.openOrders.single().table)
+        assertEquals(137800L, s.cash!!.expected)
+        assertEquals(0, s.eetWaiting)
+        assertEquals(cz.flos.core.backoffice.BoTillSnapshot.MAX_CUSTOMERS, s.customers.size)
+        assertTrue(s.takenAt <= System.currentTimeMillis())
+        assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/till-live") { bearerAuth(dt.token) }.status)
     }
 
     @Test fun guestOrdersAreThrottledPerTable() = run { client ->

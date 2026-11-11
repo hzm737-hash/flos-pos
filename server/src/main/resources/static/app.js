@@ -613,4 +613,79 @@ pages.tills = async (main) => {
   render();
 };
 
+// ---------- Live from the tills (read only; tills with "Přehled pokladny v back office" switched on) ----------
+const CASH_KIND = { FLOAT: 'Počáteční stav', IN: 'Vklad', OUT: 'Výběr', CLOSE: 'Uzavření směny' };
+const DOC_KIND = { QUOTE: 'Nabídka', PROFORMA: 'Zálohová faktura', SALES_ORDER: 'Objednávka' };
+const DOC_STATUS = { OPEN: 'otevřený', DONE: 'vyřízený', CANCELLED: 'zrušený' };
+const BOOKING = { BOOKED: 'rezervováno', SEATED: 'usazeni', NO_SHOW: 'nepřišli', CANCELLED: 'zrušeno' };
+const TABLE_ORDER = { NEW: 'čeká', FETCHED: 'na pokladně', ACCEPTED: 'přijato', REJECTED: 'odmítnuto' };
+const day = (d) => (d == null ? '–' : new Date(d * 86400000).toLocaleDateString(LOCALE));
+const LIVE_TABS = [['orders', 'Otevřené stoly'], ['cash', 'Hotovost a směny'], ['customers', 'Zákazníci'], ['reservations', 'Rezervace'],
+  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů']];
+
+function liveTab(tab, s) {
+  const none = '<p class="muted">Nic tu není.</p>';
+  if (tab === 'orders') return s.openOrders.length ? s.openOrders.map((o) => `<div class="card live-order"><h3>${o.table ? 'Stůl ' + esc(o.table) : 'Objednávka č. ' + (o.number ?? '')}
+      <span class="muted">· ${dt(o.openedAt)}${o.cashier ? ' · ' + esc(o.cashier) : ''}${o.serviceType ? ' · ' + esc(o.serviceType) : ''}</span>
+      ${o.kitchenReady ? '<span class="badge ok">hotovo v kuchyni</span>' : ''}<b class="right">${kc(o.total)}</b></h3>
+      ${o.note ? `<p class="muted">${esc(o.note)}</p>` : ''}
+      <table>${o.items.map((i) => `<tr><td>${qty(i.quantity)}×</td><td>${esc(i.name)}${i.discountPercent ? ` <span class="badge">−${i.discountPercent} %</span>` : ''}</td><td class="num">${kc(i.unitPrice)}</td></tr>`).join('')}</table></div>`).join('') : none;
+  if (tab === 'cash') {
+    const c = s.cash;
+    return `${c ? `<div class="grid">${[['Má být v zásuvce', c.expected], ['Počáteční stav', c.float], ['Hotovost z prodeje', c.sales], ['Vráceno', c.refunds], ['Vklady', c.cashIn], ['Výběry', c.cashOut]]
+        .map(([l, v]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${kc(v)}</div></div>`).join('')}</div>
+        <p class="muted">Směna od: ${c.since ? dt(c.since) : 'začátku'}${s.eetWaiting ? ` · <span class="badge warn">EET čeká: ${s.eetWaiting}</span>` : ''}</p>` : ''}
+      <h2>Pohyby v této směně</h2>${s.cashMoves.length ? `<table><tr><th>Čas</th><th>Druh</th><th class="num">Částka</th><th>Poznámka</th><th>Kdo</th></tr>
+        ${s.cashMoves.map((m) => `<tr><td>${dt(m.at)}</td><td>${CASH_KIND[m.kind] || esc(m.kind)}</td><td class="num">${kc(m.amount)}</td><td>${esc(m.note)}</td><td>${esc(m.cashier)}</td></tr>`).join('')}</table>` : none}
+      <h2>Uzavřené směny</h2>${s.shiftCloses.length ? `<table><tr><th>Uzavřeno</th><th class="num">Napočítáno</th><th class="num">Mělo být</th><th class="num">Rozdíl</th><th>Kdo</th></tr>
+        ${s.shiftCloses.map((x) => `<tr><td>${dt(x.at)}</td><td class="num">${kc(x.counted)}</td><td class="num">${x.expected == null ? '–' : kc(x.expected)}</td>
+          <td class="num">${x.expected == null ? '–' : kc(x.counted - x.expected)}</td><td>${esc(x.cashier)}</td></tr>`).join('')}</table>` : none}`;
+  }
+  if (tab === 'customers') return s.customers.length ? `<p class="muted">Zákazníků: ${s.customers.length}</p><table><tr><th>Jméno</th><th>Telefon</th><th>E-mail</th><th class="num">Body</th><th class="num">Sleva</th><th>Narozeniny</th><th>Karta</th><th>Poznámka</th></tr>
+      ${s.customers.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.phone)}</td><td>${esc(x.email)}</td><td class="num">${x.points}</td><td class="num">${x.discountPercent ? x.discountPercent + ' %' : ''}</td>
+        <td>${esc(x.birthday || '')}</td><td>${esc(x.cardCode || '')}</td><td>${esc(x.note)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'reservations') return s.reservations.length ? `<table><tr><th>Kdy</th><th>Jméno</th><th>Telefon</th><th class="num">Hosté</th><th>Stůl</th><th>Stav</th><th>Poznámka</th></tr>
+      ${s.reservations.map((r) => `<tr><td>${dt(r.at)}</td><td>${esc(r.name)}</td><td>${esc(r.phone)}</td><td class="num">${r.guests}</td><td>${esc(r.table || '')}</td>
+        <td>${BOOKING[r.status] || esc(r.status)}</td><td>${esc(r.note)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'documents') return s.documents.length ? `<table><tr><th>Číslo</th><th>Druh</th><th>Vytvořeno</th><th>Zákazník</th><th class="num">Celkem</th><th>Termín</th><th>Stav</th></tr>
+      ${s.documents.map((d) => `<tr><td>${esc(d.number)}</td><td>${DOC_KIND[d.kind] || esc(d.kind)}</td><td>${dt(d.createdAt)}</td><td>${esc(d.customer)}</td><td class="num">${kc(d.total)}</td>
+        <td>${day(d.dueDay)}</td><td>${DOC_STATUS[d.status] || esc(d.status)}</td></tr>`).join('')}</table>` : none;
+  if (tab === 'audit') return s.audit.length ? `<table><tr><th>Čas</th><th>Co se stalo</th><th>Kdo</th></tr>
+      ${s.audit.map((a) => `<tr><td>${dt(a.at)}</td><td>${esc(a.text)}</td><td>${esc(a.author)}</td></tr>`).join('')}</table>` : none;
+  return '';
+}
+
+async function tableOrdersHtml() {
+  const list = await api('/table-orders?days=2');
+  if (!list.length) return '<p class="muted">Za poslední dva dny žádné objednávky ze stolů.</p>';
+  return `<table><tr><th>Čas</th><th>Stůl</th><th>Položky</th><th>Poznámka</th><th>Stav</th></tr>
+    ${list.map((o) => `<tr><td>${dt(o.createdAt)}</td><td>${esc(o.table)}</td>
+      <td>${o.lines.map((l) => `${l.qty}× ${esc(l.name)}${l.choices ? ` <span class="muted">(${esc(l.choices)})</span>` : ''}${l.note ? ` – <i>${esc(l.note)}</i>` : ''}`).join('<br>')}</td>
+      <td>${esc(o.note)}</td><td>${TABLE_ORDER[o.status] || esc(o.status)}</td></tr>`).join('')}</table>`;
+}
+
+pages.live = async (main) => {
+  const devices = await api('/till-live');
+  const withData = devices.filter((d) => d.snapshot);
+  let dev = withData[0] ? String(withData[0].id) : '';
+  let tab = 'orders';
+  main.innerHTML = `<h1>Živě z pokladen</h1>
+    <p class="muted">Co se děje na pokladnách, které mají zapnuté Pokročilé nastavení → Přehled pokladny v back office. Pokladny to posílají každou minutu, tady se to jen čte.</p>
+    <div class="toolbar"><label>Pokladna<select id="live-dev">${devices.map((d) => `<option value="${d.id}" ${String(d.id) === dev ? 'selected' : ''}>${esc(d.name)}${d.snapshot ? '' : ' (nic neposlala)'}</option>`).join('')}</select></label>
+    <button id="live-refresh">Obnovit</button></div>
+    <div class="tabs">${LIVE_TABS.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</div><div id="live"></div>`;
+  const show = async () => {
+    document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('primary', b.dataset.tab === tab));
+    const box = $('#live');
+    if (tab === 'qr') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await tableOrdersHtml(); return; }
+    const d = devices.find((x) => String(x.id) === dev);
+    if (!d || !d.snapshot) { box.innerHTML = '<p class="muted">Tato pokladna zatím nic neposlala. Zapněte na ní Pokročilé nastavení → Přehled pokladny v back office.</p>'; return; }
+    box.innerHTML = `<p class="muted">Stav z ${dt(d.snapshot.takenAt)}</p>` + liveTab(tab, d.snapshot);
+  };
+  $('#live-dev').onchange = (e) => { dev = e.target.value; show(); };
+  $('#live-refresh').onclick = () => route();
+  document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { tab = b.dataset.tab; show().catch((e) => toast(e.message)); }));
+  await show();
+};
+
 start();

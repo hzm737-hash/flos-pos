@@ -78,3 +78,7 @@ dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top
 .photo img { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; }
 
 .settings-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; max-width: 720px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+.live-order { margin-bottom: 12px; }
+.live-order h3 { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin: 0 0 8px; }
+.live-order .right { margin-left: auto; }

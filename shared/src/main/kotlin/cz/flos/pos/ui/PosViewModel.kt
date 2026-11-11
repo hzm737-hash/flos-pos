@@ -160,6 +160,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 if (settings.value.bankSource != BankSource.OFF) checkBank(silent = true)
                 if (settings.value.paired && minute % 5 == 0) syncBackOffice(silent = true)
                 else if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) runCatching { flos.backOffice.syncSettings() }
+                if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_LIVE)) runCatching { flos.backOffice.uploadSnapshot(tillSnapshot()) }
                 minute++
                 delay(60_000)
             }
@@ -1371,6 +1372,40 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         catalog.clearCategory(c.id)
         catalog.deleteCategory(c.id)
         c.remoteId?.let { id -> flos.settings.update { s -> s.copy(boDeletedCategories = (s.boDeletedCategories.split(',').filter { it.isNotBlank() } + id.toString()).joinToString(",")) } }
+    }
+
+    /** What is going on at this till, for the back office to show (Pokročilé nastavení → Přehled pokladny v back office). */
+    // Reads the database directly: this runs from init, before the properties further down exist.
+    private suspend fun tillSnapshot(): cz.flos.core.backoffice.BoTillSnapshot {
+        val max = cz.flos.core.backoffice.BoTillSnapshot.MAX_LIST
+        val since = cashDao.lastClose().first()
+        val moves = cashDao.since(since).first()
+        val cashSales = salesDao.cashReceivedSince(since).first()
+        val cashRefunds = salesDao.cashRefundedSince(since).first()
+        val cash = CashState(since, moves.filter { it.cashKind == CashKind.FLOAT }.sumOf { it.amount }, cashSales, cashRefunds,
+            moves.filter { it.cashKind == CashKind.IN }.sumOf { it.amount }, moves.filter { it.cashKind == CashKind.OUT }.sumOf { it.amount })
+        return cz.flos.core.backoffice.BoTillSnapshot(
+            takenAt = System.currentTimeMillis(),
+            openOrders = salesDao.openOrders().first().take(max).map { o ->
+                cz.flos.core.backoffice.BoOpenOrder(o.sale.orderNumber, o.sale.tableName, o.sale.note, o.sale.openedAt ?: o.sale.createdAt, o.toCart().total,
+                    o.sale.cashier, o.sale.serviceType, o.sale.kitchenReadyAt != null,
+                    o.items.map { cz.flos.core.backoffice.BoOrderLine(it.name, it.quantity, it.unitPrice, it.discountPercent) })
+            },
+            cash = cz.flos.core.backoffice.BoCashState(cash.since, cash.float, cash.sales, cash.refunds, cash.cashIn, cash.cashOut, cash.expected),
+            shiftCloses = cashDao.closes(30).first().map { cz.flos.core.backoffice.BoShiftClose(it.at, it.amount, it.expected, it.cashier) },
+            cashMoves = moves.takeLast(max).map { cz.flos.core.backoffice.BoCashMove(it.at, it.kind, it.amount, it.note, it.cashier) },
+            customers = customerDao.all().first().take(cz.flos.core.backoffice.BoTillSnapshot.MAX_CUSTOMERS).map {
+                cz.flos.core.backoffice.BoCustomer(it.name, it.phone, it.email, it.points, it.discountPercent, it.birthday, it.note, it.cardCode)
+            },
+            reservations = flos.database.reservations().from(System.currentTimeMillis() - 86_400_000L).first().take(max).map {
+                cz.flos.core.backoffice.BoReservation(it.at, it.name, it.phone, it.guests, it.minutes, it.tableName, it.note, it.status)
+            },
+            documents = flos.database.documents().all().first().take(max).map {
+                cz.flos.core.backoffice.BoDocument(it.kind, it.number, it.createdAt, it.customerName, it.total, it.status, it.dueDay, it.note)
+            },
+            audit = flos.database.notes().of(cz.flos.pos.data.NoteTarget.AUDIT.name, null).first().take(max).map { cz.flos.core.backoffice.BoAuditEntry(it.createdAt, it.text, it.author) },
+            eetWaiting = eetDao.open().first().size,
+        )
     }
 
     /** The photo of a product from the back office, when it is downloaded. */

@@ -88,6 +88,11 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
     fun syncSettings(up: BoSettingsUpload): BoSettingsResult =
         request("POST", "/device/settings", json.encodeToString(BoSettingsUpload.serializer(), up), BoSettingsResult.serializer())
 
+    /** Sends what is going on at this till (open tables, cash, customers…) for the back office to show. */
+    fun uploadSnapshot(s: BoTillSnapshot) {
+        request("PUT", "/device/snapshot", json.encodeToString(BoTillSnapshot.serializer(), s), BoOk.serializer())
+    }
+
     /** A product photo ("<id>-<key>"), or null when it cannot be loaded. */
     fun image(ref: String): ByteArray? {
         if (!Regex("""^\d{1,18}-[0-9a-f]{32}$""").matches(ref)) return null

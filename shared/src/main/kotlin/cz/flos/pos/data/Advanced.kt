@@ -17,4 +17,5 @@ enum class AdvFeature(val label: String, val hint: String) {
     TABLE_PLAN("Plán stolů a přesun účtu", "Stoly rozmístíte tažením jako v podniku a otevřený účet přesunete na jiný stůl (podržte stůl)."),
     QR_ORDERING("Objednávky z QR kódu na stole", "Host naskenuje QR kód stolu, vybere z menu a objednávka přijde sem na stůl. Potřebuje propojení s back office a zveřejněné QR menu."),
     BO_SETTINGS("Nastavení z back office", "Nastavení této pokladny uvidíte a změníte i v back office (Nastavení pokladen). Po zapnutí pokladna převezme nastavení firmy, pokud už v back office jsou, jinak tam pošle svoje. Hesla a tokeny zůstávají jen v pokladně. Platí poslední změna."),
+    BO_LIVE("Přehled pokladny v back office", "Back office ukazuje, co se na pokladně děje: otevřené stoly a objednávky, hotovost ve směně, zákazníky, rezervace, doklady a záznam. Posílá se každou minutu, v back office se jen čte."),
 }
