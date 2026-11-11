@@ -355,13 +355,18 @@ pages.branches = async (main) => {
     <h2>Pokladny</h2><table><tr><th>Název</th><th>Provozovna</th><th>Označení EET</th><th>Stav</th><th>Naposledy online</th><th></th></tr>
     ${devices.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc((bl.find((b) => b.id === d.branchId) || {}).name)}</td><td>${esc(d.eetIdPokl)}</td>
       <td>${d.pairingCode ? `Párovací kód <span class="code">${esc(d.pairingCode)}</span>` : d.pairedAt ? '<span class="badge ok">spárováno</span>' : '<span class="badge">nespárováno</span>'}</td>
-      <td>${dt(d.lastSeenAt)}</td><td><button data-pair="${d.id}">Nový kód</button></td></tr>`).join('')}</table>
+      <td>${dt(d.lastSeenAt)}</td><td><button data-pair="${d.id}">Nový kód</button> <button class="danger" data-del-dev="${d.id}">Smazat</button></td></tr>`).join('')}</table>
     <p class="muted">Na pokladně otevřete Nastavení → Back office a zadejte adresu serveru a párovací kód (platí 24 hodin).</p><dialog id="dlg"></dialog>`;
   $('#nb').onclick = () => branchDialog(null);
   document.querySelectorAll('[data-b]').forEach((tr) => tr.addEventListener('click', () => branchDialog(bl.find((b) => b.id == tr.dataset.b))));
   $('#nd').onclick = () => deviceDialog(bl);
   document.querySelectorAll('[data-pair]').forEach((btn) => btn.addEventListener('click', async () => {
     const r = await api(`/devices/${btn.dataset.pair}/pair`, { method: 'POST' }); toast('Nový párovací kód: ' + r.pairingCode); route();
+  }));
+  document.querySelectorAll('[data-del-dev]').forEach((btn) => btn.addEventListener('click', async () => {
+    const dev = devices.find((x) => String(x.id) === btn.dataset.delDev);
+    if (!confirm(t('Smazat pokladnu?') + '\n' + dev.name + '\n\n' + t('Pokladna se odpojí a zmizí z back office. Účtenky z ní zůstanou v přehledech a exportech.'))) return;
+    try { await api('/devices/' + dev.id, { method: 'DELETE' }); toast(t('Pokladna smazána')); route(); } catch (e) { toast(t(e.message)); }
   }));
 };
 function branchDialog(b) {
