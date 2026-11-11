@@ -16,8 +16,14 @@ class FlosContainer(
     val settings = SettingsStore(store)
     val printer = PrinterRouter(platform, NetworkPrinter())
     val bank = cz.flos.pos.bank.BankSync(settings, database.bank(), database.sales())
-    val backOffice = cz.flos.pos.sync.BackOfficeSync(settings, database, imageDir = java.io.File(platform.dataDir, "images"))
     val eet = EetService(platform.dataDir, database.eet()) { settings.state.value }
+    val backOffice = cz.flos.pos.sync.BackOfficeSync(settings, database, imageDir = java.io.File(platform.dataDir, "images")) {
+        val s = settings.state.value
+        mapOf(
+            "eetCertificate" to eet.hasCertificate(), "eetCertPassword" to s.eetCertPassword.isNotEmpty(),
+            "imapPassword" to s.imapPassword.isNotEmpty(), "fioToken" to s.fioToken.isNotEmpty(),
+        )
+    }
 
     init {
         // Background work (EET retries) produces messages too, so set the language before any UI exists.
