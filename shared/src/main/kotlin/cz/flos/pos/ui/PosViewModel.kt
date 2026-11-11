@@ -1352,13 +1352,34 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     // ---- Catalogue ----
-    fun saveProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertProduct(p) }
-    fun deleteProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.deactivateProduct(p.id) }
-    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertCategory(c) }
+    // Every change made here is marked, so the back office gets it with the next sync (the later change wins).
+    private fun ProductEntity.edited() = copy(dirty = true, updatedAt = System.currentTimeMillis())
+    private fun CategoryEntity.edited() = copy(dirty = true, updatedAt = System.currentTimeMillis())
+
+    fun saveProduct(p: ProductEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertProduct(p.edited()) }
+    fun deleteProduct(p: ProductEntity) = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
+        val current = catalog.allProducts().firstOrNull { it.id == p.id } ?: p
+        catalog.upsertProduct(current.copy(active = false).edited())
+    }
+    fun saveCategory(c: CategoryEntity) = viewModelScope.launch { if (allow(cz.flos.core.Permission.PRODUCTS)) catalog.upsertCategory(c.edited()) }
     fun deleteCategory(c: CategoryEntity) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         catalog.clearCategory(c.id)
         catalog.deleteCategory(c.id)
+        c.remoteId?.let { id -> flos.settings.update { s -> s.copy(boDeletedCategories = (s.boDeletedCategories.split(',').filter { it.isNotBlank() } + id.toString()).joinToString(",")) } }
+    }
+
+    /** The photo of a product from the back office, when it is downloaded. */
+    fun productImage(ref: String?): ByteArray? = flos.backOffice.imageBytes(ref)
+
+    /** Marks everything made on this till before it was paired, so it is sent to the back office once. */
+    fun uploadLocalCatalog() = viewModelScope.launch {
+        if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
+        val now = System.currentTimeMillis()
+        catalog.markLocalCategoriesForUpload(now)
+        catalog.markLocalProductsForUpload(now)
+        syncBackOffice(silent = false)
     }
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = flos.settings.update(transform)
@@ -1493,7 +1514,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         suspend fun categoryId(name: String): Long? {
             if (name.isBlank()) return null
             cats[cz.flos.core.Pricing.key(name)]?.let { return it.id }
-            val c = CategoryEntity(name = name.trim(), sortOrder = cats.size)
+            val c = CategoryEntity(name = name.trim(), sortOrder = cats.size).edited()
             val id = catalog.upsertCategory(c)
             cats[cz.flos.core.Pricing.key(name)] = c.copy(id = id)
             return id
@@ -1501,12 +1522,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val existing = catalog.allProducts().associateBy { it.id }
         plan.added.forEach { r ->
             catalog.upsertProduct(ProductEntity(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
-                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }).edited())
         }
         plan.changed.forEach { (id, r) ->
             val p = existing[id] ?: return@forEach
             catalog.upsertProduct(p.copy(name = r.name, price = r.price, vatPercent = r.vatPercent, categoryId = categoryId(r.category), active = r.active,
-                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }))
+                barcode = r.barcode.ifBlank { null }, options = r.options.ifBlank { null }, prices = r.prices.ifBlank { null }).edited())
         }
         _messages.tryEmit(tr("Import hotový: %d nových, %d změněných", plan.added.size, plan.changed.size))
     }
@@ -1518,7 +1539,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     fun bulkEdit(ids: Set<Long>, label: String, change: (ProductEntity) -> ProductEntity) = viewModelScope.launch {
         if (!allow(cz.flos.core.Permission.PRODUCTS)) return@launch
         val list = catalog.allProducts().filter { it.id in ids }
-        list.forEach { catalog.upsertProduct(change(it)) }
+        list.forEach { catalog.upsertProduct(change(it).edited()) }
         _messages.tryEmit(tr("%s: upraveno %d produktů", label, list.size))
     }
 
@@ -1632,11 +1653,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {
         val note = options.orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
         // With QR ordering on, guests can order the product: its id and the variants and extras the till offers.
-        if (!settings.value.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || openPrice) return cz.flos.core.MenuItem(name, price, note)
-        return cz.flos.core.MenuItem(name, price, note, id = id, options = cz.flos.core.ProductOptions.format(optionGroupsFor(this)))
+        val photo = image.orEmpty()
+        if (!settings.value.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || openPrice) return cz.flos.core.MenuItem(name, price, note, image = photo)
+        return cz.flos.core.MenuItem(name, price, note, id = id, options = cz.flos.core.ProductOptions.format(optionGroupsFor(this)), image = photo)
     }
 
-    fun menuHtml(): ByteArray = cz.flos.core.MenuPage.html(menuData()).toByteArray(Charsets.UTF_8)
+    /** The menu as a file for the owner's own web: without the photos, which live on the back office. */
+    fun menuHtml(): ByteArray = menuData().let { d ->
+        d.copy(categories = d.categories.map { c -> c.copy(items = c.items.map { it.copy(image = "") }) })
+    }.let { cz.flos.core.MenuPage.html(it).toByteArray(Charsets.UTF_8) }
 
     /** Publishes the menu on the back office; the link is kept in Settings. */
     fun publishMenu() = viewModelScope.launch {

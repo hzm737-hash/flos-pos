@@ -448,6 +448,8 @@ internal object En {
         "Spárováno jako %s s %s" to "Paired as %s with %s",
         "Poslední synchronizace: %s. Pokladna se synchronizuje sama každých 5 minut." to "Last sync: %s. The till syncs by itself every 5 minutes.",
         "Synchronizovat teď" to "Sync now",
+        "Kategorie a produkty můžete upravovat v pokladně i v back office, platí vždy poslední změna. Produkty, které vznikly v pokladně ještě před spárováním, pošlete do back office jednou tímto tlačítkem." to "You can edit categories and products on the till and in the back office; the latest change always wins. Products made on the till before pairing can be sent to the back office once with this button.",
+        "Nahrát produkty z pokladny do back office" to "Upload the till's products to the back office",
         "Odpojit" to "Disconnect",
         "Odpojit od back office?" to "Disconnect from the back office?",
         "Produkty a účtenky zůstanou v pokladně. Pro nové spárování budete potřebovat nový kód." to "Products and receipts stay on the till. To pair again you will need a new code.",

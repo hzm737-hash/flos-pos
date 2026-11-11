@@ -331,6 +331,7 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
                     p,
                     color = category?.let { Color(it.color) } ?: MaterialTheme.colorScheme.primary,
                     iconKey = p.icon ?: category?.icon,
+                    photo = productPhoto(vm, p.image),
                 ) {
                     val groups = vm.optionGroupsFor(p)
                     if (groups.isEmpty() && !p.openPrice) vm.addToCart(p) else choosing = p to groups
@@ -340,8 +341,19 @@ private fun ProductGrid(vm: PosViewModel, modifier: Modifier = Modifier) {
     }
 }
 
+/** The product photo downloaded from the back office, decoded once per photo. */
 @Composable
-private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClick: () -> Unit) {
+private fun productPhoto(vm: PosViewModel, ref: String?): androidx.compose.ui.graphics.ImageBitmap? {
+    if (ref.isNullOrBlank()) return null
+    val platform = cz.flos.pos.LocalPlatform.current
+    val photo by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, ref) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.productImage(ref)?.let(platform::decodeImage) }
+    }
+    return photo
+}
+
+@Composable
+private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, photo: androidx.compose.ui.graphics.ImageBitmap? = null, onClick: () -> Unit) {
     val content = contentColorOn(color)
     Card(
         onClick = onClick,
@@ -353,7 +365,13 @@ private fun ProductTile(p: ProductEntity, color: Color, iconKey: String?, onClic
         Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.Top) {
                 Text(p.name, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                ProductIcons.of(iconKey)?.let { icon ->
+                // A photo from the back office takes the place of the icon.
+                if (photo != null) {
+                    androidx.compose.foundation.Image(
+                        photo, null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)),
+                    )
+                } else ProductIcons.of(iconKey)?.let { icon ->
                     Box(
                         Modifier.size(34.dp).clip(CircleShape).background(content.copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center,

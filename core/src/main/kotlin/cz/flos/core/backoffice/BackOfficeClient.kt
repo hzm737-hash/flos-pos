@@ -25,11 +25,24 @@ import javax.crypto.spec.PBEKeySpec
     val deviceId: Long, val deviceName: String = "", val eetIdPokl: String = "", val org: BoOrg = BoOrg(), val branch: BoBranch = BoBranch(),
     val staff: List<BoStaff> = emptyList(),
 )
-@Serializable data class BoCategory(val id: Long, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0, val deleted: Boolean = false)
+@Serializable data class BoCategory(val id: Long, val name: String, val color: Long = 0xFF2E7D6B, val sortOrder: Int = 0, val deleted: Boolean = false,
+    val icon: String = "", val updatedAt: Long = 0)
 @Serializable data class BoProduct(
     val id: Long, val categoryId: Long? = null, val name: String, val price: Long, val vatPercent: Int = 21, val barcode: String = "",
     val sellable: Boolean = true, val sortOrder: Int = 0, val active: Boolean = true,
+    val options: String = "", val prices: String = "", val openPrice: Boolean = false, val icon: String = "", val image: String = "",
+    val updatedAt: Long = 0,
 )
+/** A category or product created or changed on the till, sent to the back office. */
+@Serializable data class BoDeviceCategory(val localId: Long, val remoteId: Long? = null, val name: String, val color: Long, val sortOrder: Int = 0,
+    val icon: String = "", val deleted: Boolean = false, val updatedAt: Long = 0)
+@Serializable data class BoDeviceProduct(
+    val localId: Long, val remoteId: Long? = null, val categoryRemoteId: Long? = null, val name: String, val price: Long, val vatPercent: Int = 21,
+    val barcode: String = "", val sortOrder: Int = 0, val active: Boolean = true, val options: String = "", val prices: String = "",
+    val openPrice: Boolean = false, val icon: String = "", val updatedAt: Long = 0,
+)
+@Serializable data class BoDeviceCatalog(val categories: List<BoDeviceCategory> = emptyList(), val products: List<BoDeviceProduct> = emptyList())
+@Serializable data class BoDeviceCatalogResult(val categories: Map<Long, Long> = emptyMap(), val products: Map<Long, Long> = emptyMap())
 @Serializable data class BoCatalog(val serverTime: Long, val categories: List<BoCategory> = emptyList(), val products: List<BoProduct> = emptyList())
 @Serializable data class BoSaleItem(val productId: Long? = null, val name: String, val unitPrice: Long, val vatPercent: Int, val quantity: Double, val discountPercent: Int = 0)
 @Serializable data class BoSale(
@@ -66,6 +79,20 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
 
     /** Categories and products changed since [since] (server time of the previous call; 0 = everything). */
     fun catalog(since: Long): BoCatalog = request("GET", "/device/catalog?since=$since", null, BoCatalog.serializer())
+
+    /** Sends categories and products created or changed on the till; returns their ids in the back office. */
+    fun uploadCatalog(c: BoDeviceCatalog): BoDeviceCatalogResult =
+        request("POST", "/device/catalog", json.encodeToString(BoDeviceCatalog.serializer(), c), BoDeviceCatalogResult.serializer())
+
+    /** A product photo ("<id>-<key>"), or null when it cannot be loaded. */
+    fun image(ref: String): ByteArray? {
+        if (!Regex("""^\d{1,18}-[0-9a-f]{32}$""").matches(ref)) return null
+        val conn = URI("$base/img/$ref").toURL().openConnection() as HttpURLConnection
+        return try {
+            conn.connectTimeout = timeoutMs; conn.readTimeout = timeoutMs
+            if (conn.responseCode != 200) null else conn.inputStream.use { it.readNBytes(2_000_000) }
+        } catch (e: java.io.IOException) { null } finally { conn.disconnect() }
+    }
 
     fun uploadSales(sales: List<BoSale>): BoUploadResult =
         request("POST", "/device/sales", json.encodeToString(SalesUpload.serializer(), SalesUpload(sales)), BoUploadResult.serializer())

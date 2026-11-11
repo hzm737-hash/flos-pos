@@ -1,5 +1,6 @@
 package cz.flos.desktop
 
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import com.fazecast.jSerialComm.SerialPort
@@ -116,6 +117,10 @@ class DesktopPlatform(override val dataDir: File) : Platform {
             onDone(file != null && runCatching { file.writeBytes(bytes) }.isSuccess)
         }
     }
+
+    override fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = runCatching {
+        org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
+    }.getOrNull()
 
     override fun beep() { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } }
 

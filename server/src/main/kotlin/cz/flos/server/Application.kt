@@ -51,6 +51,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
         get("/health") { call.respondText("ok") }
         /** Public digital menu (QR menu), rendered here from the till's data; ordering from the table. */
         menuRoutes(db)
+        publicImageRoutes(db)
         route("/api/v1") {
             authRoutes(db, openSignup, throttle)
             orgRoutes(db)
@@ -59,6 +60,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             salesRoutes(db)
             deviceRoutes(db, throttle)
             tableOrderDeviceRoutes(db)
+            imageRoutes(db)
+            deviceCatalogRoutes(db)
         }
     }
 }
@@ -354,6 +357,8 @@ private fun Connection.productDto(rs: java.sql.ResultSet, recipe: List<RecipeIte
     costPrice = rs.getLong("cost_price"), trackStock = rs.getBoolean("track_stock"), sellable = rs.getBoolean("sellable"),
     minStock = rs.getLong("min_stock_milli").fromMilli(), sortOrder = rs.getInt("sort_order"), active = rs.getBoolean("active"),
     updatedAt = rs.getLong("updated_at"), recipe = recipe,
+    options = rs.getString("option_text"), prices = rs.getString("price_lists"), openPrice = rs.getBoolean("open_price"),
+    icon = rs.getString("icon"), image = rs.getString("image"),
 )
 
 fun Connection.products(orgId: Long, since: Long = 0): List<ProductDto> {
@@ -366,7 +371,7 @@ fun Connection.products(orgId: Long, since: Long = 0): List<ProductDto> {
 
 fun Connection.categories(orgId: Long, since: Long = 0): List<CategoryDto> =
     query("SELECT * FROM categories WHERE org_id = ? AND updated_at > ? ORDER BY sort_order, name", orgId, since) {
-        CategoryDto(it.getLong("id"), it.getString("name"), it.getLong("color"), it.getInt("sort_order"), it.getBoolean("deleted"), it.getLong("updated_at"))
+        CategoryDto(it.getLong("id"), it.getString("name"), it.getLong("color"), it.getInt("sort_order"), it.getBoolean("deleted"), it.getLong("updated_at"), it.getString("icon"))
     }
 
 private fun Connection.saveRecipe(orgId: Long, productId: Long, recipe: List<RecipeItemDto>) {
@@ -379,8 +384,14 @@ private fun Connection.saveRecipe(orgId: Long, productId: Long, recipe: List<Rec
     }
 }
 
+private fun Connection.validateProduct(orgId: Long, p: ProductDto) {
+    if (p.image.isNotEmpty() && !Images.belongs(this, orgId, p.image)) throw ApiError(HttpStatusCode.BadRequest, "Neznámá fotka")
+    validateProduct(p)
+}
+
 private fun validateProduct(p: ProductDto) {
     if (p.name.isBlank()) throw ApiError(HttpStatusCode.BadRequest, "Vyplňte název")
+    if (p.options.length > 4000 || p.prices.length > 2000 || p.icon.length > 40) throw ApiError(HttpStatusCode.BadRequest, "Příliš dlouhý text")
     if (p.price < 0) throw ApiError(HttpStatusCode.BadRequest, "Cena nesmí být záporná")
     if (p.vatPercent !in listOf(0, 12, 21)) throw ApiError(HttpStatusCode.BadRequest, "Sazba DPH musí být 0, 12 nebo 21 %")
 }
@@ -390,13 +401,13 @@ private fun Route.catalogRoutes(db: Db) {
     post("/categories") {
         val c = call.writer(db)
         val x = call.receive<CategoryDto>()
-        val id = db.tx { insert("INSERT INTO categories (org_id, name, color, sort_order, updated_at) VALUES (?,?,?,?,?)", c.orgId, x.name, x.color, x.sortOrder, System.currentTimeMillis()) }
+        val id = db.tx { insert("INSERT INTO categories (org_id, name, color, sort_order, icon, updated_at) VALUES (?,?,?,?,?,?)", c.orgId, x.name, x.color, x.sortOrder, x.icon.take(40), System.currentTimeMillis()) }
         call.respond(HttpStatusCode.Created, x.copy(id = id))
     }
     put("/categories/{id}") {
         val c = call.writer(db)
         val x = call.receive<CategoryDto>()
-        val n = db.tx { update("UPDATE categories SET name = ?, color = ?, sort_order = ?, updated_at = ? WHERE id = ? AND org_id = ?", x.name, x.color, x.sortOrder, System.currentTimeMillis(), call.longParam("id"), c.orgId) }
+        val n = db.tx { update("UPDATE categories SET name = ?, color = ?, sort_order = ?, icon = ?, updated_at = ? WHERE id = ? AND org_id = ?", x.name, x.color, x.sortOrder, x.icon.take(40), System.currentTimeMillis(), call.longParam("id"), c.orgId) }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Kategorie nenalezena")
         call.respond(x.copy(id = call.longParam("id")))
     }
@@ -418,12 +429,14 @@ private fun Route.catalogRoutes(db: Db) {
     post("/products") {
         val c = call.writer(db)
         val p = call.receive<ProductDto>()
-        validateProduct(p)
         val id = db.tx {
+            validateProduct(c.orgId, p)
             val id = insert(
-                """INSERT INTO products (org_id, category_id, name, price, vat_percent, sku, barcode, unit, cost_price, track_stock, sellable, min_stock_milli, sort_order, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                c.orgId, p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(), p.sortOrder, System.currentTimeMillis(),
+                """INSERT INTO products (org_id, category_id, name, price, vat_percent, sku, barcode, unit, cost_price, track_stock, sellable, min_stock_milli, sort_order,
+                   option_text, price_lists, open_price, icon, image, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                c.orgId, p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(), p.sortOrder,
+                p.options, p.prices, p.openPrice, p.icon, p.image, System.currentTimeMillis(),
             )
             saveRecipe(c.orgId, id, p.recipe)
             id
@@ -433,14 +446,15 @@ private fun Route.catalogRoutes(db: Db) {
     put("/products/{id}") {
         val c = call.writer(db)
         val p = call.receive<ProductDto>()
-        validateProduct(p)
         val id = call.longParam("id")
         db.tx {
+            validateProduct(c.orgId, p)
             val n = update(
                 """UPDATE products SET category_id = ?, name = ?, price = ?, vat_percent = ?, sku = ?, barcode = ?, unit = ?, cost_price = ?, track_stock = ?,
-                   sellable = ?, min_stock_milli = ?, sort_order = ?, active = ?, updated_at = ? WHERE id = ? AND org_id = ?""",
+                   sellable = ?, min_stock_milli = ?, sort_order = ?, active = ?, option_text = ?, price_lists = ?, open_price = ?, icon = ?, image = ?,
+                   updated_at = ? WHERE id = ? AND org_id = ?""",
                 p.categoryId, p.name, p.price, p.vatPercent, p.sku, p.barcode, p.unit, p.costPrice, p.trackStock, p.sellable, p.minStock.toMilli(),
-                p.sortOrder, p.active, System.currentTimeMillis(), id, c.orgId,
+                p.sortOrder, p.active, p.options, p.prices, p.openPrice, p.icon, p.image, System.currentTimeMillis(), id, c.orgId,
             )
             if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Produkt nenalezen")
             saveRecipe(c.orgId, id, p.recipe)

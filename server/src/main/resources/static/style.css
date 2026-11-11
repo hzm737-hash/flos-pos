@@ -73,3 +73,6 @@ dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top
 
 .company-switch { max-width: 280px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: inherit; font: inherit; }
 @media (max-width: 700px) { .company-switch { max-width: 150px; } #org-name { display: none; } }
+.thumb { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; display: block; }
+.photo { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.photo img { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; }

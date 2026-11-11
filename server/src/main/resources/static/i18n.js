@@ -10,6 +10,17 @@ const LOCALE = LANG === 'en' ? 'en-GB' : 'cs-CZ';
 document.documentElement.lang = LANG;
 
 const EN = {
+  'Na pokladně': 'On the till',
+  'Fotka': 'Photo',
+  'Odebrat fotku': 'Remove photo',
+  'Ikona (bez fotky)': 'Icon (without photo)',
+  'Ikona': 'Icon',
+  'Varianty a přídavky': 'Variants and extras',
+  'Každý řádek jedna skupina. Hvězdička za názvem = lze vybrat více (přídavky), jinak se vybírá jedna varianta. Cena za volbou se přičte.': 'One group per line. A star after the name = several can be chosen (extras), otherwise one variant is chosen. The price after a choice is added.',
+  'Ceny v jiných cenících': 'Prices in other price lists',
+  'Cena se zadává při prodeji': 'Price entered at the sale',
+  'cena při prodeji': 'price at sale',
+  'varianty': 'variants',
   '+ Přidat další firmu…': '+ Add another company…',
   '+ Přidat další firmu': '+ Add another company',
   'Přepnuto na': 'Switched to',

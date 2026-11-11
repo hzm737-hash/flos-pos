@@ -85,10 +85,10 @@ internal fun Route.menuRoutes(db: Db) {
         val key = call.request.queryParameters["k"]?.trim()
         val ordering = menu.ordering && validKey(row, table, key)
         if (ordering) {
-            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'self'; connect-src 'self'")
+            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'self'; connect-src 'self'")
             call.response.headers.append("Cache-Control", "no-store")
         } else {
-            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
+            call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data: 'self'")
             call.response.headers.append("Cache-Control", "public, max-age=60")
         }
         val html = if (ordering) cz.flos.core.MenuPage.html(menu, table, key, slug) else cz.flos.core.MenuPage.html(menu)
