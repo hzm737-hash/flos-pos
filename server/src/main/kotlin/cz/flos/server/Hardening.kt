@@ -37,7 +37,9 @@ fun Application.installHardening(maxBodyBytes: Long = MAX_BODY_BYTES) {
             )
         }
         val length = call.request.headers["Content-Length"]?.toLongOrNull()
-        if (length != null && length > maxBodyBytes) {
+        // A new version of the till app is the only big upload.
+        val limit = if (path == "/api/v1/app-releases") maxOf(maxBodyBytes, AppReleases.MAX_BYTES.toLong()) else maxBodyBytes
+        if (length != null && length > limit) {
             call.respond(HttpStatusCode.PayloadTooLarge, ErrorBody("Požadavek je příliš velký"))
             finish()
         }

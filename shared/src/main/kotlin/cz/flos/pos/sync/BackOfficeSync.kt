@@ -146,6 +146,12 @@ class BackOfficeSync(
         true
     }
 
+    /** Asks the back office whether a newer app build is waiting for this till; also tells it which version runs here. */
+    suspend fun checkUpdate(platform: String, versionCode: Int, versionName: String): cz.flos.core.backoffice.BoUpdateInfo {
+        val c = client()
+        return withContext(Dispatchers.IO) { c.checkUpdate(platform, versionCode, versionName) }
+    }
+
     /** Downloads photos the till does not have yet. */
     private suspend fun fetchImages(c: BackOfficeClient) {
         val dir = imageDir ?: return

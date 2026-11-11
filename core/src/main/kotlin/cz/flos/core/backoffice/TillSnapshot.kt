@@ -50,3 +50,9 @@ import kotlinx.serialization.Serializable
     val status: String = "OPEN", val dueDay: Long? = null, val note: String = "",
 )
 @Serializable data class BoAuditEntry(val at: Long, val text: String, val author: String = "")
+
+/** A newer version of the till app waiting in the back office; [url] downloads it without signing in. */
+@Serializable data class BoUpdateInfo(
+    val available: Boolean = false, val versionCode: Int = 0, val versionName: String = "", val notes: String = "",
+    val size: Long = 0, val sha256: String = "", val url: String = "",
+)

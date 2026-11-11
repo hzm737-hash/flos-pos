@@ -18,4 +18,5 @@ enum class AdvFeature(val label: String, val hint: String) {
     QR_ORDERING("Objednávky z QR kódu na stole", "Host naskenuje QR kód stolu, vybere z menu a objednávka přijde sem na stůl. Potřebuje propojení s back office a zveřejněné QR menu."),
     BO_SETTINGS("Nastavení z back office", "Nastavení této pokladny uvidíte a změníte i v back office (Nastavení pokladen). Po zapnutí pokladna převezme nastavení firmy, pokud už v back office jsou, jinak tam pošle svoje. Hesla a tokeny zůstávají jen v pokladně. Platí poslední změna."),
     BO_LIVE("Přehled pokladny v back office", "Back office ukazuje, co se na pokladně děje: otevřené stoly a objednávky, hotovost ve směně, zákazníky, rezervace, doklady a záznam. Posílá se každou minutu, v back office se jen čte."),
+    APP_UPDATES("Aktualizace z back office", "Když v back office nahrajete novou verzi aplikace (stránka Aktualizace), pokladna ji nabídne v Nastavení → Back office. Instaluje se přes původní aplikaci, data zůstanou. Jen Android mimo Google Play."),
 }

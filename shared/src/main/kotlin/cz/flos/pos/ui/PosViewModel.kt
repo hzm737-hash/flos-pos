@@ -151,6 +151,37 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private val _bankState = MutableStateFlow<String?>(null)
     val bankState: StateFlow<String?> = _bankState.asStateFlow()
 
+    // ---- App updates from the back office (Pokročilé nastavení → Aktualizace z back office) ----
+    private val _update = MutableStateFlow<cz.flos.core.backoffice.BoUpdateInfo?>(null)
+    /** A newer app build waiting in the back office, or null. */
+    val appUpdate: StateFlow<cz.flos.core.backoffice.BoUpdateInfo?> = _update.asStateFlow()
+    private var updateAnnounced = 0
+
+    /** Asks the back office for a newer build; [silent] = no message when there is none. */
+    private suspend fun checkAppUpdate(silent: Boolean) {
+        val s = settings.value
+        val platform = flos.platform.updatePlatform
+        if (!s.paired || !s.on(cz.flos.pos.data.AdvFeature.APP_UPDATES) || platform == null) { _update.value = null; return }
+        runCatching { flos.backOffice.checkUpdate(platform, flos.platform.appVersionCode, flos.platform.appVersionName) }
+            .onSuccess { u ->
+                _update.value = u.takeIf { it.available && it.url.isNotBlank() }
+                val found = _update.value
+                if (found != null && (found.versionCode != updateAnnounced || !silent)) {
+                    updateAnnounced = found.versionCode
+                    _messages.tryEmit(tr("Je k dispozici nová verze aplikace %s. Najdete ji v Nastavení → Back office.", found.versionName))
+                } else if (found == null && !silent) _messages.tryEmit(tr("Aplikace je aktuální."))
+            }
+            .onFailure { if (!silent) _messages.tryEmit(tr("Kontrola aktualizace selhala: %s", it.message ?: it.javaClass.simpleName)) }
+    }
+
+    fun checkAppUpdateNow() = viewModelScope.launch { checkAppUpdate(silent = false) }
+
+    /** Opens the download of the new build; Android then offers to install it over this app (data stay). */
+    fun installAppUpdate() {
+        val u = _update.value ?: return
+        if (!flos.platform.openUrl(u.url)) _messages.tryEmit(tr("Odkaz se nepodařilo otevřít: %s", u.url))
+    }
+
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
         // Checks the bank every minute and syncs with the back office every five minutes (settings every minute) while the till is open.
@@ -161,6 +192,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 if (settings.value.paired && minute % 5 == 0) syncBackOffice(silent = true)
                 else if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) runCatching { flos.backOffice.syncSettings() }
                 if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_LIVE)) runCatching { flos.backOffice.uploadSnapshot(tillSnapshot()) }
+                if (minute % 30 == 1) checkAppUpdate(silent = true)
                 minute++
                 delay(60_000)
             }
