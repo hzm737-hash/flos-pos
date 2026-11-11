@@ -153,12 +153,13 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
-        // Checks the bank every minute and syncs with the back office every five minutes while the till is open.
+        // Checks the bank every minute and syncs with the back office every five minutes (settings every minute) while the till is open.
         viewModelScope.launch {
             var minute = 0
             while (true) {
                 if (settings.value.bankSource != BankSource.OFF) checkBank(silent = true)
                 if (settings.value.paired && minute % 5 == 0) syncBackOffice(silent = true)
+                else if (settings.value.paired && settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) runCatching { flos.backOffice.syncSettings() }
                 minute++
                 delay(60_000)
             }
@@ -560,7 +561,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     private suspend fun syncBackOffice(silent: Boolean) {
         val time = java.time.LocalTime.now().withNano(0).withSecond(0)
-        runCatching { flos.backOffice.sync() }
+        runCatching {
+            flos.backOffice.sync().also { if (settings.value.on(cz.flos.pos.data.AdvFeature.BO_SETTINGS)) flos.backOffice.syncSettings() }
+        }
             .onSuccess { r ->
                 _syncState.value = tr("Synchronizováno %s: %d změn katalogu, odesláno %d účtenek", time.toString(), r.productsChanged, r.salesSent)
                 if (!silent) _messages.tryEmit(_syncState.value!!)

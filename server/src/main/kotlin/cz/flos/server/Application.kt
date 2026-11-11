@@ -62,6 +62,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             tableOrderDeviceRoutes(db)
             imageRoutes(db)
             deviceCatalogRoutes(db)
+            deviceSettingsRoutes(db)
+            tillSettingsRoutes(db)
         }
     }
 }

@@ -84,6 +84,10 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
     fun uploadCatalog(c: BoDeviceCatalog): BoDeviceCatalogResult =
         request("POST", "/device/catalog", json.encodeToString(BoDeviceCatalog.serializer(), c), BoDeviceCatalogResult.serializer())
 
+    /** Sends the settings changed on this till and gets those changed in the back office; the later change wins. */
+    fun syncSettings(up: BoSettingsUpload): BoSettingsResult =
+        request("POST", "/device/settings", json.encodeToString(BoSettingsUpload.serializer(), up), BoSettingsResult.serializer())
+
     /** A product photo ("<id>-<key>"), or null when it cannot be loaded. */
     fun image(ref: String): ByteArray? {
         if (!Regex("""^\d{1,18}-[0-9a-f]{32}$""").matches(ref)) return null

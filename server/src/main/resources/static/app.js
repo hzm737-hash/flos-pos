@@ -501,4 +501,116 @@ pages.company = async (main) => {
   };
 };
 
+// ---------- Till settings (the tills with "Nastavení z back office" switched on) ----------
+const FEATURES = {
+  QTY_BEFORE: 'Množství před produktem', ADDONS: 'Přídavky pro kategorie', NOTES: 'Poznámky pro kuchyň', OPEN_PRICE: 'Cena při prodeji a ruční položka',
+  SERVICE_CHARGE: 'Servisní poplatek', STORNO_REASON: 'Důvod storna a záznam', EUR_CASH: 'Hotovost v eurech', BIRTHDAYS: 'Narozeniny zákazníků',
+  WAITER_TABLES: 'Stoly podle obsluhy', TABLE_PLAN: 'Plán stolů a přesun účtu', QR_ORDERING: 'Objednávky z QR kódu na stole',
+};
+// [key, label, type]: t = text, a = more lines, b = yes/no, i = number, or a list of choices [value, label].
+const TILL_SETTINGS = [
+  ['Firma a účtenka', [
+    ['businessName', 'Název na účtence', 't'], ['ico', 'IČO', 't'], ['dic', 'DIČ', 't'], ['vatPayer', 'Plátce DPH', 'b'],
+    ['phone', 'Telefon', 't'], ['email', 'E-mail', 't'], ['web', 'Web', 't'], ['registry', 'Zápis v rejstříku', 't'],
+    ['openingHours', 'Otevírací doba', 'a'], ['footer', 'Patička účtenky', 't'], ['receiptExtraFooter', 'Další text pod účtenkou', 'a'],
+    ['receiptShowCashier', 'Tisknout jméno obsluhy', 'b'], ['receiptItemVat', 'DPH u každé položky', 'b'], ['receiptBigTotal', 'Velký součet', 'b'],
+    ['documentTerms', 'Podmínky na nabídkách a zálohových fakturách', 'a'], ['quoteValidDays', 'Platnost nabídky (dny)', 'i'],
+    ['bankAccount', 'Bankovní účet pro QR platbu', 't']]],
+  ['Provozovna', [['address1', 'Adresa – 1. řádek', 't'], ['address2', 'Adresa – 2. řádek', 't']]],
+  ['Tiskárna a obrazovka', [
+    ['printerType', 'Druh tiskárny', [['BLUETOOTH', 'Bluetooth / COM port'], ['NETWORK', 'Wi-Fi / síťová'], ['SYSTEM', 'Tiskárna ve Windows']]],
+    ['printerHost', 'IP adresa síťové tiskárny', 't'], ['printerPort', 'Port síťové tiskárny', 'i'],
+    ['printerAddress', 'Adresa Bluetooth / COM tiskárny', 't'], ['printerName', 'Název tiskárny', 't'],
+    ['paperWidth', 'Šířka papíru', [['MM58', '58 mm'], ['MM80', '80 mm']]],
+    ['charset', 'Znaková sada', [['ASCII', 'Bez diakritiky'], ['CP852', 'CP852 (Latin 2)'], ['CP1250', 'Windows-1250']]],
+    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'],
+    ['customerDisplay', 'Zákaznický displej', 'b'], ['language', 'Jazyk pokladny', [['cs', 'Čeština'], ['en', 'English']]]]],
+  ['EET', [
+    ['eetEnabled', 'Evidovat tržby (EET)', 'b'], ['eetEnvironment', 'Prostředí', [['PLAYGROUND', 'Playground (test)'], ['PRODUCTION', 'Produkce']]],
+    ['eetVerification', 'Ověřovací režim', 'b'], ['eetEic', 'EIČ (prázdné = DIČ)', 't'], ['eetTimeoutMs', 'Čekat na odpověď (ms)', 'i'],
+    ['eetIdJednotky', 'Označení evidenční jednotky', 't'], ['eetIdPokl', 'Označení pokladny', 't']]],
+  ['Platby a banka', [
+    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API']]],
+    ['imapHost', 'Server e-mailu (IMAP)', 't'], ['imapPort', 'Port IMAP', 'i'], ['imapUser', 'Uživatel e-mailu', 't'], ['imapFolder', 'Složka', 't'],
+    ['transferDueDays', 'Převod po splatnosti po (dnech)', 'i'], ['tipsOwner', 'Spropitné patří', [['STAFF', 'Zaměstnancům'], ['BUSINESS', 'Provozovně']]],
+    ['eurAccount', 'Účet pro platby v EUR', 't'], ['eurRateManual', 'Vlastní kurz EUR pro převody', 't'], ['eurCashRate', 'Vlastní kurz EUR pro hotovost', 't'],
+    ['hiddenPayments', 'Skryté způsoby platby (oddělené čárkou)', 't']]],
+  ['Ceny a slevy', [
+    ['serviceTypes', 'Druhy prodeje', 'a'], ['discountRules', 'Automatické slevy', 'a'], ['maxCashierDiscount', 'Nejvyšší sleva pokladní (%)', 'i'],
+    ['serviceChargePercent', 'Servisní poplatek (%)', 'i'], ['serviceChargeVat', 'DPH servisního poplatku (%)', 'i'],
+    ['loyaltyCrownsPerPoint', 'Kč za 1 věrnostní bod (0 = vypnuto)', 'i'],
+    ['scaleWeightPrefixes', 'Váhové etikety – předpony s hmotností', 't'], ['scalePricePrefixes', 'Váhové etikety – předpony s cenou', 't'],
+    ['scalePluDigits', 'Počet číslic PLU', 'i']]],
+  ['Stoly a obsluha', [
+    ['tables', 'Stoly (oddělené čárkou)', 'a'], ['tablePlan', 'Plán stolů', 'a'], ['waiters', 'Obsluha (oddělená čárkou)', 't'],
+    ['waitersAway', 'Obsluha mimo směnu', 'a'], ['waiterTables', 'Stoly podle obsluhy', 'a'], ['staffRoles', 'Role obsluhy', 'a'],
+    ['permissions', 'Co role nesmějí', 'a'], ['qrOrderApprove', 'Objednávky ze stolu musí potvrdit obsluha', 'b'],
+    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b']]],
+  ['Kuchyň', [['addons', 'Přídavky pro kategorie', 'a'], ['quickNotes', 'Rychlé poznámky', 'a']]],
+  ['Zprávy a menu', [
+    ['msgReservation', 'Zpráva k rezervaci', 'a'], ['msgReminder', 'Připomínka rezervace', 'a'], ['msgOrderReady', 'Objednávka je hotová', 'a'],
+    ['msgDocument', 'Zpráva k dokladu', 'a'], ['menuUrl', 'Adresa menu', 't'], ['menuNote', 'Poznámka pod menu', 'a']]],
+  ['Pokročilé funkce', [['advanced', 'Zapnuté funkce', 'f']]],
+];
+const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky' };
+
+function settingField(key, label, type, value) {
+  const has = value !== undefined; const v = has ? value : '';
+  const hint = has ? '' : ' placeholder="– zatím nepřišlo z pokladny"';
+  if (type === 'b') return `<label class="check"><input type="checkbox" data-k="${key}" ${v === 'true' ? 'checked' : ''}> ${esc(label)}</label>`;
+  if (type === 'a') return `<label>${esc(label)}<textarea data-k="${key}" rows="3"${hint}>${esc(v)}</textarea></label>`;
+  if (type === 'i') return `<label>${esc(label)}<input type="number" data-k="${key}" value="${esc(v)}"${hint}></label>`;
+  if (type === 'f') {
+    const on = new Set(v.split(',').map((x) => x.trim()).filter(Boolean));
+    return `<div data-k="${key}" data-features="1">${Object.entries(FEATURES).map(([f, l]) =>
+      `<label class="check"><input type="checkbox" value="${f}" ${on.has(f) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
+  }
+  if (Array.isArray(type)) return `<label>${esc(label)}<select data-k="${key}">${has ? '' : '<option value="">–</option>'}${type.map(([o, l]) =>
+    `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  return `<label>${esc(label)}<input data-k="${key}" value="${esc(v)}"${hint}></label>`;
+}
+function fieldValue(el, before) {
+  if (el.dataset.features) {
+    const own = (before || '').split(',').map((x) => x.trim()).filter((x) => x && !(x in FEATURES)); // e.g. switches only a till knows
+    return [...own, ...[...el.querySelectorAll('input:checked')].map((i) => i.value)].join(',');
+  }
+  return el.type === 'checkbox' ? String(el.checked) : el.value;
+}
+
+pages.tills = async (main) => {
+  const view = await api('/till-settings');
+  const deviceKeys = new Set(view.deviceKeys);
+  const scopes = [{ id: '', name: 'Celá firma (všechny pokladny)' }, ...view.devices];
+  let scope = '';
+  const render = () => {
+    const dev = view.devices.find((d) => String(d.id) === scope);
+    const values = Object.fromEntries(Object.entries(dev ? dev.values : view.company).map(([k, x]) => [k, x.value]));
+    const groups = TILL_SETTINGS.map(([title, fields]) => [title, fields.filter(([k]) => deviceKeys.has(k) === !!dev)]).filter(([, f]) => f.length);
+    $('#ts').innerHTML = `${dev ? `<p class="muted">Naposledy online: ${dt(dev.lastSeenAt)}</p>
+      <div class="card"><h2>Hesla a tokeny</h2><p class="muted">Zůstávají jen v pokladně, tady vidíte jen, jestli jsou nastavené.</p>
+      ${Object.entries(SECRETS).map(([k, l]) => `<div>${esc(l)}: ${dev.secrets.includes(k) ? '<span class="badge ok">nastaveno</span>' : '<span class="badge">nenastaveno</span>'}</div>`).join('')}</div>` : ''}
+      ${groups.map(([title, fields]) => `<div class="card settings-group"><h2>${esc(title)}</h2>${fields.map(([k, l, t]) => settingField(k, l, t, values[k])).join('')}</div>`).join('')}
+      <div class="actions"><button class="primary" id="save-ts">Uložit</button></div>`;
+    $('#save-ts').onclick = async () => {
+      const changed = {};
+      document.querySelectorAll('#ts [data-k]').forEach((el) => {
+        const k = el.dataset.k; const v = fieldValue(el, values[k]);
+        if (values[k] === undefined ? (v !== '' && v !== 'false') : v !== values[k]) changed[k] = v;
+      });
+      if (!Object.keys(changed).length) return toast('Nic se nezměnilo');
+      try {
+        await api('/till-settings', { method: 'PUT', body: { deviceId: dev ? dev.id : null, values: changed } });
+        toast('Uloženo. Pokladny si změny stáhnou do minuty.'); route();
+      } catch (err) { toast(err.message); }
+    };
+  };
+  main.innerHTML = `<h1>Nastavení pokladen</h1>
+    <p class="muted">Nastavení se sem dostane z pokladen, které mají zapnuté Pokročilé nastavení → Nastavení z back office. Změny se do pokladen dostanou do minuty, platí vždy poslední změna (v pokladně nebo tady). Hesla a tokeny zůstávají jen v pokladně.</p>
+    <div class="toolbar"><label>Pro<select id="scope">${scopes.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></label></div>
+    ${view.devices.length ? '' : '<p class="muted">Zatím tu nejsou žádné pokladny. Přidejte je v části Provozovny a pokladny.</p>'}
+    <div id="ts"></div>`;
+  $('#scope').onchange = (e) => { scope = e.target.value; render(); };
+  render();
+};
+
 start();

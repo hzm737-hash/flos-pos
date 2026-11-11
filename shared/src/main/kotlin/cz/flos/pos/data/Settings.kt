@@ -330,10 +330,70 @@ class SettingsStore(private val prefs: KeyValueStore) {
         )
     }
 
+    @Synchronized
     fun update(transform: (AppSettings) -> AppSettings) {
-        val s = transform(_state.value)
-        prefs.put(toMap(s))
+        val old = _state.value
+        val s = transform(old)
+        val values = toMap(s)
+        // Remember what changed here, so the back office gets it (and the later change wins there).
+        val before = toMap(old)
+        val changed = values.filter { (k, v) -> before[k] != v && cz.flos.core.backoffice.TillSettingKeys.synced(k) }.keys
+        if (changed.isEmpty()) prefs.put(values) else {
+            val now = System.currentTimeMillis()
+            val pending = pendingChanges() + changed.associateWith { now }
+            prefs.put(values + (PENDING to encodePending(pending)))
+        }
         _state.value = s
+    }
+
+    // ---- Settings shared with the back office ----
+
+    /** Settings changed here and not yet confirmed by the back office: key → when. */
+    private fun pendingChanges(): Map<String, Long> = prefs.get(PENDING).orEmpty().lines().mapNotNull { line ->
+        val i = line.lastIndexOf('=')
+        if (i <= 0) null else line.substring(0, i) to (line.substring(i + 1).toLongOrNull() ?: return@mapNotNull null)
+    }.toMap()
+
+    private fun encodePending(p: Map<String, Long>) = p.entries.joinToString("\n") { "${it.key}=${it.value}" }
+
+    /** Server time of the last settings answer from the back office; 0 = never (then everything is sent). */
+    fun settingsSince(): Long = prefs.get(SINCE)?.toLongOrNull() ?: 0
+
+    /** Starts again from scratch, e.g. after pairing with another back office. */
+    fun resetSettingsSync() = prefs.put(mapOf(SINCE to "0"))
+
+    /** What goes to the back office: the changes made here, or the first time everything (0 = not changed here). */
+    @Synchronized
+    fun settingsToSend(): Map<String, cz.flos.core.backoffice.BoSettingChange> {
+        val pending = pendingChanges()
+        val values = toMap(_state.value).filterKeys { cz.flos.core.backoffice.TillSettingKeys.synced(it) }
+        val keys = if (settingsSince() == 0L) values.keys else pending.keys.filter { it in values }
+        return keys.associateWith { cz.flos.core.backoffice.BoSettingChange(values.getValue(it), pending[it] ?: 0) }
+    }
+
+    /**
+     * Takes the back office's answer: what was sent is no longer pending (unless changed again meanwhile),
+     * and the settings changed elsewhere are used here, except those changed here again in the meantime.
+     * Returns how many settings changed.
+     */
+    @Synchronized
+    fun applyRemote(sent: Map<String, Long>, remote: Map<String, String>, serverTime: Long): Int {
+        val pending = pendingChanges().filter { (k, t) -> sent[k] != t }
+        val current = toMap(_state.value)
+        val take = remote.filter { (k, v) -> k !in pending && cz.flos.core.backoffice.TillSettingKeys.synced(k) && k in current && v.length <= 20_000 }
+            .mapValues { (k, v) -> if (k == "advanced") keepLocalFeatures(v) else v }
+            .filter { (k, v) -> current[k] != v }
+        prefs.put(take + mapOf(PENDING to encodePending(pending), SINCE to serverTime.toString()))
+        if (take.isNotEmpty()) _state.value = load()
+        return take.size
+    }
+
+    /** Whether this till takes its settings from the back office is decided on the till itself. */
+    private fun keepLocalFeatures(remote: String): String {
+        val own = AdvFeature.BO_SETTINGS.name
+        val set = remote.split(',').map { it.trim() }.filter { it.isNotEmpty() && it != own }.toMutableList()
+        if (_state.value.on(AdvFeature.BO_SETTINGS)) set += own
+        return set.joinToString(",")
     }
 
     /**
@@ -437,6 +497,11 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
                 "eurCashRate" to s.eurCashRate,
             )
+
+    private companion object {
+        const val PENDING = "boSettingsPending"
+        const val SINCE = "boSettingsSince"
+    }
 
     /** Where reading the mailbox stopped: UIDVALIDITY and the last UID read. */
     fun imapPosition(account: String): Pair<Long, Long> =

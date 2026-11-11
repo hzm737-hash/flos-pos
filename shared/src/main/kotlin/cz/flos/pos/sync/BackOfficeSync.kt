@@ -30,6 +30,8 @@ class BackOfficeSync(
     private val appVersion: String = "0.4.0",
     /** Where product photos from the back office are kept. */
     val imageDir: java.io.File? = null,
+    /** Which secrets are set on this till (names only), shown in the back office without their values. */
+    private val secretsSet: () -> Map<String, Boolean> = { emptyMap() },
 ) {
     private val lock = Mutex()
     private val catalog = db.catalog()
@@ -45,6 +47,7 @@ class BackOfficeSync(
     /** Pairs with the code shown in the back office and takes over the company, branch and EET details. */
     suspend fun pair(url: String, code: String): String = lock.withLock {
         val (token, config) = withContext(Dispatchers.IO) { BackOfficeClient(url).pair(code, appVersion) }
+        settings.resetSettingsSync()
         settings.update {
             it.copy(
                 boUrl = BackOfficeClient.normalize(url), boToken = token, boDeviceName = config.deviceName, boCatalogSince = 0,
@@ -61,7 +64,24 @@ class BackOfficeSync(
         config.deviceName
     }
 
-    fun unpair() = settings.update { it.copy(boToken = "", boDeviceName = "", boCatalogSince = 0, boStaff = "") }
+    fun unpair() {
+        settings.update { it.copy(boToken = "", boDeviceName = "", boCatalogSince = 0, boStaff = "") }
+        settings.resetSettingsSync()
+    }
+
+    /**
+     * Sends the settings changed on this till and takes those changed in the back office; per setting the later
+     * change wins. Passwords and tokens never leave the till. Returns how many settings changed here.
+     */
+    suspend fun syncSettings(): Int = lock.withLock {
+        val c = client()
+        val send = settings.settingsToSend()
+        val since = settings.settingsSince()
+        val r = withContext(Dispatchers.IO) {
+            c.syncSettings(cz.flos.core.backoffice.BoSettingsUpload(send, since, runCatching(secretsSet).getOrDefault(emptyMap())))
+        }
+        settings.applyRemote(send.mapValues { it.value.changedAt }, r.values.mapValues { it.value.value }, r.serverTime)
+    }
 
     /** Downloads catalogue changes and uploads receipts. */
     suspend fun sync(): SyncResult = lock.withLock {
