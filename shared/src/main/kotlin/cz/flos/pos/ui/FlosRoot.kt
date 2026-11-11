@@ -27,11 +27,8 @@ import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.PointOfSale
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Settings
-<<<<<<< HEAD
 import androidx.compose.material.icons.rounded.Tune
-=======
 import androidx.compose.material.icons.rounded.Favorite
->>>>>>> 423e22d (Get Flos ready for Google Play)
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -79,11 +76,8 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     WAITERS("Obsluha", Icons.Rounded.Badge, false),
     PRODUCT_TOOLS("Excel a štítky", Icons.Rounded.TableView, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
-<<<<<<< HEAD
     ADVANCED("Pokročilé nastavení", Icons.Rounded.Tune, false),
-=======
     SUPPORT("Podpořit Flos", Icons.Rounded.Favorite, false),
->>>>>>> 423e22d (Get Flos ready for Google Play)
 }
 
 /** Navigation icon with the number of unpaid orders on the Orders tab. */
@@ -204,11 +198,8 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.DOCUMENTS -> DocumentsScreen(vm, onSell = { screen = Screen.SELL })
                 Screen.WAITERS -> WaitersScreen(vm)
                 Screen.PRODUCT_TOOLS -> ProductToolsScreen(vm)
-<<<<<<< HEAD
                 Screen.ADVANCED -> AdvancedScreen(vm)
-=======
                 Screen.SUPPORT -> SupportScreen(vm)
->>>>>>> 423e22d (Get Flos ready for Google Play)
             }
         }
         }
