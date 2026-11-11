@@ -52,6 +52,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
         /** Public digital menu (QR menu), rendered here from the till's data; ordering from the table. */
         menuRoutes(db)
         publicImageRoutes(db)
+        appDownloadRoutes(db)
         route("/api/v1") {
             authRoutes(db, openSignup, throttle)
             orgRoutes(db)
@@ -66,6 +67,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             tillSettingsRoutes(db)
             deviceSnapshotRoutes(db)
             tillLiveRoutes(db)
+            appReleaseRoutes(db)
         }
     }
 }

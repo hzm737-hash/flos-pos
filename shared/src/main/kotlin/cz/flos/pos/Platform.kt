@@ -59,6 +59,13 @@ interface Platform {
 
     /** A product photo (JPEG, PNG or WebP) as an image for the screen; null where it cannot be read. */
     fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = null
+
+    /** Version of the installed app (Android versionCode); 0 where unknown. */
+    val appVersionCode: Int get() = 0
+    val appVersionName: String get() = ""
+
+    /** Which app builds from the back office fit this till ("android"); null when updates come another way (Google Play, Windows). */
+    val updatePlatform: String? get() = null
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("No platform") }

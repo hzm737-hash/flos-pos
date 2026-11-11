@@ -65,6 +65,20 @@ jobs:
           Android: download **flos.apk** on the phone and open it (allow installing from unknown sources). Windows: **flos-windows.msi**.
 
           Build ${GITHUB_SHA::7} from ${GITHUB_REF_NAME}."
+      # Optional: the same flos.apk also goes to the back office (page Aktualizace), so tills with
+      # "Aktualizace z back office" switched on offer it. Needs the secrets FLOS_BO_URL (e.g. https://flos.gnocco.cz)
+      # and FLOS_BO_KEY (a back office API key with write access); without them this step does nothing.
+      - name: Send flos.apk to the back office
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          FLOS_BO_URL: ${{ secrets.FLOS_BO_URL }}
+          FLOS_BO_KEY: ${{ secrets.FLOS_BO_KEY }}
+        run: |
+          if [ -z "$FLOS_BO_URL" ] || [ -z "$FLOS_BO_KEY" ]; then echo "No FLOS_BO_URL / FLOS_BO_KEY secrets: skipped"; exit 0; fi
+          curl -sS --fail-with-body -X POST -H "Authorization: Bearer $FLOS_BO_KEY" -H "Content-Type: application/octet-stream" \
+            --data-binary @flos.apk "${FLOS_BO_URL%/}/api/v1/app-releases?platform=android&versionName=1.0.${GITHUB_RUN_NUMBER}&notes=Build%20${GITHUB_SHA::7}" -o /dev/null
+          echo "Sent version 1.0.${GITHUB_RUN_NUMBER} to the back office"
 
   windows:
     runs-on: windows-latest

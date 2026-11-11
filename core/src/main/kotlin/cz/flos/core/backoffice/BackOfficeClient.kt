@@ -93,6 +93,13 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
         request("PUT", "/device/snapshot", json.encodeToString(BoTillSnapshot.serializer(), s), BoOk.serializer())
     }
 
+    /** Tells the back office which version this till runs and asks for a newer one ([BoUpdateInfo.url] is absolute). */
+    fun checkUpdate(platform: String, versionCode: Int, versionName: String): BoUpdateInfo {
+        val q = "platform=" + java.net.URLEncoder.encode(platform, Charsets.UTF_8) + "&code=$versionCode&name=" + java.net.URLEncoder.encode(versionName, Charsets.UTF_8)
+        val r = request("GET", "/device/update?$q", null, BoUpdateInfo.serializer())
+        return if (r.url.startsWith("/")) r.copy(url = base + r.url) else r
+    }
+
     /** A product photo ("<id>-<key>"), or null when it cannot be loaded. */
     fun image(ref: String): ByteArray? {
         if (!Regex("""^\d{1,18}-[0-9a-f]{32}$""").matches(ref)) return null

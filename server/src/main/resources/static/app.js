@@ -688,4 +688,68 @@ pages.live = async (main) => {
   await show();
 };
 
+// ---- App updates: new Android builds for the tills ----
+const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+
+pages.updates = async (main) => {
+  const v = await api('/app-releases');
+  const newest = v.releases.find((r) => r.active);
+  main.innerHTML = `<h1>Aktualizace</h1>
+    <p class="muted">Nahrajte novou verzi aplikace pro Android (soubor flos.apk). Pokladny, které mají zapnuté Pokročilé nastavení → Aktualizace z back office, ji nabídnou v Nastavení → Back office a nainstaluje se přes původní aplikaci, data zůstanou. Aplikace z Google Play se aktualizují jen přes Google Play.</p>
+    <h2>Pokladny</h2>
+    <table><thead><tr><th>Pokladna</th><th>Systém</th><th>Verze</th><th>Naposledy</th><th>Stav</th></tr></thead><tbody>
+    ${v.devices.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc(d.platform || '—')}</td><td>${esc(d.versionName || (d.versionCode ? String(d.versionCode) : '—'))}</td><td>${d.lastSeenAt ? dt(d.lastSeenAt) : '—'}</td>
+      <td>${!d.versionCode ? '<span class="muted">Neznámá verze</span>' : newest && d.versionCode < newest.versionCode && (!newest.devices.length || newest.devices.includes(d.id)) ? '<span>Čeká aktualizace</span>' : '<span>Aktuální</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Žádné pokladny</td></tr>'}
+    </tbody></table>
+    <h2>Nahrát novou verzi</h2>
+    <div class="card"><div class="toolbar">
+      <label>Soubor APK<input type="file" id="up-file" accept=".apk,application/vnd.android.package-archive"></label>
+      <label>Verze<input id="up-name" placeholder="1.0.123"></label>
+    </div>
+    <label>Co je nového<textarea id="up-notes" rows="3"></textarea></label>
+    <p class="muted">Číslo verze musí být vyšší než u nainstalované aplikace (poslední číslo, např. 123 z 1.0.123). Verzi najdete v pokladně v Nastavení → Back office, nebo v názvu buildu na GitHubu.</p>
+    <button class="primary" id="up-send">Nahrát</button> <span id="up-state" class="muted"></span></div>
+    <h2>Nahrané verze</h2>
+    <table><thead><tr><th>Verze</th><th>Velikost</th><th>Nahráno</th><th>Pro pokladny</th><th>Aktivní</th><th></th></tr></thead><tbody>
+    ${v.releases.map((r) => `<tr data-id="${r.id}"><td><b>${esc(r.versionName)}</b><div class="muted">${esc(r.notes)}</div></td><td>${mb(r.size)}</td><td>${dt(r.createdAt)}</td>
+      <td>${v.devices.map((d) => `<label class="inline"><input type="checkbox" class="rel-dev" value="${d.id}" ${r.devices.includes(d.id) ? 'checked' : ''}> ${esc(d.name)}</label>`).join(' ')}
+        <div class="muted">${r.devices.length ? '' : '<span>Nic nezaškrtnuto = všechny pokladny</span>'}</div></td>
+      <td><input type="checkbox" class="rel-active" ${r.active ? 'checked' : ''}></td>
+      <td><button class="rel-save">Uložit</button> <button class="rel-del danger">Smazat</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">Zatím žádná verze</td></tr>'}
+    </tbody></table>`;
+
+  $('#up-file').onchange = (e) => {
+    // A build from GitHub is often named like flos-1.0.123.apk: take the version from it.
+    const f = e.target.files[0]; const m = f && f.name.match(/(\d+\.\d+\.\d+)/);
+    if (m && !$('#up-name').value) $('#up-name').value = m[1];
+  };
+  $('#up-send').onclick = async () => {
+    const f = $('#up-file').files[0];
+    const name = $('#up-name').value.trim();
+    if (!f) return toast(t('Vyberte soubor APK'));
+    if (!/\d+$/.test(name)) return toast(t('Zadejte číslo verze (např. 1.0.123)'));
+    $('#up-send').disabled = true; $('#up-state').textContent = t('Nahrávám…') + ' ' + mb(f.size);
+    try {
+      const res = await fetch('/api/v1/app-releases?platform=android&versionName=' + encodeURIComponent(name) + '&notes=' + encodeURIComponent($('#up-notes').value.slice(0, 2000)), {
+        method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream' }, body: f,
+      });
+      const text = await res.text(); let data = null; try { data = text ? JSON.parse(text) : null; } catch (e) {}
+      if (!res.ok) throw new Error((data && data.error) || (res.status === 413 ? 'Soubor je příliš velký' : 'Chyba ' + res.status));
+      toast(t('Verze nahrána')); route();
+    } catch (e) { toast(t(e.message)); $('#up-send').disabled = false; $('#up-state').textContent = ''; }
+  };
+  main.querySelectorAll('tr[data-id]').forEach((row) => {
+    const id = row.dataset.id;
+    const r = v.releases.find((x) => String(x.id) === id);
+    $('.rel-save', row).onclick = async () => {
+      const devices = [...row.querySelectorAll('.rel-dev:checked')].map((c) => Number(c.value));
+      try { await api('/app-releases/' + id, { method: 'PUT', body: { active: $('.rel-active', row).checked, devices, notes: r.notes } }); toast(t('Uloženo')); route(); } catch (e) { toast(t(e.message)); }
+    };
+    $('.rel-del', row).onclick = async () => {
+      if (!confirm(t('Smazat tuto verzi?'))) return;
+      try { await api('/app-releases/' + id, { method: 'DELETE' }); route(); } catch (e) { toast(t(e.message)); }
+    };
+  });
+};
+
 start();

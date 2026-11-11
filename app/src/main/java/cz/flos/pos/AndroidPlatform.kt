@@ -82,6 +82,23 @@ class AndroidPlatform(private val context: Context) : Platform {
         }
     }
 
+    private val packageInfo by lazy { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }
+
+    override val appVersionCode: Int get() = packageInfo?.let {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode.toInt() else @Suppress("DEPRECATION") it.versionCode
+    } ?: 0
+
+    override val appVersionName: String get() = packageInfo?.versionName.orEmpty()
+
+    /** An app installed from Google Play gets its updates from Play only. */
+    override val updatePlatform: String? get() {
+        val installer = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+            else @Suppress("DEPRECATION") context.packageManager.getInstallerPackageName(context.packageName)
+        }.getOrNull()
+        return if (installer == "com.android.vending") null else "android"
+    }
+
     override fun openUrl(url: String): Boolean = runCatching {
         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     }.isSuccess
