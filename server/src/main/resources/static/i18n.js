@@ -11,6 +11,10 @@ document.documentElement.lang = LANG;
 
 const EN = {
   'Živě z pokladen': 'Live from the tills',
+  'Smazat pokladnu?': 'Delete the till?',
+  'Pokladna se odpojí a zmizí z back office. Účtenky z ní zůstanou v přehledech a exportech.': 'The till is disconnected and disappears from the back office. Its receipts stay in the reports and exports.',
+  'Pokladna smazána': 'Till deleted',
+  'Pokladna nenalezena': 'Till not found',
   'Aktualizace': 'Updates',
   'Nahrajte novou verzi aplikace pro Android (soubor flos.apk). Pokladny, které mají zapnuté Pokročilé nastavení → Aktualizace z back office, ji nabídnou v Nastavení → Back office a nainstaluje se přes původní aplikaci, data zůstanou. Aplikace z Google Play se aktualizují jen přes Google Play.': 'Upload a new Android app version (the flos.apk file). Tills with Advanced settings → Updates from the back office switched on offer it in Settings → Back office, and it installs over the current app with all data kept. Apps from Google Play are updated through Google Play only.',
   'Systém': 'System',

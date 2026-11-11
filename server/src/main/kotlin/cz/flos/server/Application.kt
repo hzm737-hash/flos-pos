@@ -227,7 +227,7 @@ private fun Route.orgRoutes(db: Db) {
     get("/devices") {
         val c = call.reader(db)
         call.respond(db.tx {
-            query("SELECT * FROM devices WHERE org_id = ? ORDER BY id", c.orgId) {
+            query("SELECT * FROM devices WHERE org_id = ? AND deleted_at IS NULL ORDER BY id", c.orgId) {
                 DeviceDto(it.getLong("id"), it.getLong("branch_id"), it.getString("name"), it.getString("eet_id_pokl"),
                     if ((it.longOrNull("pairing_expires_at") ?: 0) > System.currentTimeMillis()) it.getString("pairing_code") else null,
                     it.longOrNull("paired_at"), it.longOrNull("last_seen_at"), it.getString("app_version"), it.getBoolean("active"))
@@ -250,16 +250,31 @@ private fun Route.orgRoutes(db: Db) {
         val d = call.receive<DeviceDto>()
         val n = db.tx {
             Stock.requireBranch(this, c.orgId, d.branchId)
-            update("UPDATE devices SET name = ?, branch_id = ?, eet_id_pokl = ?, active = ? WHERE id = ? AND org_id = ?", d.name, d.branchId, d.eetIdPokl, d.active, call.longParam("id"), c.orgId)
+            update("UPDATE devices SET name = ?, branch_id = ?, eet_id_pokl = ?, active = ? WHERE id = ? AND org_id = ? AND deleted_at IS NULL", d.name, d.branchId, d.eetIdPokl, d.active, call.longParam("id"), c.orgId)
         }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
         call.respond(d.copy(id = call.longParam("id")))
+    }
+    /**
+     * Deletes a till: it disappears from the back office and can no longer sign in or pair. Its receipts stay
+     * (they are part of the accounts), so the row is only marked as deleted.
+     */
+    delete("/devices/{id}") {
+        val c = call.writer(db)
+        val id = call.longParam("id")
+        val n = db.tx {
+            update("DELETE FROM till_snapshots WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE org_id = ?)", id, c.orgId)
+            update("UPDATE devices SET active = FALSE, deleted_at = ?, token_hash = NULL, pairing_code = NULL, pairing_expires_at = NULL WHERE id = ? AND org_id = ? AND deleted_at IS NULL",
+                System.currentTimeMillis(), id, c.orgId)
+        }
+        if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
+        call.respond(Ok())
     }
     /** New pairing code, e.g. to move the till to a new phone. The old token stops working. */
     post("/devices/{id}/pair") {
         val c = call.writer(db)
         val code = Tokens.pairingCode()
-        val n = db.tx { update("UPDATE devices SET pairing_code = ?, pairing_expires_at = ?, token_hash = NULL WHERE id = ? AND org_id = ?", code, System.currentTimeMillis() + PAIRING_TTL, call.longParam("id"), c.orgId) }
+        val n = db.tx { update("UPDATE devices SET pairing_code = ?, pairing_expires_at = ?, token_hash = NULL WHERE id = ? AND org_id = ? AND deleted_at IS NULL", code, System.currentTimeMillis() + PAIRING_TTL, call.longParam("id"), c.orgId) }
         if (n == 0) throw ApiError(HttpStatusCode.NotFound, "Pokladna nenalezena")
         call.respond(mapOf("pairingCode" to code))
     }
