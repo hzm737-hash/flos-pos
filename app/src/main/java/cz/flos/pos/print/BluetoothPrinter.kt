@@ -91,8 +91,8 @@ class BluetoothPrinter(private val context: Context) {
 
     companion object {
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-        private const val CHUNK = 128
-        /** About 4 KB a second, well below what a 58 or 80 mm thermal printer prints. */
+        private const val CHUNK = 192
+        /** About 6 KB a second, below what a 58 or 80 mm thermal printer prints. */
         private const val PAUSE_MS = 30L
     }
 }

@@ -158,6 +158,9 @@ fun SettingsScreen(vm: PosViewModel) {
             }
             SwitchRow(tr("Tisknout účtenku automaticky po platbě"), s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
             SwitchRow(tr("Otevírat pokladní zásuvku při platbě hotově"), s.openDrawer) { v -> vm.updateSettings { it.copy(openDrawer = v) } }
+            SwitchRow(tr("Rychlý QR kód (kreslí ho tiskárna)"), s.printerNativeQr) { v -> vm.updateSettings { it.copy(printerNativeQr = v) } }
+            Text(tr("QR kód se tiskne mnohem rychleji. Zkuste zkušební tisk: když QR kód chybí, tiskárna to neumí a nechte vypnuté."),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { if (s.printerType == PrinterType.BLUETOOTH && !platform.canUsePrinters()) askThenTest() else vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
                     Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))

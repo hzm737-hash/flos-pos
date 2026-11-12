@@ -16,7 +16,7 @@ object TillSettingKeys {
     /** Kept per till (printer, screen language, address of the branch); everything else is the same for the whole company. */
     val DEVICE = setOf(
         "language", "paperWidth", "charset", "printerAddress", "printerName", "autoPrint", "printerType",
-        "printerHost", "printerPort", "openDrawer", "customerDisplay", "eetIdPokl", "eetIdJednotky", "address1", "address2",
+        "printerHost", "printerPort", "openDrawer", "printerNativeQr", "customerDisplay", "eetIdPokl", "eetIdJednotky", "address1", "address2",
     )
 
     private val NAME = Regex("^[A-Za-z][A-Za-z0-9_]{0,39}$")

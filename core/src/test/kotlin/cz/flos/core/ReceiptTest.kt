@@ -78,9 +78,10 @@ class ReceiptTest {
         val blocks = ReceiptLayout(32).layout(business, receipt)
         val bytes = EscPosEncoder(PaperWidth.MM58).encode(blocks)
         val s = bytes.toList()
-        // GS v 0 raster command followed by width 48 bytes (384 dots)
-        val idx = s.windowed(5).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 0, 48) }
+        // GS v 0 raster command; the blank right margin is cropped, so at most 48 bytes (384 dots) wide
+        val idx = s.windowed(4).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 0) }
         assertTrue(idx > 0)
+        assertTrue(bytes[idx + 4] in 20..48)
         // ASCII mode never sends bytes above 0x7F as text
         assertEquals(0x1B.toByte(), bytes[0])
     }
@@ -90,6 +91,19 @@ class ReceiptTest {
         val img = enc.qrImage(QrPlatba.qrMatrix("SPD*1.0*ACC:CZ6508000000192000145399*CC:CZK"))
         assertEquals(384, img[0].size)
         assertTrue(img.size in 200..384)
+    }
+
+    @Test fun nativeQrIsShortAndPictureIsCropped() {
+        val content = "SPD*1.0*ACC:CZ6508000000192000145399*AM:100.00*CC:CZK"
+        val blocks = listOf(ReceiptBlock.Qr(content))
+        val picture = EscPosEncoder(PaperWidth.MM80).encode(blocks)
+        val native = EscPosEncoder(PaperWidth.MM80, nativeQr = true).encode(blocks)
+        assertTrue("native QR is small: ${native.size}", native.size < 200)
+        assertTrue(String(native, Charsets.US_ASCII).contains(content))
+        // The picture no longer carries the blank right margin: under 576 dots wide.
+        val gs = picture.indices.first { picture[it] == 0x1D.toByte() && picture[it + 1] == 'v'.code.toByte() }
+        val widthBytes = (picture[gs + 4].toInt() and 0xFF) + (picture[gs + 5].toInt() and 0xFF) * 256
+        assertTrue("width $widthBytes", widthBytes < 72)
     }
 
     @Test fun dailyReport() {

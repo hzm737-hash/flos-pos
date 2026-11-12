@@ -37,6 +37,8 @@ data class AppSettings(
     val printerPort: Int = NetworkPrinter.DEFAULT_PORT,
     /** Send the drawer-kick pulse through the receipt printer for cash payments. */
     val openDrawer: Boolean = false,
+    /** The printer draws the QR code itself (faster); off = Flos sends it as a picture. */
+    val printerNativeQr: Boolean = false,
 
     // ---- EET 2.0 ----
     val eetEnabled: Boolean = false,
@@ -260,6 +262,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             printerHost = str("printerHost", d.printerHost),
             printerPort = int("printerPort", d.printerPort),
             openDrawer = bool("openDrawer", d.openDrawer),
+            printerNativeQr = bool("printerNativeQr", d.printerNativeQr),
             eetEnabled = bool("eetEnabled", d.eetEnabled),
             eetEnvironment = enum("eetEnvironment", d.eetEnvironment),
             eetVerification = bool("eetVerification", d.eetVerification),
@@ -429,6 +432,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "printerHost" to s.printerHost,
                 "printerPort" to s.printerPort.toString(),
                 "openDrawer" to s.openDrawer.toString(),
+                "printerNativeQr" to s.printerNativeQr.toString(),
                 "eetEnabled" to s.eetEnabled.toString(),
                 "eetEnvironment" to s.eetEnvironment.name,
                 "eetVerification" to s.eetVerification.toString(),

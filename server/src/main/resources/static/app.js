@@ -528,7 +528,7 @@ const TILL_SETTINGS = [
     ['printerAddress', 'Adresa Bluetooth / COM tiskárny', 't'], ['printerName', 'Název tiskárny', 't'],
     ['paperWidth', 'Šířka papíru', [['MM58', '58 mm'], ['MM80', '80 mm']]],
     ['charset', 'Znaková sada', [['ASCII', 'Bez diakritiky'], ['CP852', 'CP852 (Latin 2)'], ['CP1250', 'Windows-1250']]],
-    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'],
+    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'], ['printerNativeQr', 'Rychlý QR kód (kreslí ho tiskárna)', 'b'],
     ['customerDisplay', 'Zákaznický displej', 'b'], ['language', 'Jazyk pokladny', [['cs', 'Čeština'], ['en', 'English']]]]],
   ['EET', [
     ['eetEnabled', 'Evidovat tržby (EET)', 'b'], ['eetEnvironment', 'Prostředí', [['PLAYGROUND', 'Playground (test)'], ['PRODUCTION', 'Produkce']]],

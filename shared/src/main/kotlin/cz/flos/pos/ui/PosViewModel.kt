@@ -1306,7 +1306,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private fun printBlocks(blocks: List<ReceiptBlock>, okMessage: String, drawer: Boolean = false) {
         val s = settings.value
         viewModelScope.launch {
-            val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks, openDrawer = drawer)
+            val bytes = EscPosEncoder(s.paperWidth, s.charset, nativeQr = s.printerNativeQr).encode(blocks, openDrawer = drawer)
             runCatching { printer.print(s, bytes) }
                 .onSuccess { _messages.tryEmit(okMessage) }
                 .onFailure { _messages.tryEmit(tr("Tisk se nezdařil: %s", it.message)) }
