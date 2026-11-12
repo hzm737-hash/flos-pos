@@ -922,6 +922,8 @@ internal object En {
         "Nová verze %s (%d MB)" to "New version %s (%d MB)",
         "Po stažení klepněte na soubor a zvolte Instalovat. Aplikace se aktualizuje a všechna data zůstanou. Telefon se může zeptat, zda smí prohlížeč instalovat aplikace." to "After the download, tap the file and choose Install. The app is updated and all data stay. The phone may ask whether the browser may install apps.",
         "Stáhnout a nainstalovat" to "Download and install",
+        "Rychlý QR kód (kreslí ho tiskárna)" to "Fast QR code (drawn by the printer)",
+        "QR kód se tiskne mnohem rychleji. Zkuste zkušební tisk: když QR kód chybí, tiskárna to neumí a nechte vypnuté." to "The QR code prints much faster. Try a test print: if the QR code is missing, the printer cannot do it, so leave this off.",
         "Povolte aplikaci Flos „Zařízení v okolí“: Nastavení → Zkušební tisk, nebo v Androidu Aplikace → Flos → Oprávnění." to "Allow Flos “Nearby devices”: Settings → Test print, or in Android Apps → Flos → Permissions.",
     )
 }

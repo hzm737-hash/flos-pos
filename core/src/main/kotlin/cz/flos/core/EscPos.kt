@@ -26,6 +26,11 @@ class EscPosEncoder(
     private val charset: PrinterCharset = PrinterCharset.ASCII,
     /** Width of the printed QR code as a share of the paper width. */
     private val qrWidthRatio: Double = 0.7,
+    /**
+     * Let the printer draw the QR code itself (GS ( k): about 150 bytes instead of a picture of several KB,
+     * so it prints much faster. Most current ESC/POS printers support it; very old or cheap ones print nothing.
+     */
+    private val nativeQr: Boolean = false,
 ) {
     private val out = ByteArrayOutputStream()
 
@@ -61,6 +66,7 @@ class EscPosEncoder(
 
     private fun qr(content: String) {
         val matrix = QrPlatba.qrMatrix(content)
+        if (nativeQr) return nativeQr(content, matrix)
         align(Align.LEFT)
         raster(qrImage(matrix))
         lf()
@@ -72,6 +78,23 @@ class EscPosEncoder(
         raster(barcodeImage(bars))
         align(Align.CENTER)
         text(code); lf()
+    }
+
+    /** The printer's own QR command, sized like the picture: model 2, error correction M, centred. */
+    private fun nativeQr(content: String, m: BitMatrix) {
+        val modules = m.width + 8
+        val size = ((paper.dots * qrWidthRatio).toInt() / modules).coerceIn(1, 16)
+        val data = content.toByteArray(Charsets.US_ASCII)
+        val len = data.size + 3
+        align(Align.CENTER)
+        cmd(GS, '('.code, 'k'.code, 4, 0, 49, 65, 50, 0) // model 2
+        cmd(GS, '('.code, 'k'.code, 3, 0, 49, 67, size) // module size in dots
+        cmd(GS, '('.code, 'k'.code, 3, 0, 49, 69, 49) // error correction M
+        cmd(GS, '('.code, 'k'.code, len and 0xFF, len shr 8, 49, 80, 48)
+        out.write(data)
+        cmd(GS, '('.code, 'k'.code, 3, 0, 49, 81, 48) // print
+        lf()
+        align(Align.LEFT)
     }
 
     /** Bars scaled to whole dots (at most 3 per module), centred, 80 dots high. */
@@ -101,7 +124,10 @@ class EscPosEncoder(
     /** GS v 0 raster image, sent in bands so small printer buffers don't overflow. */
     private fun raster(rows: Array<BooleanArray>) {
         if (rows.isEmpty()) return
-        val widthBytes = (rows[0].size + 7) / 8
+        // Blank space right of the picture is not sent: fewer bytes, faster over Bluetooth.
+        val lastDot = rows.maxOf { r -> r.lastIndexOf(true) }
+        if (lastDot < 0) return
+        val widthBytes = lastDot / 8 + 1
         rows.toList().chunked(BAND).forEach { band ->
             cmd(GS, 'v'.code, '0'.code, 0, widthBytes and 0xFF, widthBytes shr 8, band.size and 0xFF, band.size shr 8)
             for (row in band) {

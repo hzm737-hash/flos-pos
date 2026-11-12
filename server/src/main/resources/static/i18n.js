@@ -136,6 +136,7 @@ const EN = {
   'Bez diakritiky': 'Without accents',
   'Tisknout účtenku automaticky': 'Print the receipt automatically',
   'Otevírat pokladní zásuvku': 'Open the cash drawer',
+  'Rychlý QR kód (kreslí ho tiskárna)': 'Fast QR code (drawn by the printer)',
   'Zákaznický displej': 'Customer display',
   'Jazyk pokladny': 'Till language',
   'Evidovat tržby (EET)': 'Record sales (EET)',
