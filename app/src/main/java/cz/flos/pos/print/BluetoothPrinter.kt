@@ -69,14 +69,17 @@ class BluetoothPrinter(private val context: Context) {
                     throw IOException(tr("Povolte aplikaci Flos „Zařízení v okolí“: Nastavení → Zkušební tisk, nebo v Androidu Aplikace → Flos → Oprávnění."), e)
                 }
                 val out = socket.outputStream
-                // Small chunks with short pauses keep cheap printers from dropping data.
+                // Some printers lose the first bytes sent right after the link opens.
+                delay(200)
+                // Small chunks with pauses: the printer prints slower than Bluetooth sends, and a cheap printer
+                // whose buffer overflows drops bytes, so a QR code turns into rows of random characters.
                 var offset = 0
                 while (offset < data.size) {
                     val len = minOf(CHUNK, data.size - offset)
                     out.write(data, offset, len)
                     out.flush()
                     offset += len
-                    delay(15)
+                    delay(PAUSE_MS)
                 }
                 // Give the printer time to empty its buffer before the link closes.
                 delay(400)
@@ -88,6 +91,8 @@ class BluetoothPrinter(private val context: Context) {
 
     companion object {
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-        private const val CHUNK = 512
+        private const val CHUNK = 128
+        /** About 4 KB a second, well below what a 58 or 80 mm thermal printer prints. */
+        private const val PAUSE_MS = 30L
     }
 }
