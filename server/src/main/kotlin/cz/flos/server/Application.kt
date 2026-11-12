@@ -29,11 +29,12 @@ import java.time.LocalDate
 val FlosJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
 
 /**
+ * @param webOrigins websites that may send orders from the browser (FLOS_WEB_ORIGINS), see [webOriginsFromEnv].
  * @param openSignup when false (the default for a live server), "Založit firmu" works only while the
  *   database has no users yet: the first person to sign up becomes the owner, and after that new
  *   people are added by the owner under Users. Set FLOS_OPEN_SIGNUP=true to allow anyone to sign up.
  */
-fun Application.flosModule(db: Db, openSignup: Boolean = false) {
+fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List<String> = webOriginsFromEnv()) {
     installHardening()
     val throttle = Throttle()
     install(ContentNegotiation) { json(FlosJson) }
@@ -51,6 +52,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
         get("/health") { call.respondText("ok") }
         /** Public digital menu (QR menu), rendered here from the till's data; ordering from the table. */
         menuRoutes(db)
+        /** Delivery and pick-up orders from the restaurant's own website. */
+        webOrderRoutes(db, webOrigins)
         publicImageRoutes(db)
         appDownloadRoutes(db)
         route("/api/v1") {
@@ -61,6 +64,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false) {
             salesRoutes(db)
             deviceRoutes(db, throttle)
             tableOrderDeviceRoutes(db)
+            webOrderDeviceRoutes(db)
             imageRoutes(db)
             deviceCatalogRoutes(db)
             deviceSettingsRoutes(db)
