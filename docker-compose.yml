@@ -17,6 +17,8 @@ services:
       DATABASE_URL: jdbc:postgresql://db:5432/flos
       DATABASE_USER: flos
       DATABASE_PASSWORD: ${FLOS_DB_PASSWORD:-change-me}
+      # Restaurant websites that may send delivery and pick-up orders, comma separated.
+      FLOS_WEB_ORIGINS: ${FLOS_WEB_ORIGINS:-}
     ports:
       - "8080:8080"
     depends_on:

@@ -58,6 +58,23 @@ Czech is the default everywhere; English can be chosen.
 2. In Flos → **Nastavení**: fill in the business details, bank account, then pick the printer and paper width.
 3. Press **Zkušební tisk** to check diacritics and the QR code. If letters look wrong, switch the character set.
 
+## Orders from the restaurant's website
+
+A restaurant's own website can send delivery and pick-up orders to the till.
+
+1. On the till, switch on **Pokročilé nastavení → Objednávky z webu** and press **Zveřejnit menu znovu**.
+   The menu address it shows (`/menu/<slug>`) is what the website needs.
+2. On the back office, list the website in `FLOS_WEB_ORIGINS`, e.g.
+   `https://pizzafresca.cz,https://www.pizzafresca.cz`, so its pages may call the API (CORS).
+3. The website posts the order to `POST /menu/<slug>/web-order` (`WebOrder` in `core/WebOrders.kt`) and
+   asks for the answer with `GET /menu/<slug>/web-order/<id>?k=<token>`.
+4. The till shows each order with the customer, the lines at the till's own prices and a ready time.
+   Accepting saves it as an open order and prints the ticket; the customer's page shows the time.
+
+Dishes are matched by their menu number in the product's code (barcode field), otherwise by name.
+Half & half costs half of each pizza; an extra on one half costs half, unless it is always charged in full.
+The customer's name, phone and address are kept apart from the order and erased after 30 days.
+
 ## Roadmap (towards the full feature set)
 
 Next steps, to be done one at a time: table map and open orders, stock and recipes,

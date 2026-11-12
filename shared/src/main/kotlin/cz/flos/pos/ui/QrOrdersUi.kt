@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +52,64 @@ fun TableOrderDialog(vm: PosViewModel) {
         confirmButton = { TextButton(onClick = { vm.acceptTableOrder(o) }, enabled = cart.items.isNotEmpty()) { Text(tr("Přijmout")) } },
         dismissButton = { TextButton(onClick = { vm.rejectTableOrder(o) }) { Text(tr("Odmítnout")) } },
     )
+}
+
+/**
+ * The first order from the website that waits for the staff: delivery or pick-up, the customer, what
+ * they want at this till's prices, and the time it will be ready. The customer's page shows the answer.
+ */
+@Composable
+fun WebOrderDialog(vm: PosViewModel) {
+    val inbox by vm.webInbox.collectAsState()
+    val w = inbox.firstOrNull() ?: return
+    val o = w.order
+    val (cart, unmatched) = remember(w.id) { vm.webOrderCart(w) }
+    var minutes by remember(w.id) { mutableStateOf(if (o.type == cz.flos.core.WebOrders.DELIVERY) 45 else 20) }
+    val delivery = o.type == cz.flos.core.WebOrders.DELIVERY
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                o.customer?.let { c ->
+                    Text(c.name + ", " + c.phone, style = MaterialTheme.typography.titleSmall)
+                    if (delivery) Text(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
+                }
+                Text(tr("Čas: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
+                if (o.note.isNotBlank()) Text(tr("Poznámka: %s", o.note))
+                cart.items.forEach { Text("${Qty.format(it.quantity)}× ${it.name}  ${Money.format(it.total)}") }
+                Text(tr("Celkem: %s", Money.format(cart.total)), style = MaterialTheme.typography.titleMedium)
+                if (o.total > 0 && o.total * 100 != cart.total) Text(tr("Zákazník na webu viděl %s Kč.", o.total.toString()), color = MaterialTheme.colorScheme.error)
+                if (unmatched.isNotEmpty()) Text(tr("Bez produktu v pokladně (cena z webu): %s", unmatched.joinToString(", ")), color = MaterialTheme.colorScheme.error)
+                Text(tr("Hotovo za"), style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    cz.flos.core.WebOrders.READY_MINUTES.forEach { m ->
+                        FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(tr("%d min", m)) })
+                    }
+                }
+                if (inbox.size > 1) Text(tr("Čeká dalších objednávek: %d", inbox.size - 1), style = MaterialTheme.typography.labelMedium)
+            }
+        },
+        confirmButton = { Button(onClick = { vm.acceptWebOrder(w, minutes) }) { Text(tr("Přijmout")) } },
+        dismissButton = { TextButton(onClick = { vm.rejectWebOrder(w) }) { Text(tr("Odmítnout")) } },
+    )
+}
+
+/** Settings of web ordering in Pokročilé nastavení: what it needs and the menu to publish. */
+@Composable
+fun WebOrderingSettings(vm: PosViewModel, s: AppSettings) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!s.paired) Text(tr("Pokladna není spárovaná s back office (Nastavení → Back office). Bez toho objednávky nepřijdou."),
+            color = MaterialTheme.colorScheme.error)
+        Text(tr("Po zapnutí nebo vypnutí zveřejněte menu znovu; web přijímá objednávky jen při zapnutí. Adresu webu musí správce back office povolit (FLOS_WEB_ORIGINS)."),
+            style = MaterialTheme.typography.bodySmall)
+        Text(tr("Pizzy z webu se párují podle čísla v menu (kód produktu), jinak podle názvu."), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { vm.publishMenu() }, enabled = s.paired) { Text(tr("Zveřejnit menu znovu")) }
+        if (s.menuUrl.isNotBlank()) {
+            Text(tr("Adresa menu (pro nastavení webu):"), style = MaterialTheme.typography.labelLarge)
+            SelectionContainer { Text(s.menuUrl, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
 }
 
 /** Settings of QR ordering in Pokročilé nastavení: approval, ticket, the tables' QR codes and the link for the web. */

@@ -24,6 +24,8 @@ import kotlinx.serialization.Serializable
     val note: String = "",
     /** Guests may order from the menu with a table's QR code (Pokročilé nastavení → Objednávky z QR). */
     val ordering: Boolean = false,
+    /** The restaurant's website may send delivery and pick-up orders (Pokročilé nastavení → Objednávky z webu). */
+    val webOrdering: Boolean = false,
 )
 
 /** The digital menu as one mobile-friendly HTML page (no scripts), for the QR code on the tables. */

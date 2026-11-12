@@ -197,11 +197,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 delay(60_000)
             }
         }
-        // Orders from the tables: every 10 seconds while QR ordering is switched on.
+        // Orders from the tables and from the website: every 10 seconds while switched on.
         viewModelScope.launch {
             while (true) {
                 val s = settings.value
                 if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
+                if (s.paired && s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING)) pollWebOrders()
                 delay(10_000)
             }
         }
@@ -1023,6 +1024,94 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
     }
 
+    // ---- Orders from the website: delivery and pick-up (Pokročilé nastavení → Objednávky z webu) ----
+    private val _webInbox = MutableStateFlow<List<cz.flos.core.WebOrderInbox>>(emptyList())
+    /** Web orders waiting for the staff to accept (with a ready time) or decline. */
+    val webInbox: StateFlow<List<cz.flos.core.WebOrderInbox>> = _webInbox.asStateFlow()
+    private val webSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+    private val webTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    /** Fetches new web orders; the staff always confirm them, because the customer waits for a time. */
+    private suspend fun pollWebOrders() {
+        val orders = runCatching { withContext(Dispatchers.IO) { boClient().webOrders() } }.getOrNull() ?: return
+        val fresh = orders.filter { webSeen.add(it.id) }
+        if (fresh.isEmpty()) return
+        platform.beep()
+        _webInbox.update { it + fresh }
+    }
+
+    /**
+     * The web order as cart lines priced by this till: pizzas matched to products by number or name
+     * (see [cz.flos.core.WebOrders.match]), half & half and extras by the restaurant's rule, and the
+     * delivery fee. Lines without a matching product keep the website's price; their names are returned.
+     */
+    fun webOrderCart(w: cz.flos.core.WebOrderInbox): Pair<Cart, List<String>> {
+        val o = w.order
+        val prods = products.value.filter { it.active && !it.openPrice }
+        fun find(n: Int, name: String) = cz.flos.core.WebOrders.match(n, name, prods) { cz.flos.core.WebOrders.Candidate(it.id, it.name, it.barcode) }
+        var cart = Cart()
+        val unmatched = mutableListOf<String>()
+        var vat: VatRate? = null
+        for (l in o.lines) {
+            val a = find(l.number, l.name)
+            val b = l.half?.let { find(it, l.halfName) }
+            val name = cz.flos.core.WebOrders.lineName(l, a?.name ?: l.name, b?.name ?: l.halfName)
+            if (a != null && (l.half == null || b != null)) {
+                val unit = cz.flos.core.WebOrders.unitPrice(a.price, b?.price, l.extras)
+                cart = cart.add(a.id, name, unit, a.vatRate, l.qty.toDouble())
+                if (vat == null) vat = a.vatRate
+            } else {
+                unmatched += if (l.half != null) "${l.name} / ${l.halfName}" else l.name
+                cart = cart.add(MANUAL_ITEM_ID, name, l.unitPrice * 100, a?.vatRate ?: VatRate.fromPercent(12), l.qty.toDouble())
+            }
+        }
+        if (o.type == cz.flos.core.WebOrders.DELIVERY && o.deliveryFee > 0) {
+            cart = cart.add(MANUAL_ITEM_ID, tr("Rozvoz"), o.deliveryFee * 100, vat ?: VatRate.fromPercent(12), 1.0)
+        }
+        return cart to unmatched
+    }
+
+    /**
+     * Accepts a web order: tells the back office first (the customer's page shows the ready time and no
+     * other till takes it), then saves it as an open order and prints the ticket with the customer's
+     * details. The details are only printed, not stored on the till (see the privacy policy).
+     */
+    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int) = viewModelScope.launch {
+        if (!webTaking.add(w.id)) return@launch
+        try {
+            val (lines, unmatched) = webOrderCart(w)
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes) } }
+            if (taken.isFailure) {
+                _messages.tryEmit(tr("Objednávku z webu se nepodařilo potvrdit: %s", taken.exceptionOrNull()?.message ?: ""))
+                return@launch
+            }
+            _webInbox.update { list -> list.filterNot { it.id == w.id } }
+            if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku z webu už vyřídila jiná pokladna.")); return@launch }
+            val o = w.order
+            val ready = LocalDateTime.now().plusMinutes(readyMinutes.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+            val kind = if (o.type == cz.flos.core.WebOrders.DELIVERY) tr("Rozvoz") else tr("Osobní odběr")
+            val note = "WEB ${w.id} · $kind · " + tr("hotovo %s", ready) + " · " + (if (o.payment == "card") tr("kartou") else tr("hotově"))
+            val millis = System.currentTimeMillis()
+            val sale = SaleEntity(
+                number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                orderNumber = flos.settings.nextOrderNumber(), note = note,
+            ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
+                (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
+            // The ticket carries the name, phone and address for the kitchen and the driver.
+            val ticket = (listOf(note) + cz.flos.core.WebOrders.summary(w.id, o).drop(1)).joinToString("\n")
+            printOrder(sale.copy(note = ticket), lines)
+        } finally { webTaking.remove(w.id) }
+    }
+
+    /** Declines a web order; the customer's page asks them to call. */
+    fun rejectWebOrder(w: cz.flos.core.WebOrderInbox) = viewModelScope.launch {
+        runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, false) } }
+            .onSuccess { _webInbox.update { list -> list.filterNot { it.id == w.id } } }
+            .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
+    }
+
     /** Loads the QR code link of every table from the back office (the menu must be published). */
     fun loadTableLinks() = viewModelScope.launch {
         val s = settings.value
@@ -1717,7 +1806,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cats = categories.value.map { c -> cz.flos.core.MenuCategory(c.name, byCat[c.id].orEmpty().map { it.menuItem() }) } +
             listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
         return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
-            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING))
+            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING),
+            webOrdering = s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))
     }
 
     private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {
