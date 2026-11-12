@@ -133,6 +133,7 @@ class EscPosEncoder(
     companion object {
         private const val ESC = 0x1B
         private const val GS = 0x1D
-        private const val BAND = 128
+        // 24 dot rows (about 1 KB at 80 mm) per command: small enough for the buffer of cheap printers.
+        private const val BAND = 24
     }
 }
