@@ -922,5 +922,6 @@ internal object En {
         "Nová verze %s (%d MB)" to "New version %s (%d MB)",
         "Po stažení klepněte na soubor a zvolte Instalovat. Aplikace se aktualizuje a všechna data zůstanou. Telefon se může zeptat, zda smí prohlížeč instalovat aplikace." to "After the download, tap the file and choose Install. The app is updated and all data stay. The phone may ask whether the browser may install apps.",
         "Stáhnout a nainstalovat" to "Download and install",
+        "Povolte aplikaci Flos „Zařízení v okolí“: Nastavení → Zkušební tisk, nebo v Androidu Aplikace → Flos → Oprávnění." to "Allow Flos “Nearby devices”: Settings → Test print, or in Android Apps → Flos → Permissions.",
     )
 }
