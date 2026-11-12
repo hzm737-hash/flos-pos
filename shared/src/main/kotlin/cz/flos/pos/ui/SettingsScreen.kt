@@ -46,6 +46,8 @@ fun SettingsScreen(vm: PosViewModel) {
     val platform = LocalPlatform.current
     var devices by remember(s.printerType) { mutableStateOf<List<PrinterDevice>?>(null) }
     val askPermission = platform.rememberPrinterPermission { devices = platform.localPrinters(s.printerType) }
+    // A Bluetooth test print first asks for any missing permission, then prints.
+    val askThenTest = platform.rememberPrinterPermission { vm.testPrint() }
     fun loadDevices() {
         if (platform.canUsePrinters()) devices = platform.localPrinters(s.printerType) else askPermission()
     }
@@ -157,7 +159,7 @@ fun SettingsScreen(vm: PosViewModel) {
             SwitchRow(tr("Tisknout účtenku automaticky po platbě"), s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
             SwitchRow(tr("Otevírat pokladní zásuvku při platbě hotově"), s.openDrawer) { v -> vm.updateSettings { it.copy(openDrawer = v) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
+                Button(onClick = { if (s.printerType == PrinterType.BLUETOOTH && !platform.canUsePrinters()) askThenTest() else vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
                     Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))
                 }
                 OutlinedButton(onClick = { vm.openDrawer() }, enabled = vm.printer.isConfigured(s)) { Text(tr("Otevřít zásuvku")) }

@@ -27,15 +27,20 @@ class BluetoothPrinter(private val context: Context) {
     private val mutex = Mutex()
     private val adapter get() = context.getSystemService(BluetoothManager::class.java)?.adapter
 
+    private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    /** Connecting to a paired printer; enough to list and use it. */
+    private fun canConnect(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || granted(Manifest.permission.BLUETOOTH_CONNECT)
+
+    /** Both "Nearby devices" permissions (Android 12+), so nothing in the Bluetooth stack is refused while printing. */
     fun hasPermission(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S || (canConnect() && granted(Manifest.permission.BLUETOOTH_SCAN))
 
     fun isBluetoothOn(): Boolean = adapter?.isEnabled == true
 
     @SuppressLint("MissingPermission")
     fun pairedDevices(): List<PairedPrinter> {
-        if (!hasPermission()) return emptyList()
+        if (!canConnect()) return emptyList()
         return adapter?.bondedDevices.orEmpty()
             .map { PairedPrinter(it.name ?: it.address, it.address) }
             .sortedBy { it.name }
@@ -45,7 +50,7 @@ class BluetoothPrinter(private val context: Context) {
     suspend fun print(address: String, data: ByteArray) = mutex.withLock {
         withContext(Dispatchers.IO) {
             if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
-            if (!hasPermission()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
+            if (!canConnect()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
             val bt = adapter ?: throw IOException(tr("Zařízení nemá Bluetooth."))
             if (!bt.isEnabled) throw IOException(tr("Bluetooth je vypnutý."))
             val device = bt.getRemoteDevice(address)
@@ -57,7 +62,12 @@ class BluetoothPrinter(private val context: Context) {
             if (mayCancelDiscovery) runCatching { if (bt.isDiscovering) bt.cancelDiscovery() }
             val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
             try {
-                socket.connect()
+                try {
+                    socket.connect()
+                } catch (e: SecurityException) {
+                    // Some Android versions stop discovery inside connect(), which needs the scan permission.
+                    throw IOException(tr("Povolte aplikaci Flos „Zařízení v okolí“: Nastavení → Zkušební tisk, nebo v Androidu Aplikace → Flos → Oprávnění."), e)
+                }
                 val out = socket.outputStream
                 // Small chunks with short pauses keep cheap printers from dropping data.
                 var offset = 0

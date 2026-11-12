@@ -105,11 +105,14 @@ class AndroidPlatform(private val context: Context) : Platform {
 
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit {
-        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) onGranted()
+        // Both "Nearby devices" permissions in one prompt; the printer is usable as soon as "connect" is allowed.
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            if (result[Manifest.permission.BLUETOOTH_CONNECT] == true || bluetooth.hasPermission()) onGranted()
         }
         return {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) launcher.launch(Manifest.permission.BLUETOOTH_CONNECT) else onGranted()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !bluetooth.hasPermission()) {
+                launcher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
+            } else onGranted()
         }
     }
 }
