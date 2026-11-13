@@ -75,6 +75,21 @@ Dishes are matched by their menu number in the product's code (barcode field), o
 Half & half costs half of each pizza; an extra on one half costs half, unless it is always charged in full.
 The customer's name, phone and address are kept apart from the order and erased after 30 days.
 
+### The website's menu on the tables
+
+The tables' QR codes can open the restaurant's own website menu instead of the Flos menu page, so guests
+browse the same menu as at home and order from the table.
+
+1. On the till, switch on **Objednávky z QR** and fill in **Menu na vašem webu pro stoly**, e.g.
+   `https://pizzafresca.cz/menu`. Press **Zveřejnit menu znovu** and print the tables' QR codes again
+   (all at once in Pokročilé nastavení, or one table by holding it on the table screen).
+2. The QR code then opens `https://pizzafresca.cz/menu?t=<table>&k=<key>`. With `t` and `k` in the address
+   the website shows "Stůl <table>", hides delivery, pick-up and the customer form, and posts
+   `{"type":"TABLE","table":"<t>","tableKey":"<k>","lines":[…],"lang":"cs","total":…}` to the same
+   `POST /menu/<slug>/web-order`, then shows the answer from `GET /menu/<slug>/web-order/<id>?k=<token>`.
+3. The back office checks the table's signed key; the till adds the dishes to that table's bill and prints
+   the kitchen ticket. Left empty, the QR codes open the Flos menu exactly as before.
+
 ## Roadmap (towards the full feature set)
 
 Next steps, to be done one at a time: table map and open orders, stock and recipes,

@@ -11,6 +11,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,7 @@ fun WebOrderDialog(vm: PosViewModel) {
     val o = w.order
     val (cart, unmatched) = remember(w.id) { vm.webOrderCart(w) }
     val delivery = o.type == cz.flos.core.WebOrders.DELIVERY
+    val atTable = o.type == cz.flos.core.WebOrders.TABLE
     // The restaurant sets the time; a time the customer asked for is offered first and chosen by default.
     val now = remember(w.id) { java.time.LocalTime.now().withSecond(0).withNano(0) }
     val wish = remember(w.id) { cz.flos.core.WebOrders.wishMinutes(o.time, now.hour * 60 + now.minute) }
@@ -76,14 +78,14 @@ fun WebOrderDialog(vm: PosViewModel) {
     fun clock(m: Int) = now.plusMinutes(m.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
     AlertDialog(
         onDismissRequest = {},
-        title = { Text(tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
+        title = { Text(if (atTable) tr("Nová objednávka ze stolu %s", o.table) + " (web)" else tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 o.customer?.let { c ->
                     Text(c.name + ", " + c.phone, style = MaterialTheme.typography.titleSmall)
                     if (delivery) Text(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
                 }
-                Text(tr("Zákazník chce: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
+                if (!atTable) Text(tr("Zákazník chce: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
                 if (o.note.isNotBlank()) Text(tr("Poznámka: %s", o.note))
                 cart.items.forEach { Text("${Qty.format(it.quantity)}× ${it.name}  ${Money.format(it.total)}") }
                 Text(tr("Celkem: %s", Money.format(cart.total)), style = MaterialTheme.typography.titleMedium)
@@ -151,6 +153,14 @@ fun QrOrderingSettings(vm: PosViewModel, s: AppSettings) {
             Text(tr("Odkaz na menu pro váš web (bez objednávání):"), style = MaterialTheme.typography.labelLarge)
             SelectionContainer { Text(s.menuUrl, style = MaterialTheme.typography.bodySmall) }
         }
+        Text(tr("Menu na vašem webu pro stoly (nepovinné)"), style = MaterialTheme.typography.labelLarge)
+        var site by remember(s.tableMenuUrl) { mutableStateOf(s.tableMenuUrl) }
+        OutlinedTextField(site, { site = it.trim() }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("https://pizzafresca.cz/menu") },
+            label = { Text(tr("Adresa stránky s menu")) })
+        if (site != s.tableMenuUrl) TextButton(onClick = { vm.updateSettings { it.copy(tableMenuUrl = site) } }) { Text(tr("Uložit")) }
+        Text(tr("Vyplněno: QR kódy stolů otevřou menu na vašem webu (stůl a klíč se přidají k adrese) a web pošle objednávku do pokladny. Prázdné: menu Flos jako dosud. Po změně QR kódy vytiskněte znovu."),
+            style = MaterialTheme.typography.bodySmall)
         Text(tr("QR kódy stolů"), style = MaterialTheme.typography.labelLarge)
         Text(tr("Každý stůl má vlastní QR kód s podpisem; objednat jde jen přes kód na stole. Stoly se berou z Nastavení."),
             style = MaterialTheme.typography.bodySmall)
@@ -163,9 +173,9 @@ fun QrOrderingSettings(vm: PosViewModel, s: AppSettings) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(tr("Stůl %s", l.table), modifier = Modifier.weight(1f))
                 TextButton(onClick = { shown = if (shown == l.table) null else l.table }) { Text(tr(if (shown == l.table) "Skrýt" else "Ukázat QR")) }
-                TextButton(onClick = { platform.openUrl(l.path) }) { Text(tr("Otevřít")) }
+                TextButton(onClick = { platform.openUrl(vm.tableQrLink(l)) }) { Text(tr("Otevřít")) }
             }
-            if (shown == l.table) QrText(l.path, 200.dp)
+            if (shown == l.table) QrText(vm.tableQrLink(l), 200.dp)
         }
     }
 }

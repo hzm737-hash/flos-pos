@@ -60,6 +60,20 @@ object TableOrders {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(sig.copyOf(16))
     }
 
+    /**
+     * The table's QR code address on the restaurant's own website [site] (e.g. https://pizzafresca.cz/menu):
+     * the website's page with the table and its key taken from the Flos link [flosLink] (…/menu/slug?t=…&k=…).
+     * A blank or non-web [site] keeps the Flos link.
+     */
+    fun websiteLink(site: String, flosLink: String): String {
+        val base = site.trim()
+        if (!(base.startsWith("https://") || base.startsWith("http://")) || base.any { it <= ' ' }) return flosLink
+        val query = flosLink.substringAfter('?', "").split('&').filter { it.startsWith("t=") || it.startsWith("k=") }
+        if (query.size < 2) return flosLink
+        val clean = base.substringBefore('#')
+        return clean + (if ('?' in clean) "&" else "?") + query.joinToString("&")
+    }
+
     /** Compares in constant time, so the key cannot be guessed character by character. */
     fun keyMatches(secret: ByteArray, table: String, key: String): Boolean =
         java.security.MessageDigest.isEqual(key(secret, table).toByteArray(), key.toByteArray())

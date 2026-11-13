@@ -84,4 +84,20 @@ class WebOrdersTest {
         assertEquals("zvonit 2×", c.note)
         assertEquals("a  b", c.lines[0].note)
     }
+
+    @Test fun tableOrderNeedsTableAndKeyOnly() {
+        val o = WebOrder(WebOrders.TABLE, listOf(WebOrderLine(3, "Diavola", qty = 1)), table = "5", tableKey = "abc")
+        assertNull(WebOrders.problem(o))
+        assertNotNull(WebOrders.problem(o.copy(table = "")))
+        assertNotNull(WebOrders.problem(o.copy(tableKey = "")))
+        assertEquals(listOf("WEB 9 · Stůl 5"), WebOrders.summary(9, o))
+    }
+
+    @Test fun websiteLinkKeepsTableAndKey() {
+        val flos = "https://flos.gnocco.cz/menu/ab12?t=Terasa%201&k=XyZ"
+        assertEquals("https://pizzafresca.cz/menu?t=Terasa%201&k=XyZ", TableOrders.websiteLink("https://pizzafresca.cz/menu", flos))
+        assertEquals("https://pizzafresca.cz/?lang=cs&t=Terasa%201&k=XyZ", TableOrders.websiteLink(" https://pizzafresca.cz/?lang=cs#menu ", flos))
+        assertEquals(flos, TableOrders.websiteLink("", flos))
+        assertEquals(flos, TableOrders.websiteLink("javascript:alert(1)", flos))
+    }
 }

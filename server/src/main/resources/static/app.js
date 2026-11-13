@@ -551,7 +551,7 @@ const TILL_SETTINGS = [
     ['tables', 'Stoly (oddělené čárkou)', 'a'], ['tablePlan', 'Plán stolů', 'a'], ['waiters', 'Obsluha (oddělená čárkou)', 't'],
     ['waitersAway', 'Obsluha mimo směnu', 'a'], ['waiterTables', 'Stoly podle obsluhy', 'a'], ['staffRoles', 'Role obsluhy', 'a'],
     ['permissions', 'Co role nesmějí', 'a'], ['qrOrderApprove', 'Objednávky ze stolu musí potvrdit obsluha', 'b'],
-    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b']]],
+    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b'], ['tableMenuUrl', 'Web s menu pro QR kódy stolů', 't']]],
   ['Kuchyň', [['addons', 'Přídavky pro kategorie', 'a'], ['quickNotes', 'Rychlé poznámky', 'a']]],
   ['Zprávy a menu', [
     ['msgReservation', 'Zpráva k rezervaci', 'a'], ['msgReminder', 'Připomínka rezervace', 'a'], ['msgOrderReady', 'Objednávka je hotová', 'a'],

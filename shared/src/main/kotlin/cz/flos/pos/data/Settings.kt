@@ -168,6 +168,12 @@ data class AppSettings(
     val qrOrderApprove: Boolean = true,
     /** QR ordering: print a kitchen ticket for each accepted order. */
     val qrOrderPrint: Boolean = true,
+    /**
+     * QR ordering: the restaurant's own website menu for the tables (e.g. https://pizzafresca.cz/menu).
+     * When set, the tables' QR codes open this page with the table and its key (?t=…&k=…), and the
+     * website sends the order to the back office. Empty = the Flos menu page, as before.
+     */
+    val tableMenuUrl: String = "",
 ) {
     /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
     fun on(f: AdvFeature): Boolean = f.name in advancedSet
@@ -333,6 +339,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             tablePlan = str("tablePlan", d.tablePlan),
             qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
             qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
+            tableMenuUrl = str("tableMenuUrl", d.tableMenuUrl),
             eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
@@ -504,6 +511,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "tablePlan" to s.tablePlan,
                 "qrOrderApprove" to s.qrOrderApprove.toString(),
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
+                "tableMenuUrl" to s.tableMenuUrl,
                 "eurCashRate" to s.eurCashRate,
             )
 

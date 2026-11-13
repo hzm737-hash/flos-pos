@@ -184,6 +184,7 @@ const EN = {
   'Co role nesmějí': 'What roles may not do',
   'Objednávky ze stolu musí potvrdit obsluha': 'Orders from tables must be accepted by staff',
   'Tisknout objednávky ze stolu do kuchyně': 'Print orders from tables in the kitchen',
+  'Web s menu pro QR kódy stolů': 'Website menu for the tables\' QR codes',
   'Kuchyň': 'Kitchen',
   'Přídavky pro kategorie': 'Add-ons for categories',
   'Rychlé poznámky': 'Quick notes',

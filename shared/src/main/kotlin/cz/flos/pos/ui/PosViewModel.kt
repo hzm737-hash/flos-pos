@@ -27,6 +27,7 @@ import cz.flos.pos.data.SaleEntity
 import cz.flos.pos.data.SaleItemEntity
 import cz.flos.pos.data.SaleStatus
 import cz.flos.pos.data.SaleWithItems
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -202,7 +203,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             while (true) {
                 val s = settings.value
                 if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
-                if (s.paired && s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING)) pollWebOrders()
+                // Orders from the tables on the restaurant's own website come the same way as web orders.
+                if (s.paired && (s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING) ||
+                        (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) && s.tableMenuUrl.isNotBlank()))) pollWebOrders()
                 delay(10_000)
             }
         }
@@ -1081,6 +1084,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false) = viewModelScope.launch {
         if (!webTaking.add(w.id)) return@launch
+        if (w.order.type == cz.flos.core.WebOrders.TABLE) { try { acceptWebTableOrder(w, readyMinutes) } finally { webTaking.remove(w.id) }; return@launch }
         try {
             val (lines, unmatched) = webOrderCart(w)
             val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes) } }
@@ -1114,6 +1118,51 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         } finally { webTaking.remove(w.id) }
     }
 
+    /**
+     * A guest's order from a table on the restaurant's website: tells the back office first, then adds the
+     * dishes to the table's open bill (or opens one), like an order from the Flos QR menu, and prints the
+     * kitchen ticket when that is switched on.
+     */
+    private suspend fun acceptWebTableOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int) = qrMutex.withLock {
+        val o = w.order
+        val table = o.table
+        val existing = openOrders.value.firstOrNull { it.sale.tableName == table }
+        val (lines, unmatched) = webOrderCart(w)
+        val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes) } }
+        if (taken.isFailure) {
+            _messages.tryEmit(tr("Objednávku ze stolu %s se nepodařilo potvrdit: %s", table, taken.exceptionOrNull()?.message ?: ""))
+            return@withLock
+        }
+        _webInbox.update { list -> list.filterNot { it.id == w.id } }
+        if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku ze stolu %s už vyřídila jiná pokladna.", table)); return@withLock }
+        val note = listOf(tr("QR objednávka") + " (web)", o.note.trim()).filter { it.isNotEmpty() }.joinToString(": ")
+        val sale = withContext(Dispatchers.IO) {
+            if (existing != null) {
+                var cart = existing.toCart()
+                lines.items.forEach { cart = cart.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) }
+                val joinedNote = listOf(existing.sale.note, o.note.trim()).filter { it.isNotBlank() }.joinToString(" · ")
+                val updated = existing.sale.copy(total = cart.total, received = cart.total, kitchenReadyAt = null, note = joinedNote)
+                salesDao.replace(updated, itemsOf(cart))
+                updated
+            } else {
+                val millis = System.currentTimeMillis()
+                SaleEntity(
+                    number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                    payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                    orderNumber = flos.settings.nextOrderNumber(), note = note, tableName = table,
+                ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            }
+        }
+        // The same bill is open in the cart: show the new dishes there too, so saving it keeps them.
+        if (existing != null && _editingOrder.value?.id == existing.sale.id) {
+            _cart.update { c -> lines.items.fold(c) { acc, it -> acc.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) } }
+            _editingOrder.value = sale
+        }
+        _messages.tryEmit(tr("Objednávka ze stolu %s přijata", table) +
+            (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
+        if (settings.value.qrOrderPrint) printOrder(sale.copy(note = "WEB ${w.id} · " + tr("Stůl %s", table) + (if (o.note.isNotBlank()) "\n" + o.note.trim() else "")), lines)
+    }
+
     /** Declines a web order; the customer's page asks them to call. */
     fun rejectWebOrder(w: cz.flos.core.WebOrderInbox) = viewModelScope.launch {
         runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, false) } }
@@ -1131,12 +1180,27 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
     }
 
+    /** The address in a table's QR code: the Flos menu, or the restaurant's own website when it is set (tableMenuUrl). */
+    fun tableQrLink(l: cz.flos.core.TableLink): String = cz.flos.core.TableOrders.websiteLink(settings.value.tableMenuUrl, l.path)
+
     /** Prints a QR code for every table on the receipt printer, to stand on the tables. */
     fun printTableQrs() {
         val links = _tableLinks.value
         if (links.isEmpty()) return
         val name = settings.value.businessName
-        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, it.path, tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, tableQrLink(it), tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+    }
+
+    /** Prints the QR code of one table (long press on the table): loads its signed link from the back office first. */
+    fun printTableQr(table: String) = viewModelScope.launch {
+        val s = settings.value
+        if (!s.paired) { _messages.tryEmit(tr("Nejdřív spárujte pokladnu s back office.")); return@launch }
+        runCatching { withContext(Dispatchers.IO) { boClient(s).tableLinks(listOf(table)) } }
+            .onSuccess { links ->
+                val l = links.firstOrNull() ?: return@onSuccess
+                printBlocks(cz.flos.core.MenuPage.poster(s.businessName, tableQrLink(l), tr("Objednejte zde"), l.table), tr("QR kód stolu %s vytištěn", l.table))
+            }
+            .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
     }
 
     /** Loads an open order into the cart so items can be added or removed. */

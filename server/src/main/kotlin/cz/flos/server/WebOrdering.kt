@@ -68,11 +68,19 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
         if (length != null && length > 64_000) throw ApiError(HttpStatusCode.PayloadTooLarge, "Objednávka je příliš velká")
         val order = WebOrders.cleaned(call.receive<WebOrder>())
         val row = db.tx { webMenu(call.parameters["slug"].orEmpty()) } ?: throw ApiError(HttpStatusCode.NotFound, "Menu nenalezeno")
-        if (row.menu?.webOrdering != true) throw ApiError(HttpStatusCode.Forbidden, if (order.lang == "en") "Online orders are switched off." else "Objednávky z webu jsou vypnuté.")
+        val en = order.lang == "en"
+        val atTable = order.type == WebOrders.TABLE
+        if (atTable) {
+            // A guest at a table, on the website's menu opened by the table's QR code: needs QR ordering on.
+            if (row.menu?.ordering != true) throw ApiError(HttpStatusCode.Forbidden, if (en) "Ordering from the table is switched off." else "Objednávky ze stolu jsou vypnuté.")
+        } else if (row.menu?.webOrdering != true) throw ApiError(HttpStatusCode.Forbidden, if (en) "Online orders are switched off." else "Objednávky z webu jsou vypnuté.")
         WebOrders.problem(order)?.let { throw ApiError(HttpStatusCode.BadRequest, it) }
-        val phone = Notify.phoneDigits(order.customer!!.phone)!!
-        if (!GuestThrottle.allow("web-ip:" + call.clientIp(), 6) || !GuestThrottle.allow("web-phone:${row.orgId}:$phone", 6)) {
-            throw ApiError(HttpStatusCode.TooManyRequests, if (order.lang == "en") "Too many orders. Please wait a moment or call us." else "Příliš mnoho objednávek. Chvíli počkejte nebo nám zavolejte.")
+        if (atTable && !db.tx { tableKeyValid(call.parameters["slug"].orEmpty(), order.table, order.tableKey) }) {
+            throw ApiError(HttpStatusCode.Forbidden, if (en) "Invalid table QR code. Please scan the code on the table again." else "Neplatný QR kód stolu. Naskenujte prosím kód na stole znovu.")
+        }
+        val who = if (atTable) "web-table:${row.orgId}:${order.table}" else "web-phone:${row.orgId}:" + Notify.phoneDigits(order.customer!!.phone)!!
+        if (!GuestThrottle.allow("web-ip:" + call.clientIp(), if (atTable) 10 else 6) || !GuestThrottle.allow(who, 6)) {
+            throw ApiError(HttpStatusCode.TooManyRequests, if (en) "Too many orders. Please wait a moment or call us." else "Příliš mnoho objednávek. Chvíli počkejte nebo nám zavolejte.")
         }
         val now = System.currentTimeMillis()
         val token = Tokens.new("w_")
@@ -82,8 +90,8 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
             if (waiting >= 100) throw ApiError(HttpStatusCode.TooManyRequests, if (order.lang == "en") "Too many waiting orders. Please call us." else "Příliš mnoho čekajících objednávek. Zavolejte nám prosím.")
             insert("INSERT INTO web_orders (org_id, token, data, customer, status, created_at) VALUES (?,?,?,?,?,?)",
                 row.orgId, token,
-                FlosJson.encodeToString(WebOrder.serializer(), order.copy(customer = null)),
-                FlosJson.encodeToString(WebCustomer.serializer(), order.customer!!),
+                FlosJson.encodeToString(WebOrder.serializer(), order.copy(customer = null, tableKey = "")),
+                order.customer?.takeUnless { atTable }?.let { FlosJson.encodeToString(WebCustomer.serializer(), it) },
                 "NEW", now)
         }
         call.respond(WebOrderAccepted(id, token))

@@ -75,6 +75,10 @@ private fun Connection.tableSecret(orgId: Long): ByteArray {
 private fun validKey(row: MenuRow, table: String?, key: String?): Boolean =
     !table.isNullOrBlank() && !key.isNullOrBlank() && row.secret != null && TableOrders.keyMatches(unhex(row.secret), table, key)
 
+/** Whether [key] is the signed key of [table] in the QR code of the company with this menu (for table orders from the website). */
+internal fun Connection.tableKeyValid(slug: String, table: String, key: String): Boolean =
+    menuBySlug(slug)?.let { validKey(it, table, key) } == true
+
 /** The public menu page (with ordering when the QR code of a table opened it) and the guest order API. */
 internal fun Route.menuRoutes(db: Db) {
     get("/menu/{slug}") {
