@@ -18,8 +18,13 @@ class PrintTextTest {
         for (cs in PrinterCharset.values()) {
             val out = printed(name, cs)
             assertFalse("$cs: $out", '?' in out)
-            assertTrue("$cs: $out", "1/2 Prosciutto di pollo + 1/2 Diavola + Mozzarella - Palivost 5/5" in out)
+            // The receipt wraps long names, so check the pieces.
+            assertTrue("$cs: $out", "1/2 Prosciutto di pollo" in out && "1/2 Diavola" in out && "Palivost 5/5" in out)
         }
+        assertEquals(
+            "1/2 Prosciutto di pollo + 1/2 Diavola + Mozzarella - Palivost 5/5, Plus cibulla",
+            PrintText.printable(name),
+        )
     }
 
     @Test
