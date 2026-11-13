@@ -30,6 +30,60 @@ enum class PrintSpeed(val label: String, val factor: Int) {
     FASTEST("Nejrychlejší ×3", 3),
 }
 
+/**
+ * Makes text safe for thermal printers. Symbols that most printer code pages don't have
+ * (½ from half & half pizzas, the " · " before a line's note, typographic quotes, emoji …)
+ * are written out in plain characters, so they never print as "?".
+ */
+object PrintText {
+    private val map = mapOf(
+        '½' to "1/2", '¼' to "1/4", '¾' to "3/4", '⅓' to "1/3", '⅔' to "2/3", '⅛' to "1/8",
+        '·' to "-", '•' to "-", '∙' to "-", '‧' to "-",
+        '–' to "-", '—' to "-", '‒' to "-", '−' to "-", '‐' to "-", '‑' to "-",
+        '‘' to "'", '’' to "'", '‚' to "'", '‛' to "'", '´' to "'",
+        '“' to "\"", '”' to "\"", '„' to "\"", '«' to "\"", '»' to "\"", '‹' to "'", '›' to "'",
+        '…' to "...", '×' to "x", '÷' to "/", '€' to "EUR", '№' to "c.",
+        '\u00A0' to " ", '\u2007' to " ", '\u202F' to " ", '\u2009' to " ", '\t' to " ",
+        '™' to "(TM)", '®' to "(R)", '©' to "(C)", '✓' to "v", '✔' to "v",
+    )
+
+    /** Letters without an accent-free form in Unicode, used only when the printer has no code page. */
+    private val letters = mapOf(
+        'ß' to "ss", 'Ł' to "L", 'ł' to "l", 'Đ' to "D", 'đ' to "d", 'Ø' to "O", 'ø' to "o",
+        'Æ' to "AE", 'æ' to "ae", 'Œ' to "OE", 'œ' to "oe", 'ı' to "i", '°' to "st",
+    )
+
+    private fun invisible(c: Char) =
+        c == '\u200B' || c == '\u200C' || c == '\u200D' || c == '\u2060' || c == '\uFEFF' ||
+            c in '\uFE00'..'\uFE0F' || Character.isISOControl(c)
+
+    /** Replaces symbols with plain text and drops invisible characters and emoji. Spacing is kept. */
+    fun printable(s: String): String {
+        if (s.all { it.code in 32..126 }) return s
+        val sb = StringBuilder(s.length + 8)
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            i += Character.charCount(cp)
+            if (cp > 0xFFFF) continue // emoji and other symbols outside the basic plane
+            val c = cp.toChar()
+            val r = map[c]
+            when {
+                r != null -> sb.append(r)
+                Character.isSurrogate(c) || invisible(c) -> Unit
+                else -> sb.append(c)
+            }
+        }
+        return sb.toString()
+    }
+
+    /** Plain ASCII bytes: accents removed, anything still unknown becomes "?". */
+    fun ascii(s: String): ByteArray {
+        val plain = buildString { printable(s).forEach { c -> append(letters[c] ?: c.toString()) } }
+        return Text.stripDiacritics(plain).map { if (it.code in 32..126) it.code.toByte() else '?'.code.toByte() }.toByteArray()
+    }
+}
+
 /** Turns receipt blocks into ESC/POS bytes for thermal printers. */
 class EscPosEncoder(
     private val paper: PaperWidth = PaperWidth.MM58,
@@ -69,7 +123,7 @@ class EscPosEncoder(
         cmd(ESC, 'E'.code, if (l.bold) 1 else 0)
         cmd(GS, '!'.code, if (l.large) 0x11 else 0x00)
         val max = if (l.large) paper.chars / 2 else paper.chars
-        ReceiptLayout.wrap(l.text, max).forEach { text(it); lf() }
+        ReceiptLayout.wrap(PrintText.printable(l.text), max).forEach { text(it); lf() }
         cmd(GS, '!'.code, 0)
         cmd(ESC, 'E'.code, 0)
     }
@@ -166,10 +220,16 @@ class EscPosEncoder(
     private fun align(a: Align) = cmd(ESC, 'a'.code, a.ordinal)
     private fun lf() = out.write(0x0A)
 
-    private fun text(s: String) {
+    private fun text(raw: String) {
+        val s = PrintText.printable(raw)
         val bytes = when (val name = charset.charsetName) {
-            null -> Text.stripDiacritics(s).map { if (it.code in 32..126) it.code.toByte() else '?'.code.toByte() }.toByteArray()
-            else -> s.toByteArray(Charset.forName(name))
+            null -> PrintText.ascii(s)
+            else -> {
+                // Letters the code page doesn't have lose their accent instead of becoming "?".
+                val enc = Charset.forName(name).newEncoder()
+                s.map { c -> if (enc.canEncode(c)) c.toString() else String(PrintText.ascii(c.toString()), Charsets.US_ASCII) }
+                    .joinToString("").toByteArray(Charset.forName(name))
+            }
         }
         out.write(bytes)
     }
