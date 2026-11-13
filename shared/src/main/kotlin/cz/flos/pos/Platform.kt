@@ -31,7 +31,8 @@ interface Platform {
     fun localPrinters(type: PrinterType): List<PrinterDevice>
 
     /** Sends raw ESC/POS bytes to a local printer chosen from [localPrinters]. */
-    suspend fun printLocal(type: PrinterType, address: String, data: ByteArray)
+    /** [speed] multiplies the safe sending rate of Bluetooth / COM printers (1 = normal). */
+    suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int = 1)
 
     /** Asks for an early retry of EET sending after a failure. */
     fun scheduleEetRetry()

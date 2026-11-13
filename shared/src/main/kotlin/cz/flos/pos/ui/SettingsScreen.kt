@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
+import cz.flos.core.PrintSpeed
 import cz.flos.pos.LocalPlatform
 import cz.flos.pos.PrinterDevice
 import cz.flos.pos.print.PrinterType
@@ -161,6 +162,16 @@ fun SettingsScreen(vm: PosViewModel) {
             SwitchRow(tr("Rychlý QR kód (kreslí ho tiskárna)"), s.printerNativeQr) { v -> vm.updateSettings { it.copy(printerNativeQr = v) } }
             Text(tr("QR kód se tiskne mnohem rychleji. Zkuste zkušební tisk: když QR kód chybí, tiskárna to neumí a nechte vypnuté."),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (s.printerType != PrinterType.NETWORK) {
+                Text(tr("Rychlost tisku"), style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrintSpeed.entries.forEach { p ->
+                        FilterChip(selected = s.printerSpeed == p, onClick = { vm.updateSettings { it.copy(printerSpeed = p) } }, label = { Text(tr(p.label)) })
+                    }
+                }
+                Text(tr("Vyzkoušejte zkušební tisk. Když se místo QR kódu vytisknou náhodné znaky, vraťte rychlost o stupeň níž."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { if (s.printerType == PrinterType.BLUETOOTH && !platform.canUsePrinters()) askThenTest() else vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
                     Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))

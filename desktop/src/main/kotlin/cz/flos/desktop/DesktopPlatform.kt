@@ -56,12 +56,12 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         PrinterType.NETWORK -> emptyList()
     }.sortedBy { it.name }
 
-    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray) = mutex.withLock {
+    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int) = mutex.withLock {
         withContext(Dispatchers.IO) {
             if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
             when (type) {
                 PrinterType.SYSTEM -> printRaw(address, data)
-                PrinterType.BLUETOOTH -> printSerial(address, data)
+                PrinterType.BLUETOOTH -> printSerial(address, data, speed)
                 PrinterType.NETWORK -> error("network printers are handled by NetworkPrinter")
             }
         }
@@ -73,7 +73,7 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         service.createPrintJob().print(SimpleDoc(data, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), HashPrintRequestAttributeSet())
     }
 
-    private fun printSerial(portName: String, data: ByteArray) {
+    private fun printSerial(portName: String, data: ByteArray, speed: Int) {
         val port = SerialPort.getCommPort(portName)
         port.baudRate = 9600
         port.setComPortTimeouts(SerialPort.TIMEOUT_WRITE_BLOCKING, 0, 10_000)
@@ -85,7 +85,7 @@ class DesktopPlatform(override val dataDir: File) : Platform {
                 val written = port.writeBytes(data, len, offset)
                 if (written <= 0) throw IOException(tr("Tisk na port %s se nezdařil.", portName))
                 offset += written
-                Thread.sleep(15)
+                Thread.sleep(15L / speed.coerceIn(1, 3))
             }
             Thread.sleep(400)
         } finally {

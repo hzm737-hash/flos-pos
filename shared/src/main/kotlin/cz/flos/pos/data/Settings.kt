@@ -4,6 +4,7 @@ import cz.flos.core.BusinessInfo
 import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
+import cz.flos.core.PrintSpeed
 import cz.flos.core.eet.EetEnvironment
 import cz.flos.pos.KeyValueStore
 import cz.flos.pos.print.NetworkPrinter
@@ -39,6 +40,8 @@ data class AppSettings(
     val openDrawer: Boolean = false,
     /** The printer draws the QR code itself (faster); off = Flos sends it as a picture. */
     val printerNativeQr: Boolean = false,
+    /** How fast data goes to a Bluetooth / COM printer; faster only if the printer keeps up. */
+    val printerSpeed: PrintSpeed = PrintSpeed.NORMAL,
 
     // ---- EET 2.0 ----
     val eetEnabled: Boolean = false,
@@ -263,6 +266,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             printerPort = int("printerPort", d.printerPort),
             openDrawer = bool("openDrawer", d.openDrawer),
             printerNativeQr = bool("printerNativeQr", d.printerNativeQr),
+            printerSpeed = enum("printerSpeed", d.printerSpeed),
             eetEnabled = bool("eetEnabled", d.eetEnabled),
             eetEnvironment = enum("eetEnvironment", d.eetEnvironment),
             eetVerification = bool("eetVerification", d.eetVerification),
@@ -433,6 +437,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "printerPort" to s.printerPort.toString(),
                 "openDrawer" to s.openDrawer.toString(),
                 "printerNativeQr" to s.printerNativeQr.toString(),
+                "printerSpeed" to s.printerSpeed.name,
                 "eetEnabled" to s.eetEnabled.toString(),
                 "eetEnvironment" to s.eetEnvironment.name,
                 "eetVerification" to s.eetVerification.toString(),
