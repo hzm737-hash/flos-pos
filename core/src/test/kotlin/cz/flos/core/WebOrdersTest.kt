@@ -64,6 +64,20 @@ class WebOrdersTest {
         assertEquals("The order is empty.", WebOrders.problem(order.copy(lines = emptyList(), lang = "en")))
     }
 
+    @Test fun wishedTimeBecomesMinutesFromNow() {
+        assertEquals(30, WebOrders.wishMinutes("19:30", 19 * 60))
+        assertNull(WebOrders.wishMinutes("", 19 * 60))
+        assertNull(WebOrders.wishMinutes("18:00", 19 * 60))   // already past
+        assertNull(WebOrders.wishMinutes("25:00", 19 * 60))
+    }
+
+    @Test fun confirmationInTheCustomersLanguage() {
+        val cs = WebOrders.confirmation(12, order, "19:45", "Pizza Fresca", "722 272 252")
+        assertEquals("Dobrý den Jan Novák, potvrzujeme Vaši objednávku č. WEB 12. Doručíme ji přibližně v 19:45. Platba hotově při převzetí. Děkujeme! Pizza Fresca, tel. 722 272 252", cs)
+        val en = WebOrders.confirmation(12, order.copy(type = WebOrders.PICKUP, payment = "card", lang = "en"), "19:45", "Pizza Fresca", "")
+        assertEquals("Hello Jan Novák, we confirm your order no. WEB 12. It will be ready for pick-up at 19:45. Payment by card on receipt. Thank you! Pizza Fresca", en)
+    }
+
     @Test fun cleaningRemovesControlCharactersAndTheNoteSeparator() {
         val dirty = order.copy(note = "zvonit\u0007 2×", lines = listOf(line.copy(note = "a · b")))
         val c = WebOrders.cleaned(dirty)

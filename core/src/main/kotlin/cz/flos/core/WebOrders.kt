@@ -167,6 +167,37 @@ object WebOrders {
         },
     )
 
+    /**
+     * Minutes from [nowMinute] (minutes since midnight) to the customer's wished time "HH:mm", or null when
+     * they want it as soon as possible, or the time is past or more than 4 hours away.
+     */
+    fun wishMinutes(time: String, nowMinute: Int): Int? {
+        if (!TIME.matches(time)) return null
+        val (h, m) = time.split(':').map { it.toInt() }
+        return (h * 60 + m - nowMinute).takeIf { it in 1..240 }
+    }
+
+    /**
+     * The confirmation the restaurant sends to the customer (WhatsApp), in the customer's language:
+     * order number, delivery or pick-up, the confirmed time and the payment.
+     */
+    fun confirmation(id: Long, o: WebOrder, readyAt: String, shop: String, shopPhone: String): String {
+        val name = o.customer?.name?.trim().orEmpty()
+        val delivery = o.type == DELIVERY
+        val card = o.payment == "card"
+        return if (o.lang == "en") buildString {
+            append(if (name.isEmpty()) "Hello" else "Hello $name").append(", we confirm your order no. WEB ").append(id).append(". ")
+            append(if (delivery) "We will deliver it at about $readyAt" else "It will be ready for pick-up at $readyAt").append(". ")
+            append("Payment ").append(if (card) "by card" else "in cash").append(" on receipt. ")
+            append("Thank you! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
+        }.trim() else buildString {
+            append(if (name.isEmpty()) "Dobrý den" else "Dobrý den $name").append(", potvrzujeme Vaši objednávku č. WEB ").append(id).append(". ")
+            append(if (delivery) "Doručíme ji přibližně v $readyAt" else "Bude připravena k vyzvednutí v $readyAt").append(". ")
+            append("Platba ").append(if (card) "kartou" else "hotově").append(" při převzetí. ")
+            append("Děkujeme! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
+        }.trim()
+    }
+
     /** Heading and details for the kitchen ticket and the dialog on the till. */
     fun summary(id: Long, o: WebOrder): List<String> = buildList {
         add("WEB $id · " + (if (o.type == DELIVERY) "Rozvoz" else "Osobní odběr") + " · " + o.time.ifEmpty { "co nejdříve" })
