@@ -951,5 +951,11 @@ internal object En {
         "Po zapnutí nebo vypnutí zveřejněte menu znovu; web přijímá objednávky jen při zapnutí. Adresu webu musí správce back office povolit (FLOS_WEB_ORIGINS)." to "After switching this on or off, publish the menu again; the website takes orders only while it is on. The back office admin must allow the website's address (FLOS_WEB_ORIGINS).",
         "Pizzy z webu se párují podle čísla v menu (kód produktu), jinak podle názvu." to "Dishes from the website are matched by their menu number (product code), otherwise by name.",
         "Adresa menu (pro nastavení webu):" to "Menu address (for setting up the website):",
+        "Zákazník chce: %s" to "Customer wants: %s",
+        "Hotovo v" to "Ready at",
+        "%s (přání zákazníka)" to "%s (customer's wish)",
+        "%d min · %s" to "%d min · %s",
+        "Zákazník uvidí nový čas %s místo %s." to "The customer will see the new time %s instead of %s.",
+        "Poslat zákazníkovi potvrzení přes WhatsApp" to "Send the customer a confirmation on WhatsApp",
     )
 }

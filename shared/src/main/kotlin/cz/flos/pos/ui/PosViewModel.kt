@@ -1076,7 +1076,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * other till takes it), then saves it as an open order and prints the ticket with the customer's
      * details. The details are only printed, not stored on the till (see the privacy policy).
      */
-    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int) = viewModelScope.launch {
+    /** Whether accepting a web order also opens WhatsApp with the confirmation for the customer (kept while the app runs). */
+    val webWhatsApp = MutableStateFlow(true)
+
+    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false) = viewModelScope.launch {
         if (!webTaking.add(w.id)) return@launch
         try {
             val (lines, unmatched) = webOrderCart(w)
@@ -1097,6 +1100,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
                 orderNumber = flos.settings.nextOrderNumber(), note = note,
             ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            // The confirmation goes from the shop's own WhatsApp; the cashier only presses Send.
+            val phone = o.customer?.phone.orEmpty()
+            if (whatsapp && cz.flos.core.Notify.phoneDigits(phone) != null) {
+                val s = settings.value
+                sendMessage("whatsapp", phone, cz.flos.core.WebOrders.confirmation(w.id, o, ready, s.businessName, s.phone))
+            }
             _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
                 (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
             // The ticket carries the name, phone and address for the kitchen and the driver.

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.OutlinedButton
@@ -64,33 +65,50 @@ fun WebOrderDialog(vm: PosViewModel) {
     val w = inbox.firstOrNull() ?: return
     val o = w.order
     val (cart, unmatched) = remember(w.id) { vm.webOrderCart(w) }
-    var minutes by remember(w.id) { mutableStateOf(if (o.type == cz.flos.core.WebOrders.DELIVERY) 45 else 20) }
     val delivery = o.type == cz.flos.core.WebOrders.DELIVERY
+    // The restaurant sets the time; a time the customer asked for is offered first and chosen by default.
+    val now = remember(w.id) { java.time.LocalTime.now().withSecond(0).withNano(0) }
+    val wish = remember(w.id) { cz.flos.core.WebOrders.wishMinutes(o.time, now.hour * 60 + now.minute) }
+    val choices = remember(w.id) { (listOfNotNull(wish) + cz.flos.core.WebOrders.READY_MINUTES).distinct() }
+    var minutes by remember(w.id) { mutableStateOf(wish ?: if (delivery) 45 else 20) }
+    val canWhatsApp = cz.flos.core.Notify.phoneDigits(o.customer?.phone.orEmpty()) != null
+    val whatsapp by vm.webWhatsApp.collectAsState()
+    fun clock(m: Int) = now.plusMinutes(m.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
     AlertDialog(
         onDismissRequest = {},
         title = { Text(tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
         text = {
-            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 o.customer?.let { c ->
                     Text(c.name + ", " + c.phone, style = MaterialTheme.typography.titleSmall)
                     if (delivery) Text(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
                 }
-                Text(tr("Čas: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
+                Text(tr("Zákazník chce: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
                 if (o.note.isNotBlank()) Text(tr("Poznámka: %s", o.note))
                 cart.items.forEach { Text("${Qty.format(it.quantity)}× ${it.name}  ${Money.format(it.total)}") }
                 Text(tr("Celkem: %s", Money.format(cart.total)), style = MaterialTheme.typography.titleMedium)
                 if (o.total > 0 && o.total * 100 != cart.total) Text(tr("Zákazník na webu viděl %s Kč.", o.total.toString()), color = MaterialTheme.colorScheme.error)
                 if (unmatched.isNotEmpty()) Text(tr("Bez produktu v pokladně (cena z webu): %s", unmatched.joinToString(", ")), color = MaterialTheme.colorScheme.error)
-                Text(tr("Hotovo za"), style = MaterialTheme.typography.labelLarge)
+                Text(tr("Hotovo v"), style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    cz.flos.core.WebOrders.READY_MINUTES.forEach { m ->
-                        FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(tr("%d min", m)) })
+                    choices.forEach { m ->
+                        val label = if (m == wish) tr("%s (přání zákazníka)", clock(m)) else tr("%d min · %s", m, clock(m))
+                        FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(label) })
                     }
+                }
+                if (wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
+                if (canWhatsApp) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = whatsapp, onCheckedChange = { vm.webWhatsApp.value = it })
+                    Text(tr("Poslat zákazníkovi potvrzení přes WhatsApp"))
                 }
                 if (inbox.size > 1) Text(tr("Čeká dalších objednávek: %d", inbox.size - 1), style = MaterialTheme.typography.labelMedium)
             }
         },
-        confirmButton = { Button(onClick = { vm.acceptWebOrder(w, minutes) }) { Text(tr("Přijmout")) } },
+        confirmButton = { Button(onClick = { run {
+            // Minutes counted again from the moment of the tap, so the chosen clock time stays exact.
+            val secs = java.time.Duration.between(java.time.LocalTime.now(), now.plusMinutes(minutes.toLong())).seconds
+            vm.acceptWebOrder(w, ((secs + 59) / 60).toInt().coerceIn(1, 240), canWhatsApp && whatsapp)
+        } }) { Text(tr("Přijmout")) } },
         dismissButton = { TextButton(onClick = { vm.rejectWebOrder(w) }) { Text(tr("Odmítnout")) } },
     )
 }
