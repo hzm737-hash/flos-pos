@@ -17,6 +17,8 @@ import androidx.compose.material.icons.rounded.OpenWith
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.pointer.pointerInput
@@ -59,6 +61,7 @@ import java.time.Duration
  * Table map: every table from Settings as a tile. A free table starts a new order for it; a
  * table with an open bill shows its total and how long it has been open, and opens the bill.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
     val settings by vm.settings.collectAsState()
@@ -81,6 +84,7 @@ fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
     val byWaiter = if (settings.on(cz.flos.pos.data.AdvFeature.WAITER_TABLES)) settings.waiterTableMap else emptyMap()
     val waiterOf = byWaiter.flatMap { (w, ts) -> ts.map { it to w } }.toMap()
     var onlyMine by rememberSaveable { mutableStateOf(false) }
+    var qrFor by remember { mutableStateOf<String?>(null) }
     val plan = settings.on(cz.flos.pos.data.AdvFeature.TABLE_PLAN)
     val mine = byWaiter[settings.cashier].orEmpty()
     val shown = if (onlyMine && mine.isNotEmpty()) tables.filter { it in mine } else tables
@@ -101,18 +105,43 @@ fun TablesScreen(vm: PosViewModel, onOpen: () -> Unit) {
         items(shown, key = { it }) { name ->
             val bills = byTable[name].orEmpty()
             val busy = bills.isNotEmpty()
+            // Tap opens the bill as before; a long press offers to print the table's QR code.
             Card(
-                onClick = {
-                    if (busy) vm.editOrder(bills.first()) else vm.startTable(name)
-                    onOpen()
-                },
                 shape = RoundedCornerShape(24.dp),
                 colors = tileColors(busy),
-                modifier = Modifier.height(110.dp),
+                modifier = Modifier.height(110.dp).clip(RoundedCornerShape(24.dp)).combinedClickable(
+                    onClick = {
+                        if (busy) vm.editOrder(bills.first()) else vm.startTable(name)
+                        onOpen()
+                    },
+                    onLongClick = { qrFor = name },
+                ),
             ) { TileContent(name, busy, bills, waiterOf[name], now, bookings, booked) }
         }
     }
     }
+    qrFor?.let { TableQrDialog(vm, it) { qrFor = null } }
+}
+
+/** Long press on a table: print the QR code with the table's number for guests to order from. */
+@Composable
+internal fun TableQrDialog(vm: PosViewModel, table: String, onDismiss: () -> Unit) {
+    val s by vm.settings.collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(tr("Stůl %s", table)) },
+        text = {
+            Text(
+                if (!s.paired) tr("Nejdřív spárujte pokladnu s back office.")
+                else tr("Vytiskne QR kód tohoto stolu s jeho číslem na tiskárně účtenek. Hosté přes něj otevřou menu a objednají."),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            Button(onClick = { vm.printTableQr(table); onDismiss() }, enabled = s.paired) { Text(tr("Tisknout QR kód stolu")) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Zavřít")) } },
+    )
 }
 
 @Composable
@@ -165,6 +194,7 @@ private fun TablePlan(
     val saved = settings.tablePositions
     var editing by rememberSaveable { mutableStateOf(false) }
     var moving by remember { mutableStateOf<String?>(null) }
+    var qrFor by remember { mutableStateOf<String?>(null) }
     // Positions being dragged right now; saved when the finger is lifted.
     val dragged = remember { mutableStateMapOf<String, Pair<Float, Float>>() }
     val tileW = 112.dp
@@ -211,7 +241,8 @@ private fun TablePlan(
                         if (busy) vm.editOrder(bills.first()) else vm.startTable(name)
                         onOpen()
                     },
-                    onLongClick = { if (busy) moving = name },
+                    // Holding a table with a bill moves it (as before); holding a free table prints its QR code.
+                    onLongClick = { if (busy) moving = name else qrFor = name },
                 )
                 val drag = Modifier.pointerInput(name, freeW, freeH) {
                     detectDragGestures(
@@ -252,8 +283,9 @@ private fun TablePlan(
                     }
                 }
             },
-            confirmButton = {},
+            confirmButton = { TextButton(onClick = { qrFor = from; moving = null }) { Text(tr("Tisknout QR kód stolu")) } },
             dismissButton = { TextButton(onClick = { moving = null }) { Text(tr("Zrušit")) } },
         )
     }
+    qrFor?.let { TableQrDialog(vm, it) { qrFor = null } }
 }

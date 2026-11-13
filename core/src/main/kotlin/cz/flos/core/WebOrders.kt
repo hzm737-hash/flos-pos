@@ -38,7 +38,7 @@ import kotlinx.serialization.Serializable
 @Serializable data class WebCustomer(val name: String, val phone: String, val street: String = "", val bell: String = "")
 
 @Serializable data class WebOrder(
-    /** [WebOrders.DELIVERY] or [WebOrders.PICKUP]. */
+    /** [WebOrders.DELIVERY], [WebOrders.PICKUP] or [WebOrders.TABLE] (a guest at a table, from the table's QR code). */
     val type: String,
     val lines: List<WebOrderLine>,
     val customer: WebCustomer? = null,
@@ -54,6 +54,9 @@ import kotlinx.serialization.Serializable
     val total: Long = 0,
     /** The customer ticked the box agreeing to the terms and the privacy policy. */
     val agreedTerms: Boolean = false,
+    /** For [WebOrders.TABLE]: the table and its signed key, both from the table's QR code (t= and k=). */
+    val table: String = "",
+    val tableKey: String = "",
 )
 
 /** A waiting web order as the back office hands it to a till. */
@@ -67,6 +70,8 @@ import kotlinx.serialization.Serializable
 object WebOrders {
     const val DELIVERY = "DELIVERY"
     const val PICKUP = "PICKUP"
+    /** Ordered at a table in the restaurant from the website's menu, opened by the table's QR code. */
+    const val TABLE = "TABLE"
     const val MAX_LINES = 40
     const val MAX_QTY = 20
     const val MAX_EXTRAS = 25
@@ -81,9 +86,16 @@ object WebOrders {
     fun problem(o: WebOrder): String? {
         val cs = o.lang != "en"
         fun t(c: String, e: String) = if (cs) c else e
-        if (o.type != DELIVERY && o.type != PICKUP) return t("Neplatný způsob převzetí.", "Invalid order type.")
+        if (o.type != DELIVERY && o.type != PICKUP && o.type != TABLE) return t("Neplatný způsob převzetí.", "Invalid order type.")
         if (o.lines.isEmpty()) return t("Objednávka je prázdná.", "The order is empty.")
         if (o.lines.size > MAX_LINES) return t("Příliš mnoho položek.", "Too many items.")
+        if (o.type == TABLE) {
+            // At the table: no name, phone or terms; the table's signed key is checked by the back office.
+            if (o.table.isBlank() || o.table.length > TableOrders.MAX_TABLE || o.tableKey.isBlank() || o.tableKey.length > 200)
+                return t("Neplatný QR kód stolu. Naskenujte prosím kód na stole znovu.", "Invalid table QR code. Please scan the code on the table again.")
+            if (o.note.length > MAX_NOTE || o.total !in 0..1_000_000) return t("Neplatná objednávka.", "Invalid order.")
+            return lineProblem(o) { c, e -> t(c, e) }
+        }
         if (!o.agreedTerms) return t("Chybí souhlas s podmínkami.", "Please agree to the terms.")
         val c = o.customer ?: return t("Vyplňte jméno a telefon.", "Please fill in your name and phone.")
         if (c.name.isBlank() || c.name.length > MAX_NAME) return t("Vyplňte jméno.", "Please fill in your name.")
@@ -94,6 +106,10 @@ object WebOrders {
         if (o.payment != "cash" && o.payment != "card") return t("Neplatný způsob platby.", "Invalid payment method.")
         if (o.note.length > MAX_NOTE) return t("Poznámka je příliš dlouhá.", "The note is too long.")
         if (o.deliveryFee !in 0..1000 || o.total !in 0..1_000_000) return t("Neplatná cena.", "Invalid price.")
+        return lineProblem(o) { c, e -> t(c, e) }
+    }
+
+    private fun lineProblem(o: WebOrder, t: (String, String) -> String): String? {
         for (l in o.lines) {
             if (l.qty !in 1..MAX_QTY) return t("Neplatné množství.", "Invalid quantity.")
             if (l.number !in 1..9999 || l.name.isBlank() || l.name.length > MAX_NAME) return t("Neplatná položka.", "Invalid item.")
@@ -161,6 +177,8 @@ object WebOrders {
     fun cleaned(o: WebOrder): WebOrder = o.copy(
         customer = o.customer?.let { WebCustomer(clean(it.name, MAX_NAME), clean(it.phone, 20), clean(it.street, MAX_TEXT), clean(it.bell, MAX_TEXT)) },
         note = cleanNote(o.note),
+        table = clean(o.table, TableOrders.MAX_TABLE),
+        tableKey = o.tableKey.trim(),
         lines = o.lines.map { l ->
             l.copy(name = clean(l.name, MAX_NAME), halfName = clean(l.halfName, MAX_NAME), note = cleanNote(l.note),
                 extras = l.extras.map { it.copy(name = clean(it.name, MAX_NAME)) })
@@ -199,7 +217,10 @@ object WebOrders {
     }
 
     /** Heading and details for the kitchen ticket and the dialog on the till. */
-    fun summary(id: Long, o: WebOrder): List<String> = buildList {
+    fun summary(id: Long, o: WebOrder): List<String> = if (o.type == TABLE) buildList {
+        add("WEB $id · Stůl " + o.table)
+        if (o.note.isNotBlank()) add("Pozn.: " + o.note)
+    } else buildList {
         add("WEB $id · " + (if (o.type == DELIVERY) "Rozvoz" else "Osobní odběr") + " · " + o.time.ifEmpty { "co nejdříve" })
         o.customer?.let { c ->
             add(c.name + ", " + c.phone)

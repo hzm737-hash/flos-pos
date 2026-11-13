@@ -53,12 +53,12 @@ class WebOrderTest {
     }
 
     /** Owner, a paired till and a published menu; returns the till's token and the menu slug. */
-    private suspend fun HttpClient.setUp(webOrdering: Boolean = true): Pair<String, String> {
+    private suspend fun HttpClient.setUp(webOrdering: Boolean = true, ordering: Boolean = false): Pair<String, String> {
         val token = postJson("/api/v1/auth/register", RegisterRequest("Pizza Fresca", "Hazem", "majitel@flos.cz", "tajneheslo1")).body<TokenResponse>().token
         val branch = get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
         val device = postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
         val dt = postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>().token
-        val menu = MenuData("Pizza Fresca", categories = listOf(MenuCategory("Pizza", listOf(MenuItem("Diavola", 22000, id = 3)))), webOrdering = webOrdering)
+        val menu = MenuData("Pizza Fresca", categories = listOf(MenuCategory("Pizza", listOf(MenuItem("Diavola", 22000, id = 3)))), webOrdering = webOrdering, ordering = ordering)
         val path = put("/api/v1/device/menu") { bearerAuth(dt); contentType(ContentType.Application.Json); setBody(menu) }.body<MenuPublished>().path
         return dt to path.removePrefix("/menu/")
     }
@@ -144,5 +144,38 @@ class WebOrderTest {
         assertTrue(db.tx { queryOne("SELECT data FROM web_orders WHERE id = ?", id) { it.getString(1) } }!!.contains("Diavola"))
         // Too old for the till anyway.
         assertTrue(client.get("/api/v1/device/web-orders") { bearerAuth(dt) }.body<WebOrderList>().orders.isEmpty())
+    }
+
+    /** A guest at a table, on the website's menu opened by the table's QR code (?t=…&k=…). */
+    @Test fun tableOrderFromTheWebsite() = run { client ->
+        val (dt, slug) = client.setUp(webOrdering = false, ordering = true)
+        val link = client.postJson("/api/v1/device/table-links", cz.flos.core.TableLinkRequest(listOf("7")), dt).body<cz.flos.core.TableLinkList>().links.single().path
+        val key = link.substringAfter("&k=")
+        val qr = cz.flos.core.TableOrders.websiteLink("https://pizzafresca.cz/menu", "https://bo.cz$link")
+        assertEquals("https://pizzafresca.cz/menu?t=7&k=$key", qr)
+        val atTable = WebOrder(WebOrders.TABLE, listOf(WebOrderLine(3, "Diavola", qty = 2, unitPrice = 220)), table = "7", tableKey = key, total = 440)
+
+        // A wrong key or a table without one is refused; no name, phone or terms are needed.
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", atTable.copy(tableKey = "spatne"), origin = site).status)
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", atTable.copy(table = "8"), origin = site).status)
+        assertEquals(HttpStatusCode.BadRequest, client.postJson("/menu/$slug/web-order", atTable.copy(tableKey = ""), origin = site).status)
+        // Delivery stays off while web ordering is off.
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", order, origin = site).status)
+
+        val acc = client.postJson("/menu/$slug/web-order", atTable, origin = site).body<WebOrderAccepted>()
+        val got = client.get("/api/v1/device/web-orders") { bearerAuth(dt) }.body<WebOrderList>().orders.single()
+        assertEquals(WebOrders.TABLE, got.order.type)
+        assertEquals("7", got.order.table)
+        assertEquals("", got.order.tableKey)
+        assertNull(got.order.customer)
+        assertTrue(client.postJson("/api/v1/device/web-orders/${acc.id}/ack", WebOrderAck(true, 20), dt).body<Ok>().ok)
+        assertEquals("ACCEPTED", client.get("/menu/$slug/web-order/${acc.id}?k=${acc.token}").body<WebOrderStatus>().status)
+    }
+
+    @Test fun tableOrderNeedsQrOrderingOn() = run { client ->
+        val (dt, slug) = client.setUp(webOrdering = true, ordering = false)
+        val link = client.postJson("/api/v1/device/table-links", cz.flos.core.TableLinkRequest(listOf("7")), dt).body<cz.flos.core.TableLinkList>().links.single().path
+        val atTable = WebOrder(WebOrders.TABLE, listOf(WebOrderLine(3, "Diavola", qty = 1)), table = "7", tableKey = link.substringAfter("&k="))
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", atTable, origin = site).status)
     }
 }
