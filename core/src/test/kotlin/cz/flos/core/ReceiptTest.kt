@@ -78,10 +78,10 @@ class ReceiptTest {
         val blocks = ReceiptLayout(32).layout(business, receipt)
         val bytes = EscPosEncoder(PaperWidth.MM58).encode(blocks)
         val s = bytes.toList()
-        // GS v 0 raster command; the blank right margin is cropped, so at most 48 bytes (384 dots) wide
-        val idx = s.windowed(4).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 0) }
+        // GS v 0 raster command in 2×2 mode; half the paper and the blank right margin is cropped, so at most 24 bytes wide
+        val idx = s.windowed(4).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 3) }
         assertTrue(idx > 0)
-        assertTrue(bytes[idx + 4] in 20..48)
+        assertTrue(bytes[idx + 4] in 10..24)
         // ASCII mode never sends bytes above 0x7F as text
         assertEquals(0x1B.toByte(), bytes[0])
     }
@@ -104,6 +104,23 @@ class ReceiptTest {
         val gs = picture.indices.first { picture[it] == 0x1D.toByte() && picture[it + 1] == 'v'.code.toByte() }
         val widthBytes = (picture[gs + 4].toInt() and 0xFF) + (picture[gs + 5].toInt() and 0xFF) * 256
         assertTrue("width $widthBytes", widthBytes < 72)
+    }
+
+    @Test fun qrPictureIsHalfSizeAndDoubledByPrinter() {
+        val content = "SPD*1.0*ACC:CZ6508000000192000145399*AM:100.00*CC:CZK"
+        val m = QrPlatba.qrMatrix(content)
+        for (paper in PaperWidth.entries) {
+            val enc = EscPosEncoder(paper)
+            val full = enc.qrImage(m)
+            val half = enc.qrImage(m, half = true)
+            // Printed at 2×, the code keeps about the same size and never exceeds the paper.
+            assertTrue("${paper.mm}: ${half.size * 2} vs ${full.size}", half.size * 2 in (full.size * 8 / 10)..paper.dots)
+            val bytes = enc.encode(listOf(ReceiptBlock.Qr(content)))
+            val gs = bytes.indices.first { bytes[it] == 0x1D.toByte() && bytes[it + 1] == 'v'.code.toByte() }
+            assertEquals("mode 3 = double width and height", 3, bytes[gs + 3].toInt())
+            // A quarter of the data the full-size picture needed.
+            assertTrue("${paper.mm}: ${bytes.size} bytes", bytes.size < full.size * paper.dots / 8 / 3)
+        }
     }
 
     @Test fun dailyReport() {

@@ -47,7 +47,8 @@ class BluetoothPrinter(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun print(address: String, data: ByteArray) = mutex.withLock {
+    /** [speed] 1–3 multiplies the sending rate (shorter pauses between chunks). */
+    suspend fun print(address: String, data: ByteArray, speed: Int = 1) = mutex.withLock {
         withContext(Dispatchers.IO) {
             if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
             if (!canConnect()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
@@ -79,7 +80,7 @@ class BluetoothPrinter(private val context: Context) {
                     out.write(data, offset, len)
                     out.flush()
                     offset += len
-                    delay(PAUSE_MS)
+                    delay(PAUSE_MS / speed.coerceIn(1, 3))
                 }
                 // Give the printer time to empty its buffer before the link closes.
                 delay(400)
@@ -92,7 +93,7 @@ class BluetoothPrinter(private val context: Context) {
     companion object {
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val CHUNK = 192
-        /** About 6 KB a second, below what a 58 or 80 mm thermal printer prints. */
+        /** About 6 KB a second at normal speed, below what a 58 or 80 mm thermal printer prints; ×2 and ×3 shorten the pause. */
         private const val PAUSE_MS = 30L
     }
 }

@@ -20,6 +20,16 @@ enum class PrinterCharset(val label: String, val charsetName: String?, val escPo
     CP1250("Windows-1250", "windows-1250", 45),
 }
 
+/**
+ * How fast Flos sends data to a Bluetooth / COM printer. Faster sending is fine for printers with a
+ * bigger buffer; if the QR code comes out as random characters, go back to [NORMAL].
+ */
+enum class PrintSpeed(val label: String, val factor: Int) {
+    NORMAL("Normální", 1),
+    FAST("Rychlá ×2", 2),
+    FASTEST("Nejrychlejší ×3", 3),
+}
+
 /** Turns receipt blocks into ESC/POS bytes for thermal printers. */
 class EscPosEncoder(
     private val paper: PaperWidth = PaperWidth.MM58,
@@ -68,7 +78,8 @@ class EscPosEncoder(
         val matrix = QrPlatba.qrMatrix(content)
         if (nativeQr) return nativeQr(content, matrix)
         align(Align.LEFT)
-        raster(qrImage(matrix))
+        // Half-size picture that the printer doubles in both directions: a quarter of the bytes, same QR on paper.
+        raster(qrImage(matrix, half = true), double = true)
         lf()
     }
 
@@ -105,15 +116,21 @@ class EscPosEncoder(
         return Array(height) { row }
     }
 
-    /** Scales the QR modules to whole dots and centres the code on a paper-wide 1-bit image. */
-    internal fun qrImage(m: BitMatrix): Array<BooleanArray> {
+    /**
+     * Scales the QR modules to whole dots and centres the code on a paper-wide 1-bit image.
+     * With [half] the image is half the paper width, for printing with the printer's 2× scaling.
+     */
+    internal fun qrImage(m: BitMatrix, half: Boolean = false): Array<BooleanArray> {
         val quiet = 4
         val modules = m.width + 2 * quiet
-        val scale = maxOf(1, (paper.dots * qrWidthRatio).toInt() / modules)
+        val full = maxOf(1, (paper.dots * qrWidthRatio).toInt() / modules)
+        val dots = if (half) paper.dots / 2 else paper.dots
+        // Rounded so the doubled code stays close to the size of the full one, but never wider than the paper.
+        val scale = if (half) ((full + 1) / 2).coerceAtMost(dots / modules).coerceAtLeast(1) else full
         val size = modules * scale
-        val left = (paper.dots - size) / 2
+        val left = ((dots - size) / 2).coerceAtLeast(0)
         return Array(size) { y ->
-            BooleanArray(paper.dots) { x ->
+            BooleanArray(dots) { x ->
                 val mx = (x - left) / scale - quiet
                 val my = y / scale - quiet
                 x >= left && x < left + size && mx in 0 until m.width && my in 0 until m.height && m[mx, my]
@@ -121,15 +138,18 @@ class EscPosEncoder(
         }
     }
 
-    /** GS v 0 raster image, sent in bands so small printer buffers don't overflow. */
-    private fun raster(rows: Array<BooleanArray>) {
+    /**
+     * GS v 0 raster image, sent in bands so small printer buffers don't overflow.
+     * [double] asks the printer to print every dot as 2×2 (mode 3).
+     */
+    private fun raster(rows: Array<BooleanArray>, double: Boolean = false) {
         if (rows.isEmpty()) return
         // Blank space right of the picture is not sent: fewer bytes, faster over Bluetooth.
         val lastDot = rows.maxOf { r -> r.lastIndexOf(true) }
         if (lastDot < 0) return
         val widthBytes = lastDot / 8 + 1
         rows.toList().chunked(BAND).forEach { band ->
-            cmd(GS, 'v'.code, '0'.code, 0, widthBytes and 0xFF, widthBytes shr 8, band.size and 0xFF, band.size shr 8)
+            cmd(GS, 'v'.code, '0'.code, if (double) 3 else 0, widthBytes and 0xFF, widthBytes shr 8, band.size and 0xFF, band.size shr 8)
             for (row in band) {
                 for (bx in 0 until widthBytes) {
                     var byte = 0

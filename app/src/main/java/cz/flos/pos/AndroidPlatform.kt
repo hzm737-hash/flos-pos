@@ -35,7 +35,7 @@ class AndroidPlatform(private val context: Context) : Platform {
     override fun localPrinters(type: PrinterType): List<PrinterDevice> =
         bluetooth.pairedDevices().map { PrinterDevice(it.name, it.address) }
 
-    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray) = bluetooth.print(address, data)
+    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int) = bluetooth.print(address, data, speed)
 
     override fun scheduleEetRetry() = EetRetryWorker.scheduleSoon(context)
 
