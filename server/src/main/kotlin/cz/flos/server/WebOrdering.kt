@@ -35,7 +35,7 @@ const val WEB_CUSTOMER_KEEP_MS = 30L * 24 * 60 * 60 * 1000
 fun webOriginsFromEnv(): List<String> =
     System.getenv("FLOS_WEB_ORIGINS").orEmpty().split(',').map { it.trim().trimEnd('/') }.filter { it.startsWith("https://") || it.startsWith("http://localhost") }
 
-private fun ApplicationCall.allowOrigin(origins: List<String>) {
+internal fun ApplicationCall.allowOrigin(origins: List<String>) {
     val origin = request.headers["Origin"]?.trimEnd('/') ?: return
     if (origin !in origins) return
     response.headers.append("Access-Control-Allow-Origin", origin)
@@ -78,6 +78,9 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
         if (atTable && !db.tx { tableKeyValid(call.parameters["slug"].orEmpty(), order.table, order.tableKey) }) {
             throw ApiError(HttpStatusCode.Forbidden, if (en) "Invalid table QR code. Please scan the code on the table again." else "Neplatný QR kód stolu. Naskenujte prosím kód na stole znovu.")
         }
+        // Ordering hours and "stop orders" on the till: the table's guests follow the QR ones, the rest the web ones.
+        val gate = db.tx { if (atTable) qrOrderStatus(row.orgId, order.table) else webOrderStatus(row.orgId) }
+        if (!gate.open) return@post call.respondClosed(OrdersClosed(gate), en)
         val who = if (atTable) "web-table:${row.orgId}:${order.table}" else "web-phone:${row.orgId}:" + Notify.phoneDigits(order.customer!!.phone)!!
         if (!GuestThrottle.allow("web-ip:" + call.clientIp(), if (atTable) 10 else 6) || !GuestThrottle.allow(who, 6)) {
             throw ApiError(HttpStatusCode.TooManyRequests, if (en) "Too many orders. Please wait a moment or call us." else "Příliš mnoho objednávek. Chvíli počkejte nebo nám zavolejte.")

@@ -174,7 +174,49 @@ data class AppSettings(
      * website sends the order to the back office. Empty = the Flos menu page, as before.
      */
     val tableMenuUrl: String = "",
+
+    // ---- When orders from the tables and the website are taken (kept by the back office too) ----
+    /** Orders from the tables only at [qrHours]; off = any time. */
+    val qrHoursOn: Boolean = false,
+    /** Seven lines, Monday first, e.g. "11:00-20:30"; an empty line = no orders that day. */
+    val qrHours: String = cz.flos.core.OrderHours.DEFAULT_WEEK.joinToString("\n"),
+    /** Delivery and pick-up orders from the website only at [webHours]; off = any time. */
+    val webHoursOn: Boolean = false,
+    val webHours: String = cz.flos.core.OrderHours.DEFAULT_WEEK.joinToString("\n"),
+    /** "Stop orders": no new orders from the tables until switched back. */
+    val qrPaused: Boolean = false,
+    /** "Stop orders": no new orders from the website until switched back. */
+    val webPaused: Boolean = false,
+    /** What customers see while orders are stopped; empty = the default text. */
+    val pauseMessage: String = "",
+    /** A table with an open bill may keep ordering after hours. */
+    val openTablesAfterHours: Boolean = true,
+
+    // ---- Ringing for a new order ----
+    /** A loud ring that repeats until someone stops it; off = one short beep (as before). */
+    val orderAlarm: Boolean = false,
+    /** ALARM (the phone's alarm sound), RINGTONE (the ringtone) or BEEP (repeated beeps). */
+    val orderAlarmSound: String = "ALARM",
+    /** How loud the ring is, 10–100 % of the alarm volume, whatever the phone's volume is (put back afterwards). */
+    val orderAlarmVolume: Int = 100,
+    /** Android: keep checking for orders and ring also with the screen off (a notification stays shown). */
+    val orderBackground: Boolean = false,
 ) {
+    /** The ordering hours and "stop orders" as the back office keeps them. */
+    val orderControl: cz.flos.core.OrderControl get() = cz.flos.core.OrderControl(
+        qrHoursOn = qrHoursOn, qrHours = weekOf(qrHours), webHoursOn = webHoursOn, webHours = weekOf(webHours),
+        qrPaused = qrPaused, webPaused = webPaused, pauseMessage = pauseMessage, openTablesAfterHours = openTablesAfterHours,
+    )
+
+    /** These settings with the ordering hours and "stop orders" from [c]. */
+    fun withOrderControl(c: cz.flos.core.OrderControl) = copy(
+        qrHoursOn = c.qrHoursOn, qrHours = weekOf(c.qrHours.joinToString("\n")).joinToString("\n"),
+        webHoursOn = c.webHoursOn, webHours = weekOf(c.webHours.joinToString("\n")).joinToString("\n"),
+        qrPaused = c.qrPaused, webPaused = c.webPaused, pauseMessage = c.pauseMessage, openTablesAfterHours = c.openTablesAfterHours,
+    )
+
+    private fun weekOf(text: String): List<String> = text.split('\n').map { it.trim() }.let { l -> List(7) { l.getOrElse(it) { "" } } }
+
     /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
     fun on(f: AdvFeature): Boolean = f.name in advancedSet
     val advancedSet: Set<String> get() = advanced.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -340,6 +382,18 @@ class SettingsStore(private val prefs: KeyValueStore) {
             qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
             qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
             tableMenuUrl = str("tableMenuUrl", d.tableMenuUrl),
+            qrHoursOn = bool("qrHoursOn", d.qrHoursOn),
+            qrHours = str("qrHours", d.qrHours),
+            webHoursOn = bool("webHoursOn", d.webHoursOn),
+            webHours = str("webHours", d.webHours),
+            qrPaused = bool("qrPaused", d.qrPaused),
+            webPaused = bool("webPaused", d.webPaused),
+            pauseMessage = str("pauseMessage", d.pauseMessage),
+            openTablesAfterHours = bool("openTablesAfterHours", d.openTablesAfterHours),
+            orderAlarm = bool("orderAlarm", d.orderAlarm),
+            orderAlarmSound = str("orderAlarmSound", d.orderAlarmSound),
+            orderAlarmVolume = int("orderAlarmVolume", d.orderAlarmVolume).coerceIn(10, 100),
+            orderBackground = bool("orderBackground", d.orderBackground),
             eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
@@ -512,6 +566,18 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "qrOrderApprove" to s.qrOrderApprove.toString(),
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
                 "tableMenuUrl" to s.tableMenuUrl,
+                "qrHoursOn" to s.qrHoursOn.toString(),
+                "qrHours" to s.qrHours,
+                "webHoursOn" to s.webHoursOn.toString(),
+                "webHours" to s.webHours,
+                "qrPaused" to s.qrPaused.toString(),
+                "webPaused" to s.webPaused.toString(),
+                "pauseMessage" to s.pauseMessage,
+                "openTablesAfterHours" to s.openTablesAfterHours.toString(),
+                "orderAlarm" to s.orderAlarm.toString(),
+                "orderAlarmSound" to s.orderAlarmSound,
+                "orderAlarmVolume" to s.orderAlarmVolume.toString(),
+                "orderBackground" to s.orderBackground.toString(),
                 "eurCashRate" to s.eurCashRate,
             )
 

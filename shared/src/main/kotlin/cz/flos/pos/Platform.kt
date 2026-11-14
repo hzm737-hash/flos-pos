@@ -58,6 +58,26 @@ interface Platform {
     /** A short sound when something new arrives (an order from a table); silent where not supported. */
     fun beep() {}
 
+    /**
+     * A loud ring for a new order that repeats until [stopAlarm] is called. [sound] is ALARM, RINGTONE or
+     * BEEP; [volume] is 10–100 % of the alarm volume,
+     * whatever the device's volume is. [onStoppedOutside] is called when someone stops it outside
+     * the app (the button on the notification). Where not supported: one [beep].
+     */
+    fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) { beep() }
+
+    fun stopAlarm() {}
+
+    /** Android: the till can keep fetching orders and ringing with the screen off (a foreground service). */
+    val canWatchInBackground: Boolean get() = false
+
+    /** Sounds the chosen ring for a few seconds, so it can be tried in the settings. */
+    fun testAlarm(sound: String, volume: Int) { beep() }
+
+    /** Returns a function that asks to show notifications (Android 13+), then calls [onDone] either way. */
+    @Composable
+    fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit
+
     /** A product photo (JPEG, PNG or WebP) as an image for the screen; null where it cannot be read. */
     fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = null
 

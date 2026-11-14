@@ -124,6 +124,25 @@ class DesktopPlatform(override val dataDir: File) : Platform {
 
     override fun beep() { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } }
 
+    @Volatile private var ringing: Thread? = null
+
+    /** Windows: beeps every second until stopped (the sound of the computer's speakers). */
+    override fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) {
+        if (ringing?.isAlive == true) return
+        ringing = Thread {
+            try { while (!Thread.currentThread().isInterrupted) { beep(); Thread.sleep(1_000) } } catch (e: InterruptedException) { }
+        }.apply { isDaemon = true; name = "flos-order-alarm"; start() }
+    }
+
+    override fun stopAlarm() { ringing?.interrupt(); ringing = null }
+
+    override fun testAlarm(sound: String, volume: Int) {
+        Thread { repeat(3) { beep(); Thread.sleep(1_000) } }.apply { isDaemon = true; start() }
+    }
+
+    @Composable
+    override fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit = onDone
+
     override fun openUrl(url: String): Boolean = runCatching {
         val d = java.awt.Desktop.getDesktop()
         val uri = java.net.URI(url)
