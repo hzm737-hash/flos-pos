@@ -159,6 +159,8 @@ private fun FlosRoot(vm: PosViewModel) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
         }
+        // Orders from the tables and the website: ringing, taken now or not, and "stop orders".
+        OrderControlBar(vm)
         Row(Modifier.fillMaxSize()) {
             // Ten screens do not fit the height of a landscape tablet, so the rail scrolls.
             if (wide) NavigationRail(Modifier.verticalScroll(rememberScrollState())) {

@@ -87,15 +87,22 @@ internal fun Route.menuRoutes(db: Db) {
         val menu = row?.menu ?: return@get call.respondText("Menu nenalezeno", status = HttpStatusCode.NotFound)
         val table = call.request.queryParameters["t"]?.trim()
         val key = call.request.queryParameters["k"]?.trim()
-        val ordering = menu.ordering && validKey(row, table, key)
-        if (ordering) {
+        val canOrder = menu.ordering && validKey(row, table, key)
+        // Outside the ordering hours or while orders are stopped the guests still see the menu, with the reason.
+        val closed = if (canOrder) db.tx { qrOrderStatus(row.orgId, table) }.takeUnless { it.open } else null
+        val ordering = canOrder && closed == null
+        if (canOrder) {
             call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data: 'self'; script-src 'self'; connect-src 'self'")
             call.response.headers.append("Cache-Control", "no-store")
         } else {
             call.response.headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data: 'self'")
             call.response.headers.append("Cache-Control", "public, max-age=60")
         }
-        val html = if (ordering) cz.flos.core.MenuPage.html(menu, table, key, slug) else cz.flos.core.MenuPage.html(menu)
+        val html = when {
+            ordering -> cz.flos.core.MenuPage.html(menu, table, key, slug)
+            closed != null -> cz.flos.core.MenuPage.html(menu, notice = closed.message)
+            else -> cz.flos.core.MenuPage.html(menu)
+        }
         call.respondText(html, ContentType.Text.Html.withCharset(Charsets.UTF_8))
     }
 
@@ -108,6 +115,7 @@ internal fun Route.menuRoutes(db: Db) {
         val menu = row.menu ?: throw ApiError(HttpStatusCode.NotFound, "Menu nenalezeno")
         if (!validKey(row, order.table, order.key)) throw ApiError(HttpStatusCode.Forbidden, "Neplatný QR kód stolu. Naskenujte prosím kód na stole znovu.")
         TableOrders.problem(menu, order)?.let { throw ApiError(HttpStatusCode.BadRequest, it) }
+        requireOpen(db.tx { qrOrderStatus(row.orgId, order.table.trim()) })
         if (!GuestThrottle.allow("ip:" + call.clientIp(), 10) || !GuestThrottle.allow("table:${row.orgId}:${order.table.trim()}", 6)) {
             throw ApiError(HttpStatusCode.TooManyRequests, "Příliš mnoho objednávek. Chvíli počkejte nebo zavolejte obsluhu.")
         }

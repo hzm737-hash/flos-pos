@@ -36,9 +36,10 @@ object MenuPage {
 
     /**
      * The page; with [table] and its [key] (from the table's QR code) and ordering switched on, every
-     * dish gets a "+" button and the page sends the order with /menu-order.js.
+     * dish gets a "+" button and the page sends the order with /menu-order.js. A [notice] (e.g. "orders
+     * stopped for now") is shown at the top of the menu.
      */
-    fun html(m: MenuData, table: String? = null, key: String? = null, slug: String = ""): String = buildString {
+    fun html(m: MenuData, table: String? = null, key: String? = null, slug: String = "", notice: String? = null): String = buildString {
         val ordering = m.ordering && !table.isNullOrBlank() && !key.isNullOrBlank()
         append("<!doctype html><html lang=\"cs\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
         append("<title>").append(esc(m.name)).append(" – menu</title><style>")
@@ -52,6 +53,7 @@ object MenuPage {
         append(".item .n{flex:1}.item .p{font-weight:600;white-space:nowrap}.note{display:block;color:var(--muted);font-size:14px}.ph{flex:none;width:64px;height:64px;border-radius:10px;object-fit:cover}footer{margin-top:32px;color:var(--muted);font-size:13px}")
         if (ordering) append(ORDER_CSS)
         append("</style></head><body><main><h1>").append(esc(m.name)).append("</h1>")
+        if (!notice.isNullOrBlank()) append("<div style=\"margin:12px 0;padding:12px 14px;border-radius:12px;background:var(--line);font-weight:600\" id=\"notice\">").append(esc(notice)).append("</div>")
         if (ordering) append("<div class=\"table\" id=\"table-banner\">").append(esc("Stůl " + table)).append("</div>")
         val meta = listOf(m.address, m.contacts.joinToString(" · "), m.hours).filter { it.isNotBlank() }
         if (meta.isNotEmpty()) append("<div class=\"meta\">").append(meta.joinToString("\n") { esc(it) }).append("</div>")

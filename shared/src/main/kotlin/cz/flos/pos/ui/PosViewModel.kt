@@ -185,6 +185,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
+
         // Checks the bank every minute and syncs with the back office every five minutes (settings every minute) while the till is open.
         viewModelScope.launch {
             var minute = 0
@@ -200,8 +201,15 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         }
         // Orders from the tables and from the website: every 10 seconds while switched on.
         viewModelScope.launch {
+            var round = 0
             while (true) {
                 val s = settings.value
+                // From the second round on (the first one runs while the till is still being set up).
+                if (round > 0 && s.paired && (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))) {
+                    syncOrderControl(pull = round % 6 == 1)
+                    sendOpenTables(force = round % 30 == 1)
+                }
+                round++
                 if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
                 // Orders from the tables on the restaurant's own website come the same way as web orders.
                 if (s.paired && (s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING) ||
@@ -924,6 +932,72 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     fun reprintOrder(sw: SaleWithItems) = printOrder(sw.sale, sw.toCart())
 
+    // ---- Ringing for new orders and when orders are taken (ordering hours, "stop orders") ----
+    private val _ringing = MutableStateFlow(false)
+    /** True while the loud ring for a new order sounds; the screens show a button to stop it. */
+    val ringing: StateFlow<Boolean> = _ringing.asStateFlow()
+
+    /** A new order arrived: the loud ring until someone stops it, or one short beep (as before). */
+    private fun newOrderRing() {
+        val s = settings.value
+        if (!s.orderAlarm) { platform.beep(); return }
+        _ringing.value = true
+        platform.startAlarm(s.orderAlarmSound, s.orderAlarmVolume) { _ringing.value = false }
+    }
+
+    fun stopRinging() {
+        _ringing.value = false
+        platform.stopAlarm()
+    }
+
+    fun testRing() = settings.value.let { platform.testAlarm(it.orderAlarmSound, it.orderAlarmVolume) }
+
+    /** Ordering hours or "stop orders" changed here and not yet saved in the back office. */
+    @Volatile private var orderControlDirty = false
+    private val orderControlMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Changes the ordering hours or "stop orders" and saves them in the back office right away, which then
+     * turns away orders accordingly. Unreadable hours are not saved (the message says which day).
+     */
+    fun setOrderControl(transform: (cz.flos.core.OrderControl) -> cz.flos.core.OrderControl) {
+        val next = transform(settings.value.orderControl)
+        val week = listOf(next.qrHours, next.webHours).firstNotNullOfOrNull { cz.flos.core.OrderHours.problem(it) }
+        updateSettings { it.withOrderControl(next) }
+        if (week != null) { _messages.tryEmit(tr(week)); return }
+        orderControlDirty = true
+        viewModelScope.launch { syncOrderControl(pull = false, report = true) }
+    }
+
+    /** Sends a change made here, or (with [pull]) takes the one made on another till. */
+    private suspend fun syncOrderControl(pull: Boolean, report: Boolean = false) {
+        if (!settings.value.paired) return
+        orderControlMutex.lock()
+        try {
+            if (orderControlDirty) {
+                val c = settings.value.orderControl
+                if (listOf(c.qrHours, c.webHours).any { cz.flos.core.OrderHours.problem(it) != null }) return
+                runCatching { withContext(Dispatchers.IO) { boClient().setOrderControl(c) } }
+                    .onSuccess { if (settings.value.orderControl == c) orderControlDirty = false }
+                    .onFailure { if (report) _messages.tryEmit(tr("Nepodařilo se uložit do back office, zkusím to znovu: %s", it.message ?: "")) }
+            } else if (pull) {
+                val remote = runCatching { withContext(Dispatchers.IO) { boClient().orderControl() } }.getOrNull() ?: return
+                if (!orderControlDirty && remote != settings.value.orderControl) updateSettings { it.withOrderControl(remote) }
+            }
+        } finally { orderControlMutex.unlock() }
+    }
+
+    private var sentOpenTables: List<String>? = null
+
+    /** Tables with an open bill here, so their guests may still order after hours (only when that is used). */
+    private suspend fun sendOpenTables(force: Boolean) {
+        val s = settings.value
+        if (!s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || !s.qrHoursOn || !s.openTablesAfterHours) return
+        val tables = openOrders.value.mapNotNull { it.sale.tableName?.trim()?.takeIf { t -> t.isNotEmpty() } }.distinct().sorted()
+        if (!force && tables == sentOpenTables) return
+        runCatching { withContext(Dispatchers.IO) { boClient().sendOpenTables(tables) } }.onSuccess { sentOpenTables = tables }
+    }
+
     // ---- Orders from the tables (QR code on the table, Pokročilé nastavení → Objednávky z QR) ----
     private val _qrInbox = MutableStateFlow<List<cz.flos.core.TableOrder>>(emptyList())
     /** Orders from the tables waiting for the staff to accept or decline them. */
@@ -945,7 +1019,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val orders = runCatching { withContext(Dispatchers.IO) { boClient(s).tableOrders() } }.getOrNull() ?: return
         val fresh = orders.filter { qrSeen.add(it.id) }
         if (fresh.isEmpty()) return
-        platform.beep()
+        newOrderRing()
         if (s.qrOrderApprove) _qrInbox.update { it + fresh }
         else fresh.forEach { acceptTableOrder(it).join() }
     }
@@ -1032,6 +1106,17 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Web orders waiting for the staff to accept (with a ready time) or decline. */
     val webInbox: StateFlow<List<cz.flos.core.WebOrderInbox>> = _webInbox.asStateFlow()
     private val webSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    init {
+        // The ring stops once every waiting order from the tables and the website is answered.
+        viewModelScope.launch {
+            var before = 0
+            kotlinx.coroutines.flow.combine(_qrInbox, _webInbox) { a, b -> a.size + b.size }.collect { n ->
+                if (before > 0 && n == 0) stopRinging()
+                before = n
+            }
+        }
+    }
     private val webTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /** Fetches new web orders; the staff always confirm them, because the customer waits for a time. */
@@ -1039,7 +1124,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val orders = runCatching { withContext(Dispatchers.IO) { boClient().webOrders() } }.getOrNull() ?: return
         val fresh = orders.filter { webSeen.add(it.id) }
         if (fresh.isEmpty()) return
-        platform.beep()
+        newOrderRing()
         _webInbox.update { it + fresh }
     }
 

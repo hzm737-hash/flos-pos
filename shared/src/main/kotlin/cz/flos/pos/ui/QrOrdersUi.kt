@@ -44,6 +44,7 @@ fun TableOrderDialog(vm: PosViewModel) {
         title = { Text(tr("Nová objednávka ze stolu %s", o.table)) },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                SilenceButton(vm)
                 cart.items.forEach { Text("${Qty.format(it.quantity)}× ${it.name}  ${Money.format(it.total)}") }
                 Text(tr("Celkem: %s", Money.format(cart.total)), style = MaterialTheme.typography.titleMedium, modifier = Modifier.heightIn(min = 32.dp))
                 if (o.note.isNotBlank()) Text(tr("Poznámka: %s", o.note))
@@ -81,6 +82,7 @@ fun WebOrderDialog(vm: PosViewModel) {
         title = { Text(if (atTable) tr("Nová objednávka ze stolu %s", o.table) + " (web)" else tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SilenceButton(vm)
                 o.customer?.let { c ->
                     Text(c.name + ", " + c.phone, style = MaterialTheme.typography.titleSmall)
                     if (delivery) Text(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
@@ -129,6 +131,8 @@ fun WebOrderingSettings(vm: PosViewModel, s: AppSettings) {
             Text(tr("Adresa menu (pro nastavení webu):"), style = MaterialTheme.typography.labelLarge)
             SelectionContainer { Text(s.menuUrl, style = MaterialTheme.typography.bodySmall) }
         }
+        OrderHoursEditor(vm, s, qr = false)
+        OrderAlarmSettings(vm, s)
     }
 }
 
@@ -149,6 +153,8 @@ fun QrOrderingSettings(vm: PosViewModel, s: AppSettings) {
         SwitchRow(tr("Tisknout objednávku pro kuchyň"), tr("Po přijetí se vytiskne lístek s novými položkami."), s.qrOrderPrint) { v ->
             vm.updateSettings { it.copy(qrOrderPrint = v) }
         }
+        OrderHoursEditor(vm, s, qr = true)
+        OrderAlarmSettings(vm, s)
         if (s.menuUrl.isNotBlank()) {
             Text(tr("Odkaz na menu pro váš web (bez objednávání):"), style = MaterialTheme.typography.labelLarge)
             SelectionContainer { Text(s.menuUrl, style = MaterialTheme.typography.bodySmall) }
@@ -189,4 +195,11 @@ private fun SwitchRow(title: String, hint: String, checked: Boolean, onChange: (
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+/** While the new order rings: stops the ring and leaves the order waiting. */
+@Composable
+private fun SilenceButton(vm: PosViewModel) {
+    val ringing by vm.ringing.collectAsState()
+    if (ringing) OutlinedButton(onClick = { vm.stopRinging() }) { Text(tr("Vypnout zvonění")) }
 }

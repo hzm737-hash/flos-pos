@@ -147,6 +147,19 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
     fun ackWebOrder(id: Long, accepted: Boolean, readyMinutes: Int = 0): Boolean =
         request("POST", "/device/web-orders/$id/ack", json.encodeToString(cz.flos.core.WebOrderAck.serializer(), cz.flos.core.WebOrderAck(accepted, readyMinutes)), BoOk.serializer()).ok
 
+    /** The company's ordering hours and "stop orders" switch, as the back office keeps them. */
+    fun orderControl(): cz.flos.core.OrderControl =
+        request("GET", "/device/order-control", null, cz.flos.core.OrderControl.serializer())
+
+    /** Saves the ordering hours and "stop orders"; the back office turns away orders accordingly. */
+    fun setOrderControl(c: cz.flos.core.OrderControl): cz.flos.core.OrderControl =
+        request("PUT", "/device/order-control", json.encodeToString(cz.flos.core.OrderControl.serializer(), c), cz.flos.core.OrderControl.serializer())
+
+    /** Tables with an open bill on this till, so their guests may still order after hours. */
+    fun sendOpenTables(tables: List<String>) {
+        request("PUT", "/device/open-tables", json.encodeToString(cz.flos.core.OpenTables.serializer(), cz.flos.core.OpenTables(tables)), BoOk.serializer())
+    }
+
     private fun <T> request(method: String, path: String, body: String?, serializer: KSerializer<T>, auth: Boolean = true): T {
         val conn = URI(api + path).toURL().openConnection() as HttpURLConnection
         try {

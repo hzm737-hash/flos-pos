@@ -40,6 +40,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
     install(ContentNegotiation) { json(FlosJson) }
     install(StatusPages) {
         exception<ApiError> { call, e -> call.respond(e.status, ErrorBody(e.message)) }
+        exception<OrdersClosed> { call, e -> call.respondClosed(e) }
         exception<SerializationException> { call, e -> call.respond(HttpStatusCode.BadRequest, ErrorBody("Neplatná data: ${e.message}")) }
         exception<io.ktor.server.plugins.BadRequestException> { call, e -> call.respond(HttpStatusCode.BadRequest, ErrorBody("Neplatná data: ${e.cause?.message ?: e.message}")) }
         exception<Throwable> { call, e ->
@@ -54,6 +55,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
         menuRoutes(db)
         /** Delivery and pick-up orders from the restaurant's own website. */
         webOrderRoutes(db, webOrigins)
+        /** Whether orders are taken now (ordering hours, "stop orders" on the till), for the website. */
+        orderStatusRoutes(db, webOrigins)
         publicImageRoutes(db)
         appDownloadRoutes(db)
         route("/api/v1") {
@@ -65,6 +68,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
             deviceRoutes(db, throttle)
             tableOrderDeviceRoutes(db)
             webOrderDeviceRoutes(db)
+            orderControlDeviceRoutes(db)
             imageRoutes(db)
             deviceCatalogRoutes(db)
             deviceSettingsRoutes(db)

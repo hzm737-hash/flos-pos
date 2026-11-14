@@ -82,6 +82,27 @@ class AndroidPlatform(private val context: Context) : Platform {
         }
     }
 
+    override fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) {
+        cz.flos.pos.orders.OrderAlarm.onStoppedOutside = onStoppedOutside
+        cz.flos.pos.orders.OrderAlarm.start(context, sound, volume)
+    }
+
+    override val canWatchInBackground: Boolean get() = true
+
+    override fun stopAlarm() { cz.flos.pos.orders.OrderAlarm.stop(context) }
+
+    override fun testAlarm(sound: String, volume: Int) = cz.flos.pos.orders.OrderAlarm.test(context, sound, volume)
+
+    @Composable
+    override fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit {
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onDone() }
+        return {
+            if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) runCatching { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }.onFailure { onDone() }
+            else onDone()
+        }
+    }
+
     private val packageInfo by lazy { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }
 
     override val appVersionCode: Int get() = packageInfo?.let {
