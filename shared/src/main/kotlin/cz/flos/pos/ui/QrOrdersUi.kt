@@ -73,6 +73,11 @@ fun WebOrderDialog(vm: PosViewModel) {
     val now = remember(w.id) { java.time.LocalTime.now().withSecond(0).withNano(0) }
     val wish = remember(w.id) { cz.flos.core.WebOrders.wishMinutes(o.time, now.hour * 60 + now.minute) }
     val choices = remember(w.id) { (listOfNotNull(wish) + cz.flos.core.WebOrders.READY_MINUTES).distinct() }
+    // A pre-order for a later day: confirmed for the day and time the customer chose.
+    val preDay = remember(w.id) { cz.flos.core.WebOrders.day(o)?.takeIf { cz.flos.core.WebOrders.isPreorder(o) } }
+    val preAt = remember(w.id) {
+        preDay?.let { d -> runCatching { d.atTime(java.time.LocalTime.parse(o.time)).atZone(cz.flos.core.OrderHours.ZONE).toInstant().toEpochMilli() }.getOrNull() }
+    }
     var minutes by remember(w.id) { mutableStateOf(wish ?: if (delivery) 45 else 20) }
     val canWhatsApp = cz.flos.core.Notify.phoneDigits(o.customer?.phone.orEmpty()) != null
     val whatsapp by vm.webWhatsApp.collectAsState()
@@ -87,20 +92,23 @@ fun WebOrderDialog(vm: PosViewModel) {
                     Text(c.name + ", " + c.phone, style = MaterialTheme.typography.titleSmall)
                     if (delivery) Text(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
                 }
-                if (!atTable) Text(tr("Zákazník chce: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " + tr("Platba: %s", if (o.payment == "card") tr("kartou") else tr("hotově")))
+                if (preDay != null) Text(tr("PŘEDOBJEDNÁVKA na %s v %s", cz.flos.core.WebOrders.dayText(preDay), o.time),
+                    style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.error)
+                if (!atTable) Text((if (preDay == null) tr("Zákazník chce: %s", o.time.ifEmpty { tr("co nejdříve") }) + " · " else "") +
+                    tr("Platba: %s", tr(cz.flos.core.WebOrders.paymentText(o.payment))))
                 if (o.note.isNotBlank()) Text(tr("Poznámka: %s", o.note))
                 cart.items.forEach { Text("${Qty.format(it.quantity)}× ${it.name}  ${Money.format(it.total)}") }
                 Text(tr("Celkem: %s", Money.format(cart.total)), style = MaterialTheme.typography.titleMedium)
                 if (o.total > 0 && o.total * 100 != cart.total) Text(tr("Zákazník na webu viděl %s Kč.", o.total.toString()), color = MaterialTheme.colorScheme.error)
                 if (unmatched.isNotEmpty()) Text(tr("Bez produktu v pokladně (cena z webu): %s", unmatched.joinToString(", ")), color = MaterialTheme.colorScheme.error)
-                Text(tr("Hotovo v"), style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                if (preAt == null) Text(tr("Hotovo v"), style = MaterialTheme.typography.labelLarge)
+                if (preAt == null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     choices.forEach { m ->
                         val label = if (m == wish) tr("%s (přání zákazníka)", clock(m)) else tr("%d min · %s", m, clock(m))
                         FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(label) })
                     }
                 }
-                if (wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
+                if (preAt == null && wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
                 if (canWhatsApp) Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = whatsapp, onCheckedChange = { vm.webWhatsApp.value = it })
                     Text(tr("Poslat zákazníkovi potvrzení přes WhatsApp"))
@@ -109,10 +117,11 @@ fun WebOrderDialog(vm: PosViewModel) {
             }
         },
         confirmButton = { Button(onClick = { run {
+            if (preAt != null) { vm.acceptWebOrder(w, 0, canWhatsApp && whatsapp, preAt); return@run }
             // Minutes counted again from the moment of the tap, so the chosen clock time stays exact.
             val secs = java.time.Duration.between(java.time.LocalTime.now(), now.plusMinutes(minutes.toLong())).seconds
             vm.acceptWebOrder(w, ((secs + 59) / 60).toInt().coerceIn(1, 240), canWhatsApp && whatsapp)
-        } }) { Text(tr("Přijmout")) } },
+        } }) { Text(if (preDay != null) tr("Přijmout na %s %s", cz.flos.core.WebOrders.dayText(preDay), o.time) else tr("Přijmout")) } },
         dismissButton = { TextButton(onClick = { vm.rejectWebOrder(w) }) { Text(tr("Odmítnout")) } },
     )
 }

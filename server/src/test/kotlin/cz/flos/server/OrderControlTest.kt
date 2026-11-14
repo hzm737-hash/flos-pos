@@ -125,6 +125,24 @@ class OrderControlTest {
         client.putJson("/api/v1/device/open-tables", OpenTables(emptyList()), dt)
         assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/order", GuestOrder("5", key5, listOf(line))).status)
 
+        // Web orders outside their hours: a pre-order for a later day still comes in and waits for the till,
+        // which confirms it for that day; an order for today is turned away. Stopped on the till: nothing comes in.
+        client.putJson("/api/v1/device/order-control", OrderControl(webHoursOn = true, webHours = closedWeek), dt)
+        val tomorrow = java.time.LocalDate.now(OrderHours.ZONE).plusDays(1)
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", webOrder).status)
+        val pre = client.postJson("/menu/$slug/web-order", webOrder.copy(date = tomorrow.toString(), time = "18:30", payment = "qr"))
+        assertEquals(HttpStatusCode.OK, pre.status)
+        val preId = pre.body<cz.flos.core.WebOrderAccepted>().id
+        val inbox = client.get("/api/v1/device/web-orders") { bearerAuth(dt) }.body<cz.flos.core.WebOrderList>().orders
+        assertTrue(inbox.any { it.id == preId && it.order.date == tomorrow.toString() && it.order.payment == "qr" })
+        val at = tomorrow.atTime(18, 30).atZone(OrderHours.ZONE).toInstant().toEpochMilli()
+        assertEquals(HttpStatusCode.OK, client.postJson("/api/v1/device/web-orders/$preId/ack", cz.flos.core.WebOrderAck(true, 0, at), dt).status)
+        val token = pre.body<cz.flos.core.WebOrderAccepted>().token
+        val answer = client.get("/menu/$slug/web-order/$preId?k=$token").body<cz.flos.core.WebOrderStatus>()
+        assertEquals("ACCEPTED", answer.status); assertEquals(at, answer.readyAt)
+        client.putJson("/api/v1/device/order-control", OrderControl(webHoursOn = true, webHours = closedWeek, webPaused = true), dt)
+        assertEquals(HttpStatusCode.Forbidden, client.postJson("/menu/$slug/web-order", webOrder.copy(date = tomorrow.toString(), time = "18:30")).status)
+
         // Hours switched off again: open as before.
         client.putJson("/api/v1/device/order-control", OrderControl(qrHours = closedWeek), dt)
         assertEquals(HttpStatusCode.OK, client.postJson("/menu/$slug/order", GuestOrder("6", key6, listOf(line))).status)
