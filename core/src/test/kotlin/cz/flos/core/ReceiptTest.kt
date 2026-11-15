@@ -51,6 +51,17 @@ class ReceiptTest {
         assertTrue(text.contains("Novákova 5, Brno"))
     }
 
+    @Test fun orderTicketCarriesQrPaymentOnlyWhenGiven() {
+        val qr = QrPlatba(iban = "CZ6508000000192000145399", amount = cart.total, variableSymbol = "57")
+        val withQr = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, receipt.copy(number = "12", kind = DocumentKind.ORDER, qr = qr)), 32)
+        assertTrue(withQr.contains("NEZAPLACENO"))
+        assertTrue(withQr.contains("QR Platba"))
+        assertTrue(withQr.contains("*X-VS:57"))
+        assertTrue(withQr.contains("VS: 57"))
+        val without = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, receipt.copy(number = "12", kind = DocumentKind.ORDER, qr = null)), 32)
+        assertTrue(!without.contains("QR Platba"))
+    }
+
     @Test fun invoicePaymentIsNotRecordedInEet() {
         assertTrue(PaymentMethod.entries.filter { !it.eet } == listOf(PaymentMethod.INVOICE))
     }

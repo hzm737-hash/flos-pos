@@ -205,7 +205,17 @@ class ReceiptLayout(private val width: Int) {
                     }
                 }
                 DocumentKind.SALES_ORDER -> r.validUntil?.let { add(ReceiptBlock.Line("Termín: ${it.format(dayFmt)}", Align.CENTER, bold = true)) }
-                else -> add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+                else -> {
+                    add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+                    // An order paid on delivery: the customer can pay with the QR payment from the ticket.
+                    if (r.kind == DocumentKind.ORDER) r.qr?.let { qr ->
+                        qr.amount?.let { add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(it)), bold = true)) }
+                        add(ReceiptBlock.Line("QR Platba", Align.CENTER, bold = true))
+                        add(ReceiptBlock.Qr(qr.toSpayd()))
+                        add(ReceiptBlock.Line(CzechBankAccount.fromIban(qr.iban)?.toString() ?: CzechBankAccount.formatIban(qr.iban), Align.CENTER))
+                        qr.variableSymbol?.let { add(ReceiptBlock.Line("VS: $it", Align.CENTER)) }
+                    }
+                }
             }
             if (r.kind != DocumentKind.QUOTE) add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
             if ((r.kind == DocumentKind.QUOTE || r.kind == DocumentKind.PROFORMA || r.kind == DocumentKind.SALES_ORDER) && business.style.documentTerms.isNotBlank()) {

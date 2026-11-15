@@ -776,10 +776,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * QR code to show on screen before the customer pays. It uses the number the receipt is
      * about to get, so the variable symbol matches the printed receipt.
      */
-    fun preparePaymentQr(amount: Long = _cart.value.total): QrPlatba? {
+    fun preparePaymentQr(amount: Long = _cart.value.total, orderNote: String? = null): QrPlatba? {
         val s = settings.value
         val number = flos.settings.peekReceiptNumber(LocalDate.now().year)
-        return qrFor(amount, variableSymbolOf(number), "${s.businessName} uctenka $number")
+        return qrFor(amount, orderNote?.let { cz.flos.core.WebOrders.variableSymbol(it) } ?: variableSymbolOf(number), "${s.businessName} uctenka $number")
     }
 
     private fun nowMillis(now: LocalDateTime) = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -891,7 +891,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val now = LocalDateTime.now()
         val millis = nowMillis(now)
         val number = flos.settings.nextReceiptNumber(now.year)
-        val vs = variableSymbolOf(number)
+        // A web order keeps the variable symbol of the QR payment printed on its ticket (its WEB number).
+        val vs = order?.note?.let { cz.flos.core.WebOrders.variableSymbol(it) } ?: variableSymbolOf(number)
         val epc = if (foreign && rate != null) s.eurIban?.let { epcFor(s, it, cart.total, rate, vs, number) } else null
         if (foreign && epc == null) _messages.tryEmit(tr("Kurz EUR není k dispozici, tisknu českou QR platbu"))
         val qr = if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
@@ -988,7 +989,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private fun printOrder(sale: SaleEntity, cart: Cart) {
         val s = settings.value
         val opened = LocalDateTime.ofInstant(Instant.ofEpochMilli(sale.openedAt ?: sale.createdAt), ZoneId.systemDefault())
-        val doc = Receipt((sale.orderNumber ?: 0).toString(), opened, sale.cashier, cart, PaymentMethod.CARD, note = sale.note,
+        // A delivery / pick-up web order: a QR payment for the amount, so the customer can pay on receipt.
+        val webVs = if (s.webOrderQr && cart.total > 0) cz.flos.core.WebOrders.variableSymbol(sale.note) else null
+        val qr = webVs?.let { runCatching { qrFor(cart.total, it, "${s.businessName} objednavka WEB $it") }.getOrNull() }
+        val doc = Receipt((sale.orderNumber ?: 0).toString(), opened, sale.cashier, cart, PaymentMethod.CARD, qr = qr, note = sale.note,
             kind = DocumentKind.ORDER)
         printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), tr("Objednávka vytištěna"))
     }
@@ -1266,8 +1270,9 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             }
             _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
                 (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
-            // The ticket carries the name, phone and address for the kitchen and the driver.
-            printOrder(sale, lines)
+            // The ticket carries the name, phone and address for the kitchen and the driver; it can be
+            // printed later from Objednávky when printing at once is switched off.
+            if (settings.value.webOrderPrint) printOrder(sale, lines)
         } finally { webTaking.remove(w.id) }
     }
 

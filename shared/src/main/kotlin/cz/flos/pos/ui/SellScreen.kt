@@ -160,6 +160,7 @@ fun SellScreen(vm: PosViewModel) {
             title = order?.orderNumber?.let { tr("Objednávka č. %d", it) } ?: tr("Platba"),
             onDismiss = { paying = false },
             onMixed = { parts, given -> vm.checkoutMixed(parts, given) { paying = false; showCartOnPhone = false } },
+            orderNote = order?.note,
         ) { method, given ->
             vm.checkout(method, given) { paying = false; showCartOnPhone = false }
         }

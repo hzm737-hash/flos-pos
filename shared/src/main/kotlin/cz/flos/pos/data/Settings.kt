@@ -170,6 +170,10 @@ data class AppSettings(
     val qrOrderApprove: Boolean = true,
     /** QR ordering: print a kitchen ticket for each accepted order. */
     val qrOrderPrint: Boolean = true,
+    /** Web orders (delivery / pick-up): print the order ticket at once when it is accepted. */
+    val webOrderPrint: Boolean = true,
+    /** Web orders (delivery / pick-up): the order ticket carries a QR payment for the amount (needs the bank account). */
+    val webOrderQr: Boolean = true,
     /**
      * QR ordering: the restaurant's own website menu for the tables (e.g. https://pizzafresca.cz/menu).
      * When set, the tables' QR codes open this page with the table and its key (?t=…&k=…), and the
@@ -385,6 +389,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
             tablePlan = str("tablePlan", d.tablePlan),
             qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
             qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
+            webOrderPrint = bool("webOrderPrint", d.webOrderPrint),
+            webOrderQr = bool("webOrderQr", d.webOrderQr),
             tableMenuUrl = str("tableMenuUrl", d.tableMenuUrl),
             qrHoursOn = bool("qrHoursOn", d.qrHoursOn),
             qrHours = str("qrHours", d.qrHours),
@@ -570,6 +576,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "tablePlan" to s.tablePlan,
                 "qrOrderApprove" to s.qrOrderApprove.toString(),
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
+                "webOrderPrint" to s.webOrderPrint.toString(),
+                "webOrderQr" to s.webOrderQr.toString(),
                 "tableMenuUrl" to s.tableMenuUrl,
                 "qrHoursOn" to s.qrHoursOn.toString(),
                 "qrHours" to s.qrHours,

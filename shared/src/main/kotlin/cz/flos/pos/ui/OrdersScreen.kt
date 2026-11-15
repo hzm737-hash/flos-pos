@@ -119,7 +119,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
     }
 
     paying?.let { sw ->
-        PaymentDialog(vm, sw.sale.total, title = tr("Objednávka č. %d", sw.sale.orderNumber ?: 0), onDismiss = { paying = null }) { method, given ->
+        PaymentDialog(vm, sw.sale.total, title = tr("Objednávka č. %d", sw.sale.orderNumber ?: 0), onDismiss = { paying = null }, orderNote = sw.sale.note) { method, given ->
             vm.payOrder(sw, method, given); paying = null
         }
     }

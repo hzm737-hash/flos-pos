@@ -281,6 +281,14 @@ object WebOrders {
         if (o.note.isNotBlank()) add("Pozn.: " + o.note.trim())
     }.joinToString("\n")
 
+    private val WEB_ID = Regex("""^WEB (\d{1,10}) · (Rozvoz|Osobní odběr|Delivery|Pick-up)""")
+
+    /**
+     * The variable symbol for paying a delivery / pick-up web order: its WEB number, read from the order's
+     * note ([ticketNote] heading). Null for any other order, including a web order from a table.
+     */
+    fun variableSymbol(note: String): String? = WEB_ID.find(note)?.groupValues?.get(1)
+
     /** [note] without the lines with the customer's name, phone and address (see [ticketNote]); other notes unchanged. */
     fun withoutCustomer(note: String): String {
         if (!note.startsWith("WEB ") || '\n' !in note) return note

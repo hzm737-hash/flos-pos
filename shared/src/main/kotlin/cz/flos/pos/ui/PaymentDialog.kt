@@ -51,6 +51,8 @@ fun PaymentDialog(
     onDismiss: () -> Unit,
     /** When set, the dialog also offers a mixed payment (vouchers, card and the rest in cash). */
     onMixed: ((List<cz.flos.core.PaymentPart>, Long?) -> Unit)? = null,
+    /** Note of the open order being paid: a web order's QR payment keeps the variable symbol from its ticket. */
+    orderNote: String? = null,
     onConfirm: (PaymentMethod, Long?) -> Unit,
 ) {
     val s by vm.settings.collectAsState()
@@ -69,7 +71,7 @@ fun PaymentDialog(
         cz.flos.core.PaymentPart(PaymentMethod.CASH, cashPart),
     ).filter { it.amount > 0 }
     var given by remember { mutableStateOf("") }
-    val qr = remember(total) { vm.preparePaymentQr(total) }
+    val qr = remember(total, orderNote) { vm.preparePaymentQr(total, orderNote) }
     LaunchedEffect(Unit) { vm.setForeignTransfer(false) }
     val cashDue = Money.roundToCrowns(total)
     val givenHaler = Money.parse(given)
