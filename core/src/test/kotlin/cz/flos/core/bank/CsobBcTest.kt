@@ -113,6 +113,12 @@ class CsobBcTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("certifikát"))
         }
+        try {
+            CsobCertificate.matching(CsobCertificate.privateKey(r.privateKeyPkcs8), r.csrPem.toByteArray())
+            fail()
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("flos-csob.csr"))
+        }
     }
 
     // A test key and a self-signed certificate for it (openssl), standing in for one issued by CEB.

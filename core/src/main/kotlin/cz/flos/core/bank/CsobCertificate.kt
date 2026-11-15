@@ -102,12 +102,16 @@ object CsobCertificate {
 
     /** The certificate in [bytes] that belongs to [key]; throws when the file is for another key. */
     fun matching(key: PrivateKey, bytes: ByteArray): X509Certificate {
+        if (isRequest(bytes)) throw IllegalArgumentException("Toto je žádost o certifikát (flos-csob.csr), ne certifikát. Nahrajte soubor, který jste stáhli z CEB (Business Connector → Stáhnout).")
         val all = runCatching { certificates(bytes) }.getOrElse { throw IllegalArgumentException("Soubor není certifikát (.crt / .cer / .zip z CEB)") }
         if (all.isEmpty()) throw IllegalArgumentException("Soubor není certifikát (.crt / .cer / .zip z CEB)")
         val modulus = (key as? RSAPrivateCrtKey)?.modulus
         return all.firstOrNull { (it.publicKey as? RSAPublicKey)?.modulus == modulus }
             ?: throw IllegalArgumentException("Tento certifikát nepatří k žádosti z této pokladny. Nahrajte certifikát vydaný k poslední žádosti.")
     }
+
+    /** The request file made by Flos (.csr), which the owner may pick by mistake instead of the issued certificate. */
+    fun isRequest(bytes: ByteArray): Boolean = text(bytes).contains("CERTIFICATE REQUEST-----")
 
     fun pem(type: String, der: ByteArray): String =
         "-----BEGIN $type-----\n" + Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(der) + "\n-----END $type-----\n"
