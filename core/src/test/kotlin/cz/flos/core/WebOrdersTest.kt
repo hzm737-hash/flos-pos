@@ -119,4 +119,31 @@ class WebOrdersTest {
         assertEquals(flos, TableOrders.websiteLink("", flos))
         assertEquals(flos, TableOrders.websiteLink("javascript:alert(1)", flos))
     }
+
+    @Test fun ticketNoteHasCustomerAddressTimePaymentAndNote() {
+        val today = java.time.LocalDate.of(2026, 11, 15)
+        val o = order.copy(customer = WebCustomer("Jan Novák", "777 123 456", "Ostrožná 12", "Novák 2. patro"), time = "18:30", payment = "card", note = "Bez cibule")
+        val t = WebOrders.ticketNote("WEB 7 · Rozvoz · hotovo 18:30", o, today)
+        assertEquals(
+            listOf("WEB 7 · Rozvoz · hotovo 18:30", "Zákazník: Jan Novák", "Tel.: 777 123 456",
+                "Adresa: Ostrožná 12 (zvonek: Novák 2. patro)", "Přeje si: 18:30", "Platba: kartou při převzetí", "Pozn.: Bez cibule"),
+            t.split('\n'),
+        )
+        // Pick-up: no address.
+        val p = WebOrders.ticketNote("WEB 8", o.copy(type = WebOrders.PICKUP, time = ""), today).split('\n')
+        assertEquals(listOf("WEB 8", "Zákazník: Jan Novák", "Tel.: 777 123 456", "Přeje si: co nejdříve", "Platba: kartou při převzetí", "Pozn.: Bez cibule"), p)
+    }
+
+    @Test fun paidOrderKeepsNoCustomerDetails() {
+        val t = WebOrders.ticketNote("WEB 7 · Rozvoz", order, java.time.LocalDate.of(2026, 11, 15))
+        assertEquals("WEB 7 · Rozvoz\nPřeje si: co nejdříve\nPlatba: hotově při převzetí", WebOrders.withoutCustomer(t))
+        // Other notes are left alone.
+        assertEquals("Tel.: 123\nZákazník: X", WebOrders.withoutCustomer("Tel.: 123\nZákazník: X"))
+        assertEquals("WEB 9 · Stůl 4", WebOrders.withoutCustomer("WEB 9 · Stůl 4"))
+    }
+
+    @Test fun lineBreaksInANotePrintAsSeparateLines() {
+        assertEquals(listOf("WEB 7", "Zákazník: Jan", "Tel.: 777"), ReceiptLayout.wrap("WEB 7\nZákazník: Jan\nTel.: 777", 32))
+        assertEquals(listOf("one two", "three"), ReceiptLayout.wrap("one two three", 8))
+    }
 }

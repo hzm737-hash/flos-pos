@@ -93,7 +93,7 @@ fun OrdersScreen(vm: PosViewModel, onEdit: () -> Unit) {
                                 Text(tr("Objednávka č. %d", s.orderNumber ?: 0), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 Text(fmt.format(Date(s.openedAt ?: s.createdAt)), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (s.note.isNotBlank()) Text(s.note, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            if (s.note.isNotBlank()) Text(s.note, maxLines = 6, overflow = TextOverflow.Ellipsis)
                             Text(
                                 sw.items.joinToString(", ") { "${cz.flos.core.Qty.format(it.quantity)}× ${it.name}" },
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
