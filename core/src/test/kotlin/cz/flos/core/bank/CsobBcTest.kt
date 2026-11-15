@@ -114,4 +114,28 @@ class CsobBcTest {
             assertTrue(e.message!!.contains("certifikát"))
         }
     }
+
+    // A test key and a self-signed certificate for it (openssl), standing in for one issued by CEB.
+    private val testKey = "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCd0WymS+LcXOJrt7zzY9YAi+WSSTR3Pw1lBKh0Lo71XB+dC1GdKl0zloS+OufhcELOoy0wuXSgcSUuRkW3QeNL+5+noSBOkS5ingDGii2CtdZwobfWA5fCG60a0IkVtl3zv1yQMNG9bDXrQ0eMkqcn0fI4TavArambx8Djh5OJIjra2IlqvkmQOXSWWApnww1vIpjim2LWiQKseCHky9nAIZOAsf/NJh1cquXfanF2gouAhQXW40KIAUdXnxzuKdrR/LQ8r/GEXuOxRk2Tsi2NYEebhkhR5sBsMTeJgC5TRGy5h4zBGZOT9dfdZ4uAGvhWH+sftGWfxX3K8gx3UsTfAgMBAAECggEADEf72IUXRmbEB/XoclhWkvxQBS5FMvJpLG9MXJ4y6c0deK8kzsI5NoaEFfmnideem03/ekc0WDf12MAHNNefxI30Qqs7RGHv5iS9krW2DPHxmho7oB/vc1+L/QY1ZMcoUIuXvHDQIZmGKKS3sKzI7URdQRxqPThGdqT40bv/MzCjcUNlBwSnbcKHePBqeWIp35YiN5aBf55WjOC8M+dhWMj/VtLhXyKyBPpkONKOhsa7pVSXeNDVPzcByyJSuNm802XYroxLbcehkR/XmXQEfQqZZq2BYVswmuNvuc084jcqOGrv8p2L7ITLeXWH58hj2mMxBCad9/qTkaywSIGfoQKBgQDNf+DRnMPKUA1Hlv0pS1FSHMUXYO5ya/1z7Jn8Yf+yJ7oJEslkSv4GopuwG/3lSp7AIfiIFJh0cPq++Vr2doKXwCyiB7qy3+NAXgAC7hntOmy75Ank7rpjzgNNHKgW10E/8Juh+48m85bzeIP35l2I1ab7RwDBL9PbcUB9ePrJmwKBgQDEmd8beSnCZGqOzl6F3V2wywlJZrvxg6bBYvDD5c4ZiDlaptHotY3UFTHirZmOUCsm7H3LMOi4AFL7HABkjR09MJl0K3jcJ3EHeo69B2Va+aXroKbANPbazpD40cpNuT/KOH/gdCXnmoMIn3ev2F6vAtRS3b1f1us7Vd2iAhAYDQKBgQC+URtOJagyOxdBYPWPA+EJcfmaYDwVHiw56zrlQYFEZoRlmM+JIebHEFutqw7mBsilWhDJPoG+/U9MBLWYokLp9aGgYhYnSTA20ZejHw5F5SEElfoP2oQmoInwJYUKukoExHnud4KpaVk4nTljIicn7e7asnRhdkD375fxXFSu1wKBgQDDYtjkiOoDk6CDBH3UNEgkp+Q22q72O4zCrP3y8rR9k3DMsvXyfFzT5ayKR1VQpkP8jxQFmDnwhAH0JcQOKmBgq6gWWA3pXhlrAVZSbsNAQtOu9R5D719V3e0eHAEedXj8FGKiQ0xYfKq1Kybb0AFplTpGkLDgSsvFUHTPyZUNEQKBgGk7mJKsP98NJdX0scXgG5GEdHNsZgGoIMWknNhOOadH1zwwOLQ0h0Glrvlb3QQcgg6615OIz3oQ/UGQ2my0kVt+2/uWVOGSRUFhbbImLmIFF/GM+MfHXwIYlFJKnkKKFKNfwbnRAYApndjKFR7bmP8yttTTAHNZPYAxD01rF4Bi"
+    private val testCert = "MIIDIzCCAgugAwIBAgIUfRVTflOt/tDH9OoCSnAghjgLj0cwDQYJKoZIhvcNAQELBQAwITELMAkGA1UEBhMCQ1oxEjAQBgNVBAMMCUZsb3MgVGVzdDAeFw0yNjExMTUxMzI1MzdaFw0zNjExMTIxMzI1MzdaMCExCzAJBgNVBAYTAkNaMRIwEAYDVQQDDAlGbG9zIFRlc3QwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCd0WymS+LcXOJrt7zzY9YAi+WSSTR3Pw1lBKh0Lo71XB+dC1GdKl0zloS+OufhcELOoy0wuXSgcSUuRkW3QeNL+5+noSBOkS5ingDGii2CtdZwobfWA5fCG60a0IkVtl3zv1yQMNG9bDXrQ0eMkqcn0fI4TavArambx8Djh5OJIjra2IlqvkmQOXSWWApnww1vIpjim2LWiQKseCHky9nAIZOAsf/NJh1cquXfanF2gouAhQXW40KIAUdXnxzuKdrR/LQ8r/GEXuOxRk2Tsi2NYEebhkhR5sBsMTeJgC5TRGy5h4zBGZOT9dfdZ4uAGvhWH+sftGWfxX3K8gx3UsTfAgMBAAGjUzBRMB0GA1UdDgQWBBQHKs17Fad2Aknz/pYVQ5bEFYdG/zAfBgNVHSMEGDAWgBQHKs17Fad2Aknz/pYVQ5bEFYdG/zAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQApgTGLVwb1R6JN3YxHs1xPYvH+lJt9nclLwNLfkS7qDYt0II6p3NrHH7rcpz5SKIXgPgGzmyCVvAZSZZoGN1jr9u1dzrs1x3oamw2KR9pk0PeZYnmM4Wfz23g1FHExsLCX/VMaK1ylnXgcL15y6j1E4NftPtkaXoryjTntsJC5oH8VmIKOemRWF8H0/ZYZsnUoH0k0ZckXb/iyHvBcbd30Is68dRrAlB5w8h7VMtpvx1jAH3vns36vB74KWfUOVri187m244TD8sjZRdq/W05bfiGPqCGL2T5YFBWrTrudImISYovHEsTW0lKB8EmBwfKr2TPtr/W2HgaMhYGXGyl3"
+
+    @Test fun readsCertificateInEveryShapeCebMayGive() {
+        val key = CsobCertificate.privateKey(testKey)
+        val der = java.util.Base64.getDecoder().decode(testCert)
+        val pem = CsobCertificate.pem("CERTIFICATE", der).replace("\n", "\r\n")
+        val zip = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.ZipOutputStream(out).use { z ->
+                z.putNextEntry(java.util.zip.ZipEntry("cert_csob_pok_1/readme.txt")); z.write("hello".toByteArray()); z.closeEntry()
+                z.putNextEntry(java.util.zip.ZipEntry("cert_csob_pok_1/cert.cer")); z.write(der); z.closeEntry()
+            }
+        }.toByteArray()
+        val utf16 = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + pem.toByteArray(Charsets.UTF_16LE)
+        val bare = java.util.Base64.getMimeEncoder().encode(der)
+        val shapes = mapOf("der" to der, "pem" to pem.toByteArray(), "zip" to zip, "utf16" to utf16, "bare base64" to bare,
+            "x509 header" to pem.replace("BEGIN CERTIFICATE", "BEGIN X509 CERTIFICATE").replace("END CERTIFICATE", "END X509 CERTIFICATE").toByteArray())
+        for ((name, bytes) in shapes) {
+            val cert = try { CsobCertificate.matching(key, bytes) } catch (e: Exception) { throw AssertionError(name + ": " + e.message, e) }
+            assertTrue(name, cert.subjectX500Principal.name.contains("Flos Test"))
+        }
+    }
 }
