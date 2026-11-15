@@ -81,6 +81,7 @@ fun WebOrderDialog(vm: PosViewModel) {
     var minutes by remember(w.id) { mutableStateOf(wish ?: if (delivery) 45 else 20) }
     val canWhatsApp = cz.flos.core.Notify.phoneDigits(o.customer?.phone.orEmpty()) != null
     val whatsapp by vm.webWhatsApp.collectAsState()
+    val settingsNow by vm.settings.collectAsState()
     fun clock(m: Int) = now.plusMinutes(m.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
     AlertDialog(
         onDismissRequest = {},
@@ -109,6 +110,10 @@ fun WebOrderDialog(vm: PosViewModel) {
                     }
                 }
                 if (preAt == null && wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
+                if (!atTable) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = settingsNow.webOrderPrint, onCheckedChange = { v -> vm.updateSettings { it.copy(webOrderPrint = v) } })
+                    Text(tr("Vytisknout objednávku hned"))
+                }
                 if (canWhatsApp) Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = whatsapp, onCheckedChange = { vm.webWhatsApp.value = it })
                     Text(tr("Poslat zákazníkovi potvrzení přes WhatsApp"))
@@ -139,6 +144,12 @@ fun WebOrderingSettings(vm: PosViewModel, s: AppSettings) {
         if (s.menuUrl.isNotBlank()) {
             Text(tr("Adresa menu (pro nastavení webu):"), style = MaterialTheme.typography.labelLarge)
             SelectionContainer { Text(s.menuUrl, style = MaterialTheme.typography.bodySmall) }
+        }
+        SwitchRow(tr("Vytisknout objednávku hned po přijetí"), tr("Vypnuto: objednávku vytisknete, kdy chcete, v Objednávky → Tisk."), s.webOrderPrint) { v ->
+            vm.updateSettings { it.copy(webOrderPrint = v) }
+        }
+        SwitchRow(tr("QR platba na objednávce"), tr("Na lístku rozvozu a osobního odběru se vytiskne QR kód s částkou (VS = číslo WEB). Potřebuje číslo účtu v nastavení."), s.webOrderQr) { v ->
+            vm.updateSettings { it.copy(webOrderQr = v) }
         }
         OrderHoursEditor(vm, s, qr = false)
         OrderAlarmSettings(vm, s)

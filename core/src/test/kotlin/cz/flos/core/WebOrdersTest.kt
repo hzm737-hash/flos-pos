@@ -146,4 +146,13 @@ class WebOrdersTest {
         assertEquals(listOf("WEB 7", "Zákazník: Jan", "Tel.: 777"), ReceiptLayout.wrap("WEB 7\nZákazník: Jan\nTel.: 777", 32))
         assertEquals(listOf("one two", "three"), ReceiptLayout.wrap("one two three", 8))
     }
+
+    @Test fun variableSymbolIsTheWebNumberOfADeliveryOrPickUp() {
+        assertEquals("57", WebOrders.variableSymbol("WEB 57 · Rozvoz · hotovo 18:30 · hotově\nZákazník: Jan"))
+        assertEquals("8", WebOrders.variableSymbol("WEB 8 · Osobní odběr · hotovo 19:00"))
+        assertEquals("8", WebOrders.variableSymbol("WEB 8 · Pick-up · ready 19:00"))
+        assertNull(WebOrders.variableSymbol("WEB 9 · Stůl 4"))
+        assertNull(WebOrders.variableSymbol("QR objednávka (web)"))
+        assertNull(WebOrders.variableSymbol("Novákova 5"))
+    }
 }
