@@ -907,6 +907,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             paymentParts = if (mixed) cz.flos.core.PaymentPart.format(parts) else null,
             cashPart = if (mixed) parts.filter { it.method == PaymentMethod.CASH }.sumOf { it.amount } else 0,
             serviceType = service,
+            // A paid web order keeps no customer's name, phone or address on the till; the receipt still prints them.
+            note = cz.flos.core.WebOrders.withoutCustomer(order?.note.orEmpty()),
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
@@ -921,7 +923,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             service,
             table?.let { tr("Stůl %s", it) },
             buyer?.let { "Zákazník: ${it.name}" + if (earned > 0) ", body +$earned (celkem ${it.points + earned})" else "" },
-            sale.note.takeIf { it.isNotBlank() },
+            (order?.note ?: sale.note).takeIf { it.isNotBlank() },
         ).joinToString(" · ")
         val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = note,
             epc = epc, eurRate = epc?.let { rate }, parts = if (mixed) parts else emptyList())
@@ -1223,7 +1225,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /**
      * Accepts a web order: tells the back office first (the customer's page shows the ready time and no
      * other till takes it), then saves it as an open order and prints the ticket with the customer's
-     * details. The details are only printed, not stored on the till (see the privacy policy).
+     * details. The details stay on the open order (every print shows them) and are removed from the
+     * stored sale when it is paid (see the privacy policy).
      */
     /** Whether accepting a web order also opens WhatsApp with the confirmation for the customer (kept while the app runs). */
     val webWhatsApp = MutableStateFlow(true)
@@ -1248,10 +1251,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             val kind = if (o.type == cz.flos.core.WebOrders.DELIVERY) tr("Rozvoz") else tr("Osobní odběr")
             val note = "WEB ${w.id} · $kind · " + (if (at != null) tr("PŘEDOBJEDNÁVKA") + " " else "") + tr("hotovo %s", ready) + " · " + tr(cz.flos.core.WebOrders.paymentText(o.payment))
             val millis = System.currentTimeMillis()
+            // The customer's name, phone and address stay on the open order, so every print shows them.
+            val ticket = cz.flos.core.WebOrders.ticketNote(note, o)
             val sale = SaleEntity(
                 number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
                 payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
-                orderNumber = flos.settings.nextOrderNumber(), note = note,
+                orderNumber = flos.settings.nextOrderNumber(), note = ticket,
             ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
             // The confirmation goes from the shop's own WhatsApp; the cashier only presses Send.
             val phone = o.customer?.phone.orEmpty()
@@ -1262,8 +1267,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
                 (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
             // The ticket carries the name, phone and address for the kitchen and the driver.
-            val ticket = (listOf(note) + cz.flos.core.WebOrders.summary(w.id, o).drop(1)).joinToString("\n")
-            printOrder(sale.copy(note = ticket), lines)
+            printOrder(sale, lines)
         } finally { webTaking.remove(w.id) }
     }
 

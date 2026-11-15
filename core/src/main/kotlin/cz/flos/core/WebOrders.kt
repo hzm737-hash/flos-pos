@@ -258,6 +258,35 @@ object WebOrders {
         }.trim()
     }
 
+    /** Starts of the ticket lines with the customer's personal details ([ticketNote]); removed again by [withoutCustomer]. */
+    private val CUSTOMER_LINES = listOf("Zákazník: ", "Tel.: ", "Adresa: ")
+
+    /**
+     * The note saved with an accepted delivery / pick-up order and printed on its ticket, one item per line:
+     * [heading], the customer's name, phone and (for delivery) address with the doorbell, the wished time,
+     * the payment and the customer's note. It stays on the open order so every later print (the order
+     * again, the pre-bill, the receipt) shows it; when the order is paid, [withoutCustomer] removes the
+     * personal lines from what is stored.
+     */
+    fun ticketNote(heading: String, o: WebOrder, today: java.time.LocalDate = java.time.LocalDate.now(OrderHours.ZONE)): String = buildList {
+        add(heading)
+        o.customer?.let { c ->
+            if (c.name.isNotBlank()) add("Zákazník: " + c.name.trim())
+            if (c.phone.isNotBlank()) add("Tel.: " + c.phone.trim())
+            if (o.type == DELIVERY && c.street.isNotBlank())
+                add("Adresa: " + c.street.trim() + (if (c.bell.isNotBlank()) " (zvonek: " + c.bell.trim() + ")" else ""))
+        }
+        add("Přeje si: " + wishText(o, today))
+        add("Platba: " + paymentText(o.payment) + " při převzetí")
+        if (o.note.isNotBlank()) add("Pozn.: " + o.note.trim())
+    }.joinToString("\n")
+
+    /** [note] without the lines with the customer's name, phone and address (see [ticketNote]); other notes unchanged. */
+    fun withoutCustomer(note: String): String {
+        if (!note.startsWith("WEB ") || '\n' !in note) return note
+        return note.split('\n').filterNot { l -> CUSTOMER_LINES.any { l.startsWith(it) } }.joinToString("\n")
+    }
+
     /** Heading and details for the kitchen ticket and the dialog on the till. */
     fun summary(id: Long, o: WebOrder): List<String> = if (o.type == TABLE) buildList {
         add("WEB $id · Stůl " + o.table)

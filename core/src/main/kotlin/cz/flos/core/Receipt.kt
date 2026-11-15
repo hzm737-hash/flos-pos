@@ -291,7 +291,12 @@ class ReceiptLayout(private val width: Int) {
     }
 
     companion object {
-        fun wrap(text: String, width: Int): List<String> {
+        /** Splits [text] into lines of at most [width] characters; a line break in the text starts a new line. */
+        fun wrap(text: String, width: Int): List<String> =
+            if ('\n' in text) text.split('\n').map { it.trimEnd('\r') }.filter { it.isNotBlank() }.flatMap { wrapLine(it, width) }
+            else wrapLine(text, width)
+
+        private fun wrapLine(text: String, width: Int): List<String> {
             val out = mutableListOf<String>()
             var line = StringBuilder()
             for (word in text.split(' ')) {
