@@ -26,6 +26,7 @@ abstract class FlosDatabase : RoomDatabase() {
     abstract fun documents(): DocumentDao
     abstract fun reservations(): ReservationDao
     abstract fun notes(): NoteDao
+    abstract fun testReset(): TestResetDao
 
     companion object {
         const val FILE_NAME = "flos.db"

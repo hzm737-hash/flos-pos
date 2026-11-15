@@ -114,6 +114,9 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
         request("POST", "/device/sales", json.encodeToString(SalesUpload.serializer(), SalesUpload(sales)), BoUploadResult.serializer())
 
     /** Clocks a staff member in or out with their PIN (attendance). */
+    /** Deletes this till's receipts, clock-ins and live picture in the back office, and the company's web and table orders. */
+    fun resetTestData(): BoTestDataReset = request("POST", "/device/test-data/reset", "{}", BoTestDataReset.serializer())
+
     fun clock(pin: String): BoClock = request("POST", "/device/clock", json.encodeToString(ClockRequest.serializer(), ClockRequest(pin)), BoClock.serializer())
 
     /** Publishes the digital menu; returns its public address (e.g. https://flos.gnocco.cz/menu/ab12cd34ef). */
