@@ -144,8 +144,8 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
      * Accepts a web order with the minutes until it is ready, or declines it. False when another till
      * already answered it, so it must not be taken twice.
      */
-    fun ackWebOrder(id: Long, accepted: Boolean, readyMinutes: Int = 0): Boolean =
-        request("POST", "/device/web-orders/$id/ack", json.encodeToString(cz.flos.core.WebOrderAck.serializer(), cz.flos.core.WebOrderAck(accepted, readyMinutes)), BoOk.serializer()).ok
+    fun ackWebOrder(id: Long, accepted: Boolean, readyMinutes: Int = 0, readyAt: Long? = null): Boolean =
+        request("POST", "/device/web-orders/$id/ack", json.encodeToString(cz.flos.core.WebOrderAck.serializer(), cz.flos.core.WebOrderAck(accepted, readyMinutes, readyAt)), BoOk.serializer()).ok
 
     /** The company's ordering hours and "stop orders" switch, as the back office keeps them. */
     fun orderControl(): cz.flos.core.OrderControl =

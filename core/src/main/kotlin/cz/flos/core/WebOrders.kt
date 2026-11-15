@@ -44,7 +44,9 @@ import kotlinx.serialization.Serializable
     val customer: WebCustomer? = null,
     /** Wished time "HH:mm", or "" for as soon as possible. */
     val time: String = "",
-    /** "cash" or "card", paid on receipt. */
+    /** Day of the order "yyyy-MM-dd" (Prague); "" = today. A later day is a pre-order and then needs [time]. */
+    val date: String = "",
+    /** "cash", "card" or "qr" (QR platba from the customer's bank app), paid on receipt. */
     val payment: String = "cash",
     val note: String = "",
     val lang: String = "cs",
@@ -62,7 +64,8 @@ import kotlinx.serialization.Serializable
 /** A waiting web order as the back office hands it to a till. */
 @Serializable data class WebOrderInbox(val id: Long, val order: WebOrder, val createdAt: Long = 0)
 @Serializable data class WebOrderList(val orders: List<WebOrderInbox> = emptyList())
-@Serializable data class WebOrderAck(val accepted: Boolean, val readyMinutes: Int = 0)
+/** The till's answer; a pre-order for a later day is confirmed with [readyAt] (epoch millis) instead of minutes. */
+@Serializable data class WebOrderAck(val accepted: Boolean, val readyMinutes: Int = 0, val readyAt: Long? = null)
 @Serializable data class WebOrderAccepted(val id: Long, val token: String)
 /** For the customer's page: NEW, ACCEPTED or REJECTED, and when it will be ready (epoch ms). */
 @Serializable data class WebOrderStatus(val status: String, val readyAt: Long? = null)
@@ -81,6 +84,39 @@ object WebOrders {
     val READY_MINUTES = listOf(15, 20, 30, 45, 60, 90)
 
     private val TIME = Regex("""^([01]\d|2[0-3]):[0-5]\d$""")
+    private val DATE = Regex("""^\d{4}-\d{2}-\d{2}$""")
+    /** How many days ahead a customer may order. */
+    const val MAX_DAYS_AHEAD = 14
+    val PAYMENTS = setOf("cash", "card", "qr")
+
+    /** The order's day, or null for today / an unreadable date. */
+    fun day(o: WebOrder): java.time.LocalDate? =
+        if (DATE.matches(o.date)) runCatching { java.time.LocalDate.parse(o.date) }.getOrNull() else null
+
+    /** True for an order for a later day than [today] (a pre-order). */
+    fun isPreorder(o: WebOrder, today: java.time.LocalDate = java.time.LocalDate.now(OrderHours.ZONE)): Boolean =
+        day(o)?.isAfter(today) == true
+
+    private val DAY_CS = listOf("po", "út", "st", "čt", "pá", "so", "ne")
+    private val DAY_EN = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+    /** "po 16.11." / "Mon 16.11." for the order's day. */
+    fun dayText(d: java.time.LocalDate, en: Boolean = false): String =
+        (if (en) DAY_EN else DAY_CS)[d.dayOfWeek.value - 1] + " " + d.dayOfMonth + "." + d.monthValue + "."
+
+    /** The pay-on-receipt method in Czech or English. */
+    fun paymentText(payment: String, en: Boolean = false): String = when (payment) {
+        "card" -> if (en) "by card" else "kartou"
+        "qr" -> if (en) "by QR payment (bank app)" else "QR platbou"
+        else -> if (en) "in cash" else "hotově"
+    }
+
+    /** When the customer wants it: "PŘEDOBJEDNÁVKA po 16.11. 18:30", "18:30" or "co nejdříve". */
+    fun wishText(o: WebOrder, today: java.time.LocalDate = java.time.LocalDate.now(OrderHours.ZONE)): String {
+        val d = day(o)
+        return if (d != null && d.isAfter(today)) "PŘEDOBJEDNÁVKA " + dayText(d) + " " + o.time
+        else o.time.ifEmpty { "co nejdříve" }
+    }
 
     /** Why the order cannot be taken, or null when it is complete and sane. Texts go to the customer, so in [WebOrder.lang]. */
     fun problem(o: WebOrder): String? {
@@ -103,7 +139,13 @@ object WebOrders {
         if (o.type == DELIVERY && (c.street.trim().length < 4 || c.street.length > MAX_TEXT)) return t("Vyplňte adresu.", "Please fill in the address.")
         if (c.bell.length > MAX_TEXT) return t("Text u zvonku je příliš dlouhý.", "Doorbell text is too long.")
         if (o.time.isNotEmpty() && !TIME.matches(o.time)) return t("Neplatný čas.", "Invalid time.")
-        if (o.payment != "cash" && o.payment != "card") return t("Neplatný způsob platby.", "Invalid payment method.")
+        if (o.date.isNotEmpty()) {
+            val d = day(o) ?: return t("Neplatné datum.", "Invalid date.")
+            val today = java.time.LocalDate.now(OrderHours.ZONE)
+            if (d.isBefore(today) || d.isAfter(today.plusDays(MAX_DAYS_AHEAD.toLong()))) return t("Neplatné datum.", "Invalid date.")
+            if (d.isAfter(today) && o.time.isEmpty()) return t("Vyberte čas.", "Please choose a time.")
+        }
+        if (o.payment !in PAYMENTS) return t("Neplatný způsob platby.", "Invalid payment method.")
         if (o.note.length > MAX_NOTE) return t("Poznámka je příliš dlouhá.", "The note is too long.")
         if (o.deliveryFee !in 0..1000 || o.total !in 0..1_000_000) return t("Neplatná cena.", "Invalid price.")
         return lineProblem(o) { c, e -> t(c, e) }
@@ -202,16 +244,16 @@ object WebOrders {
     fun confirmation(id: Long, o: WebOrder, readyAt: String, shop: String, shopPhone: String): String {
         val name = o.customer?.name?.trim().orEmpty()
         val delivery = o.type == DELIVERY
-        val card = o.payment == "card"
-        return if (o.lang == "en") buildString {
+        val en = o.lang == "en"
+        return if (en) buildString {
             append(if (name.isEmpty()) "Hello" else "Hello $name").append(", we confirm your order no. WEB ").append(id).append(". ")
             append(if (delivery) "We will deliver it at about $readyAt" else "It will be ready for pick-up at $readyAt").append(". ")
-            append("Payment ").append(if (card) "by card" else "in cash").append(" on receipt. ")
+            append("Payment ").append(paymentText(o.payment, true)).append(" on receipt. ")
             append("Thank you! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
         }.trim() else buildString {
             append(if (name.isEmpty()) "Dobrý den" else "Dobrý den $name").append(", potvrzujeme Vaši objednávku č. WEB ").append(id).append(". ")
             append(if (delivery) "Doručíme ji přibližně v $readyAt" else "Bude připravena k vyzvednutí v $readyAt").append(". ")
-            append("Platba ").append(if (card) "kartou" else "hotově").append(" při převzetí. ")
+            append("Platba ").append(paymentText(o.payment)).append(" při převzetí. ")
             append("Děkujeme! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
         }.trim()
     }
@@ -221,12 +263,12 @@ object WebOrders {
         add("WEB $id · Stůl " + o.table)
         if (o.note.isNotBlank()) add("Pozn.: " + o.note)
     } else buildList {
-        add("WEB $id · " + (if (o.type == DELIVERY) "Rozvoz" else "Osobní odběr") + " · " + o.time.ifEmpty { "co nejdříve" })
+        add("WEB $id · " + (if (o.type == DELIVERY) "Rozvoz" else "Osobní odběr") + " · " + wishText(o))
         o.customer?.let { c ->
             add(c.name + ", " + c.phone)
             if (o.type == DELIVERY) add(c.street + (if (c.bell.isNotBlank()) " (" + c.bell + ")" else ""))
         }
-        add("Platba: " + (if (o.payment == "card") "kartou" else "hotově") + " při převzetí")
+        add("Platba: " + paymentText(o.payment) + " při převzetí")
         if (o.note.isNotBlank()) add("Pozn.: " + o.note)
     }
 }

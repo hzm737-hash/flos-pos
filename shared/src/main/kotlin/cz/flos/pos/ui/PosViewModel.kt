@@ -1167,12 +1167,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Whether accepting a web order also opens WhatsApp with the confirmation for the customer (kept while the app runs). */
     val webWhatsApp = MutableStateFlow(true)
 
-    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false) = viewModelScope.launch {
+    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false, readyAt: Long? = null) = viewModelScope.launch {
         if (!webTaking.add(w.id)) return@launch
         if (w.order.type == cz.flos.core.WebOrders.TABLE) { try { acceptWebTableOrder(w, readyMinutes) } finally { webTaking.remove(w.id) }; return@launch }
         try {
             val (lines, unmatched) = webOrderCart(w)
-            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes) } }
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes, readyAt) } }
             if (taken.isFailure) {
                 _messages.tryEmit(tr("Objednávku z webu se nepodařilo potvrdit: %s", taken.exceptionOrNull()?.message ?: ""))
                 return@launch
@@ -1180,9 +1180,12 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             _webInbox.update { list -> list.filterNot { it.id == w.id } }
             if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku z webu už vyřídila jiná pokladna.")); return@launch }
             val o = w.order
-            val ready = LocalDateTime.now().plusMinutes(readyMinutes.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+            // A pre-order: its day and time; otherwise the clock time in the chosen minutes.
+            val at = readyAt?.let { java.time.Instant.ofEpochMilli(it).atZone(cz.flos.core.OrderHours.ZONE).toLocalDateTime() }
+            val ready = if (at != null) cz.flos.core.WebOrders.dayText(at.toLocalDate(), o.lang == "en") + " " + at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+                else LocalDateTime.now().plusMinutes(readyMinutes.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
             val kind = if (o.type == cz.flos.core.WebOrders.DELIVERY) tr("Rozvoz") else tr("Osobní odběr")
-            val note = "WEB ${w.id} · $kind · " + tr("hotovo %s", ready) + " · " + (if (o.payment == "card") tr("kartou") else tr("hotově"))
+            val note = "WEB ${w.id} · $kind · " + (if (at != null) tr("PŘEDOBJEDNÁVKA") + " " else "") + tr("hotovo %s", ready) + " · " + tr(cz.flos.core.WebOrders.paymentText(o.payment))
             val millis = System.currentTimeMillis()
             val sale = SaleEntity(
                 number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,

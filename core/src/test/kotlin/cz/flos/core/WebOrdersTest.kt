@@ -64,6 +64,25 @@ class WebOrdersTest {
         assertEquals("The order is empty.", WebOrders.problem(order.copy(lines = emptyList(), lang = "en")))
     }
 
+    @Test fun preorderForALaterDayAndQrPayment() {
+        val today = java.time.LocalDate.now(OrderHours.ZONE)
+        val tomorrow = today.plusDays(1)
+        assertNull(WebOrders.problem(order.copy(payment = "qr")))
+        assertNotNull(WebOrders.problem(order.copy(payment = "bitcoin")))
+        assertNull(WebOrders.problem(order.copy(date = tomorrow.toString(), time = "18:30")))
+        assertNotNull(WebOrders.problem(order.copy(date = tomorrow.toString())))                 // a pre-order needs a time
+        assertNotNull(WebOrders.problem(order.copy(date = today.minusDays(1).toString(), time = "18:30")))
+        assertNotNull(WebOrders.problem(order.copy(date = today.plusDays(30).toString(), time = "18:30")))
+        assertNotNull(WebOrders.problem(order.copy(date = "16.11.", time = "18:30")))
+        assertNull(WebOrders.problem(order.copy(date = today.toString())))                       // today, as soon as possible
+        assert(WebOrders.isPreorder(order.copy(date = tomorrow.toString(), time = "18:30"), today))
+        assert(!WebOrders.isPreorder(order.copy(date = today.toString()), today))
+        assertEquals("PŘEDOBJEDNÁVKA po 16.11. 18:30",
+            WebOrders.wishText(order.copy(date = "2026-11-16", time = "18:30"), java.time.LocalDate.of(2026, 11, 14)))
+        assertEquals("Platba: QR platbou při převzetí", WebOrders.summary(5, order.copy(payment = "qr"))[3])
+        assert(WebOrders.confirmation(5, order.copy(payment = "qr", lang = "en"), "Mon 16.11. 18:30", "PF", "").contains("QR payment"))
+    }
+
     @Test fun wishedTimeBecomesMinutesFromNow() {
         assertEquals(30, WebOrders.wishMinutes("19:30", 19 * 60))
         assertNull(WebOrders.wishMinutes("", 19 * 60))

@@ -23,6 +23,8 @@ import java.sql.Connection
 
 /** Web orders older than this are no longer handed to a till. */
 private const val WEB_ORDER_TTL_MS = 6 * 60 * 60 * 1000L
+/** Still waiting for a till: a pre-order until the end of its day, any other order for [WEB_ORDER_TTL_MS]. */
+private const val WAITING = "COALESCE(expires_at, created_at + $WEB_ORDER_TTL_MS) > ?"
 /** A web order a till fetched but did not answer is handed out again after this. */
 private const val WEB_REFETCH_MS = 60_000L
 /** The customer's name, phone and address are erased this long after the order (see the privacy policy). */
@@ -80,7 +82,10 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
         }
         // Ordering hours and "stop orders" on the till: the table's guests follow the QR ones, the rest the web ones.
         val gate = db.tx { if (atTable) qrOrderStatus(row.orgId, order.table) else webOrderStatus(row.orgId) }
-        if (!gate.open) return@post call.respondClosed(OrdersClosed(gate), en)
+        // A pre-order for a later day may be sent outside the ordering hours (it waits until the till opens),
+        // but not while orders are stopped on the till.
+        val preorder = !atTable && WebOrders.isPreorder(order)
+        if (!gate.open && !(preorder && gate.reason == "hours")) return@post call.respondClosed(OrdersClosed(gate), en)
         val who = if (atTable) "web-table:${row.orgId}:${order.table}" else "web-phone:${row.orgId}:" + Notify.phoneDigits(order.customer!!.phone)!!
         if (!GuestThrottle.allow("web-ip:" + call.clientIp(), if (atTable) 10 else 6) || !GuestThrottle.allow(who, 6)) {
             throw ApiError(HttpStatusCode.TooManyRequests, if (en) "Too many orders. Please wait a moment or call us." else "Příliš mnoho objednávek. Chvíli počkejte nebo nám zavolejte.")
@@ -89,13 +94,14 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
         val token = Tokens.new("w_")
         val id = db.tx {
             eraseOldWebCustomers(now)
-            val waiting = queryOne("SELECT COUNT(*) FROM web_orders WHERE org_id = ? AND status IN ('NEW','FETCHED') AND created_at > ?", row.orgId, now - WEB_ORDER_TTL_MS) { it.getLong(1) } ?: 0
+            val waiting = queryOne("SELECT COUNT(*) FROM web_orders WHERE org_id = ? AND status IN ('NEW','FETCHED') AND $WAITING", row.orgId, now) { it.getLong(1) } ?: 0
             if (waiting >= 100) throw ApiError(HttpStatusCode.TooManyRequests, if (order.lang == "en") "Too many waiting orders. Please call us." else "Příliš mnoho čekajících objednávek. Zavolejte nám prosím.")
-            insert("INSERT INTO web_orders (org_id, token, data, customer, status, created_at) VALUES (?,?,?,?,?,?)",
+            val expires = if (preorder) WebOrders.day(order)!!.plusDays(1).atStartOfDay(cz.flos.core.OrderHours.ZONE).toInstant().toEpochMilli() else null
+            insert("INSERT INTO web_orders (org_id, token, data, customer, status, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
                 row.orgId, token,
                 FlosJson.encodeToString(WebOrder.serializer(), order.copy(customer = null, tableKey = "")),
                 order.customer?.takeUnless { atTable }?.let { FlosJson.encodeToString(WebCustomer.serializer(), it) },
-                "NEW", now)
+                "NEW", now, expires)
         }
         call.respond(WebOrderAccepted(id, token))
     }
@@ -124,9 +130,9 @@ internal fun Route.webOrderDeviceRoutes(db: Db) {
         val now = System.currentTimeMillis()
         val orders = db.tx {
             val list = query(
-                "SELECT id, data, customer, created_at FROM web_orders WHERE org_id = ? AND created_at > ? AND " +
+                "SELECT id, data, customer, created_at FROM web_orders WHERE org_id = ? AND $WAITING AND " +
                     "(status = 'NEW' OR (status = 'FETCHED' AND fetched_at < ?)) ORDER BY id LIMIT 30",
-                d.orgId, now - WEB_ORDER_TTL_MS, now - WEB_REFETCH_MS,
+                d.orgId, now, now - WEB_REFETCH_MS,
             ) { r ->
                 val o = FlosJson.decodeFromString(WebOrder.serializer(), r.getString(2))
                 val c = r.getString(3)?.let { FlosJson.decodeFromString(WebCustomer.serializer(), it) }
@@ -142,8 +148,11 @@ internal fun Route.webOrderDeviceRoutes(db: Db) {
         val d = call.device(db)
         val id = call.parameters["id"]?.toLongOrNull() ?: throw ApiError(HttpStatusCode.BadRequest, "Chybný parametr id")
         val ack = call.receive<WebOrderAck>()
-        if (ack.accepted && ack.readyMinutes !in 1..240) throw ApiError(HttpStatusCode.BadRequest, "Neplatný čas přípravy")
-        val readyAt = if (ack.accepted) System.currentTimeMillis() + ack.readyMinutes * 60_000L else null
+        val nowMs = System.currentTimeMillis()
+        // A pre-order is confirmed for its day and time (readyAt); otherwise in minutes from now.
+        val at = ack.readyAt?.takeIf { it in nowMs..nowMs + (WebOrders.MAX_DAYS_AHEAD + 1) * 24 * 3_600_000L }
+        if (ack.accepted && at == null && ack.readyMinutes !in 1..240) throw ApiError(HttpStatusCode.BadRequest, "Neplatný čas přípravy")
+        val readyAt = if (ack.accepted) at ?: (nowMs + ack.readyMinutes * 60_000L) else null
         val changed = db.tx {
             update("UPDATE web_orders SET status = ?, ready_at = ? WHERE id = ? AND org_id = ? AND status IN ('NEW','FETCHED')",
                 if (ack.accepted) "ACCEPTED" else "REJECTED", readyAt, id, d.orgId)
