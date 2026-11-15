@@ -49,26 +49,69 @@ object CsobCertificate {
     fun privateKey(pkcs8Base64: String): PrivateKey =
         KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(pkcs8Base64.trim())))
 
-    /** All certificates in a downloaded file (.crt/.cer in PEM or DER, or a .p7b chain). */
-    fun certificates(bytes: ByteArray): List<X509Certificate> {
-        val cf = CertificateFactory.getInstance("X.509")
-        val text = String(bytes, Charsets.ISO_8859_1)
-        if (text.contains("-----BEGIN CERTIFICATE-----")) {
-            return Regex("-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----").findAll(text).map {
-                cf.generateCertificate(ByteArrayInputStream(it.value.toByteArray(Charsets.ISO_8859_1))) as X509Certificate
-            }.toList()
+    /**
+     * All certificates in a downloaded file: .crt/.cer in PEM or DER, a .p7b chain (PEM or DER), bare Base64
+     * without the BEGIN/END lines, UTF-16 text (Windows), or a .zip with any of these inside (CEB may download a zip).
+     */
+    fun certificates(bytes: ByteArray): List<X509Certificate> = certificates(bytes, 0)
+
+    private fun certificates(bytes: ByteArray, depth: Int): List<X509Certificate> {
+        if (depth < 2 && bytes.size > 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
+            return unzip(bytes).flatMap { runCatching { certificates(it, depth + 1) }.getOrDefault(emptyList()) }
         }
-        return cf.generateCertificates(ByteArrayInputStream(bytes)).filterIsInstance<X509Certificate>()
+        val cf = CertificateFactory.getInstance("X.509")
+        val text = text(bytes)
+        val pem = Regex("-----BEGIN ([A-Z0-9 ]+)-----([\\s\\S]+?)-----END \\1-----").findAll(text).toList()
+        if (pem.isNotEmpty()) {
+            return pem.flatMap { m -> runCatching { derCertificates(cf, base64(m.groupValues[2])) }.getOrDefault(emptyList()) }
+        }
+        runCatching { derCertificates(cf, bytes) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+        // Bare Base64 of a DER certificate or chain.
+        val b64 = text.filterNot(Char::isWhitespace)
+        if (b64.length > 100 && b64.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' || it == '-' || it == '_' }) {
+            return derCertificates(cf, base64(b64))
+        }
+        throw IllegalArgumentException("not a certificate")
+    }
+
+    private fun derCertificates(cf: CertificateFactory, der: ByteArray): List<X509Certificate> =
+        cf.generateCertificates(ByteArrayInputStream(der)).filterIsInstance<X509Certificate>()
+
+    private fun base64(s: String): ByteArray {
+        val clean = s.filterNot(Char::isWhitespace).replace('-', '+').replace('_', '/')
+        return Base64.getDecoder().decode(clean.trimEnd('=').let { it + "=".repeat((4 - it.length % 4) % 4) })
+    }
+
+    /** Text of the file: UTF-16 with a byte order mark (saved by Windows Notepad) or plain ASCII/UTF-8. */
+    private fun text(bytes: ByteArray): String = when {
+        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+        bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        else -> String(bytes, Charsets.ISO_8859_1)
+    }
+
+    private fun unzip(bytes: ByteArray): List<ByteArray> {
+        val out = mutableListOf<ByteArray>()
+        java.util.zip.ZipInputStream(ByteArrayInputStream(bytes)).use { z ->
+            while (true) {
+                val e = z.nextEntry ?: break
+                if (!e.isDirectory) out += z.readBytes()
+            }
+        }
+        return out
     }
 
     /** The certificate in [bytes] that belongs to [key]; throws when the file is for another key. */
     fun matching(key: PrivateKey, bytes: ByteArray): X509Certificate {
-        val all = runCatching { certificates(bytes) }.getOrElse { throw IllegalArgumentException("Soubor není certifikát (.crt / .cer)") }
-        if (all.isEmpty()) throw IllegalArgumentException("Soubor není certifikát (.crt / .cer)")
+        if (isRequest(bytes)) throw IllegalArgumentException("Toto je žádost o certifikát (flos-csob.csr), ne certifikát. Nahrajte soubor, který jste stáhli z CEB (Business Connector → Stáhnout).")
+        val all = runCatching { certificates(bytes) }.getOrElse { throw IllegalArgumentException("Soubor není certifikát (.crt / .cer / .zip z CEB)") }
+        if (all.isEmpty()) throw IllegalArgumentException("Soubor není certifikát (.crt / .cer / .zip z CEB)")
         val modulus = (key as? RSAPrivateCrtKey)?.modulus
         return all.firstOrNull { (it.publicKey as? RSAPublicKey)?.modulus == modulus }
             ?: throw IllegalArgumentException("Tento certifikát nepatří k žádosti z této pokladny. Nahrajte certifikát vydaný k poslední žádosti.")
     }
+
+    /** The request file made by Flos (.csr), which the owner may pick by mistake instead of the issued certificate. */
+    fun isRequest(bytes: ByteArray): Boolean = text(bytes).contains("CERTIFICATE REQUEST-----")
 
     fun pem(type: String, der: ByteArray): String =
         "-----BEGIN $type-----\n" + Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(der) + "\n-----END $type-----\n"
