@@ -333,6 +333,67 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _messages.tryEmit(text)
     }
 
+    // ---- ČSOB Business Connector certificate (kept only on this till) ----
+
+    /** What the settings screen shows about the ČSOB certificate. */
+    data class CsobCertInfo(val name: String?, val validUntil: java.util.Date?, val pending: Boolean)
+
+    private fun readCsobInfo(): CsobCertInfo {
+        val cert = flos.settings.csobCert()?.let { pem ->
+            runCatching { cz.flos.core.bank.CsobCertificate.certificates(pem.toByteArray(Charsets.ISO_8859_1)).firstOrNull() }.getOrNull()
+        }
+        val name = cert?.subjectX500Principal?.name?.split(',')?.firstOrNull { it.trim().startsWith("CN=") }?.substringAfter("CN=")
+        return CsobCertInfo(name ?: cert?.let { "?" }, cert?.notAfter, flos.settings.csobPendingKey() != null)
+    }
+
+    private val _csob = MutableStateFlow(readCsobInfo())
+    val csobCert: StateFlow<CsobCertInfo> = _csob.asStateFlow()
+
+    /** Creates a new key on this till and a certificate request for CEB; [onReady] gets the .csr file text. */
+    fun csobNewRequest(onReady: (String) -> Unit) = viewModelScope.launch {
+        _busy.value = tr("Vytvářím žádost o certifikát…")
+        try {
+            val name = "Flos " + java.text.Normalizer.normalize(settings.value.boDeviceName.ifBlank { settings.value.businessName }, java.text.Normalizer.Form.NFD)
+                .replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().take(40)
+            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cz.flos.core.bank.CsobCertificate.newRequest(name) }
+            flos.settings.saveCsobPendingKey(r.privateKeyPkcs8)
+            _csob.value = readCsobInfo()
+            onReady(r.csrPem)
+        } catch (e: Exception) {
+            _messages.tryEmit(tr("Žádost se nepodařilo vytvořit: %s", e.message ?: e.javaClass.simpleName))
+        } finally { _busy.value = null }
+    }
+
+    /** The certificate downloaded from CEB (.crt/.cer), or a .p12/.pfx with its key when [password] is given. */
+    fun csobImportCertificate(bytes: ByteArray, password: String? = null) = viewModelScope.launch {
+        val store = flos.settings
+        runCatching {
+            if (password != null) {
+                val (key, pem) = cz.flos.core.bank.CsobCertificate.fromPkcs12(bytes, password)
+                store.saveCsobCertificate(key, pem)
+            } else {
+                // The certificate belongs to the waiting request, or (downloaded again) to the key in use.
+                val keys = listOfNotNull(store.csobPendingKey(), store.csobKey())
+                if (keys.isEmpty()) throw IllegalArgumentException(tr("Nejdřív vytvořte žádost o certifikát"))
+                var lastError: Exception? = null
+                val found = keys.firstNotNullOfOrNull { k ->
+                    try {
+                        k to cz.flos.core.bank.CsobCertificate.matching(cz.flos.core.bank.CsobCertificate.privateKey(k), bytes)
+                    } catch (e: Exception) { lastError = e; null }
+                } ?: throw lastError ?: IllegalArgumentException()
+                store.saveCsobCertificate(found.first, cz.flos.core.bank.CsobCertificate.certPem(found.second))
+            }
+        }.onSuccess {
+            _csob.value = readCsobInfo()
+            _messages.tryEmit(tr("Certifikát ČSOB nahrán"))
+        }.onFailure { _messages.tryEmit(it.message ?: tr("Certifikát se nepodařilo nahrát")) }
+    }
+
+    fun csobRemoveCertificate() {
+        flos.settings.clearCsobCertificate()
+        _csob.value = readCsobInfo()
+    }
+
     /** Tips and revenue of the current month, for the tax-free tips limit (7 % of monthly catering revenue). */
     suspend fun monthTips(month: java.time.YearMonth = java.time.YearMonth.now()): Pair<Long, Long> {
         val zone = ZoneId.systemDefault()

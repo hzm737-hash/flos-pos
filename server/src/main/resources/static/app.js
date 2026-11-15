@@ -536,7 +536,8 @@ const TILL_SETTINGS = [
     ['eetVerification', 'Ověřovací režim', 'b'], ['eetEic', 'EIČ (prázdné = DIČ)', 't'], ['eetTimeoutMs', 'Čekat na odpověď (ms)', 'i'],
     ['eetIdJednotky', 'Označení evidenční jednotky', 't'], ['eetIdPokl', 'Označení pokladny', 't']]],
   ['Platby a banka', [
-    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API']]],
+    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API'], ['CSOB', 'ČSOB Business Connector']]],
+    ['csobContract', 'Číslo smlouvy ČSOB CEB (Business Connector)', 't'],
     ['imapHost', 'Server e-mailu (IMAP)', 't'], ['imapPort', 'Port IMAP', 'i'], ['imapUser', 'Uživatel e-mailu', 't'], ['imapFolder', 'Složka', 't'],
     ['transferDueDays', 'Převod po splatnosti po (dnech)', 'i'], ['tipsOwner', 'Spropitné patří', [['STAFF', 'Zaměstnancům'], ['BUSINESS', 'Provozovně']]],
     ['eurAccount', 'Účet pro platby v EUR', 't'], ['eurRateManual', 'Vlastní kurz EUR pro převody', 't'], ['eurCashRate', 'Vlastní kurz EUR pro hotovost', 't'],
@@ -558,7 +559,7 @@ const TILL_SETTINGS = [
     ['msgDocument', 'Zpráva k dokladu', 'a'], ['menuUrl', 'Adresa menu', 't'], ['menuNote', 'Poznámka pod menu', 'a']]],
   ['Pokročilé funkce', [['advanced', 'Zapnuté funkce', 'f']]],
 ];
-const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky' };
+const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky', csobCertificate: 'Certifikát ČSOB Business Connector' };
 
 function settingField(key, label, type, value) {
   const has = value !== undefined; const v = has ? value : '';
