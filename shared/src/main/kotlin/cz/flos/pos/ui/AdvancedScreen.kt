@@ -67,6 +67,8 @@ fun AdvancedScreen(vm: PosViewModel) {
 
             BackupSection(vm)
 
+            TestDataResetSection(vm)
+
             Section(tr("Funkce"))
             AdvFeature.entries.forEach { f ->
                 FeatureCard(vm, s, f)

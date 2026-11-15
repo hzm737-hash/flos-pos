@@ -76,6 +76,7 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
             deviceSnapshotRoutes(db)
             tillLiveRoutes(db)
             appReleaseRoutes(db)
+            testDataResetRoutes(db)
         }
     }
 }

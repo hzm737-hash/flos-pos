@@ -646,6 +646,13 @@ class SettingsStore(private val prefs: KeyValueStore) {
         return "$year-" + next.toString().padStart(6, '0')
     }
 
+    /** Receipt and order numbers start again from 1 (after test data was cleared). */
+    @Synchronized
+    fun restartNumbering() {
+        val year = java.time.LocalDate.now().year
+        prefs.put(((year - 1)..(year + 1)).associate { "receiptSeq_$it" to "0" } + ("orderSeq" to "0"))
+    }
+
     /** Next number for an open order (delivery, table); separate from receipt numbers. */
     @Synchronized
     fun nextOrderNumber(): Int {

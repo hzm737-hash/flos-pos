@@ -460,6 +460,37 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         cz.flos.pos.backup.FlosBackup.create(platform.dataDir, flos.settings.exportAll())
     }
 
+    // ---- Clearing test data (Pokročilé nastavení) ----
+    /** How much was sold and recorded on this till, shown before clearing it. */
+    suspend fun testDataCounts(): cz.flos.pos.data.TestDataCounts = withContext(Dispatchers.IO) { flos.database.testReset().counts() }
+
+    /**
+     * Deletes the receipts, orders, shifts and payments made while trying the till out, here and in the back office,
+     * keeping products, customers and all settings. Refused while a receipt is recorded for real in EET.
+     * Returns null when done, or why nothing was deleted.
+     */
+    suspend fun resetTestData(documents: Boolean, reservations: Boolean, points: Boolean, restartNumbers: Boolean): String? = withContext(Dispatchers.IO) {
+        if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
+        val dao = flos.database.testReset()
+        val real = dao.realEetCount()
+        if (real > 0) return@withContext tr("Nelze smazat: %d účtenek je skutečně evidováno v EET. Evidované tržby musí zůstat.", real)
+        // A copy of the database as it was, next to it, just in case (not part of later backups).
+        runCatching {
+            flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } }
+            val file = cz.flos.pos.backup.FlosBackup.databaseFile(platform.dataDir)
+            if (file.isFile) file.copyTo(java.io.File(file.path + ".before-test-reset"), overwrite = true)
+        }
+        val done = runCatching {
+            flos.backOffice.resetTestData {
+                dao.clear(documents, reservations, points)
+                if (restartNumbers) flos.settings.restartNumbering()
+            }
+        }
+        done.exceptionOrNull()?.let { return@withContext tr("Back office neodpověděl, nic nebylo smazáno: %s", it.message ?: "") }
+        clearCart()
+        null
+    }
+
     /** Checks a backup and leaves it to be restored at the next start; returns why not, or null when ready. */
     suspend fun stageRestore(bytes: ByteArray, password: String?): String? = withContext(Dispatchers.IO) {
         if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
