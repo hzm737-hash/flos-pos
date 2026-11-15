@@ -64,6 +64,8 @@ data class AppSettings(
     val imapPassword: String = "",
     val imapFolder: String = "INBOX",
     val fioToken: String = "",
+    /** ČSOB CEB contract number for Business Connector; its key and certificate stay on this till (see SettingsStore.csobKey). */
+    val csobContract: String = "",
     /** Who keeps the tips: staff (outside EET, tax-free up to 7 % of monthly catering revenue) or the business (recorded in EET). */
     val tipsOwner: TipsOwner = TipsOwner.STAFF,
     /** Account for SEPA payments from abroad (a Fio EUR account is best); empty = the main account. */
@@ -273,6 +275,7 @@ enum class BankSource(val label: String) {
     OFF("Vypnuto"),
     EMAIL("E-mail od banky (jakákoli banka)"),
     FIO("Fio banka API"),
+    CSOB("ČSOB Business Connector"),
 }
 
 enum class TipsOwner(val label: String) {
@@ -330,6 +333,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             imapPassword = str("imapPassword", d.imapPassword),
             imapFolder = str("imapFolder", d.imapFolder),
             fioToken = str("fioToken", d.fioToken),
+            csobContract = str("csobContract", d.csobContract),
             tipsOwner = enum("tipsOwner", d.tipsOwner),
             eurAccount = str("eurAccount", d.eurAccount),
             eurRateManual = str("eurRateManual", d.eurRateManual),
@@ -514,6 +518,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "imapPassword" to s.imapPassword,
                 "imapFolder" to s.imapFolder,
                 "fioToken" to s.fioToken,
+                "csobContract" to s.csobContract,
                 "tipsOwner" to s.tipsOwner.name,
                 "eurAccount" to s.eurAccount,
                 "eurRateManual" to s.eurRateManual,
@@ -592,6 +597,32 @@ class SettingsStore(private val prefs: KeyValueStore) {
 
     fun saveImapPosition(account: String, validity: Long, uid: Long) =
         prefs.put(mapOf("imapValidity_$account" to validity.toString(), "imapUid_$account" to uid.toString()))
+
+    // ---- ČSOB Business Connector: key and certificate of this till, never sent to the back office ----
+
+    /** Private key (PKCS#8, Base64) that belongs to [csobCert]; saved encrypted. */
+    fun csobKey(): String? = prefs.get("csobKey")?.takeIf { it.isNotBlank() }
+    /** Key of a certificate request that waits for the certificate from CEB. */
+    fun csobPendingKey(): String? = prefs.get("csobPendingKey")?.takeIf { it.isNotBlank() }
+    /** Certificate issued by CEB (PEM). */
+    fun csobCert(): String? = prefs.get("csobCert")?.takeIf { it.isNotBlank() }
+
+    fun saveCsobPendingKey(key: String) = prefs.put(mapOf("csobPendingKey" to key))
+
+    /** The key and certificate that now work; a waiting request is dropped. The position is reset, the new certificate starts afresh. */
+    fun saveCsobCertificate(key: String, certPem: String) =
+        prefs.put(mapOf("csobKey" to key, "csobCert" to certPem, "csobPendingKey" to ""))
+
+    fun clearCsobCertificate() = prefs.put(mapOf("csobKey" to "", "csobCert" to "", "csobPendingKey" to ""))
+
+    /** Id of this till for Business Connector, made once. */
+    fun csobAppGuid(): String = prefs.get("csobAppGuid")?.takeIf { it.length == 36 }
+        ?: java.util.UUID.randomUUID().toString().also { prefs.put(mapOf("csobAppGuid" to it)) }
+
+    /** QueryTimestamp of the last complete check for a contract; null = not asked yet. */
+    fun csobPosition(contract: String): String? = prefs.get("csobTs_$contract")?.takeIf { it.isNotBlank() }
+
+    fun saveCsobPosition(contract: String, timestamp: String) = prefs.put(mapOf("csobTs_$contract" to timestamp))
 
     private fun nextIn(key: String): Int = int(key, 0) + 1
 

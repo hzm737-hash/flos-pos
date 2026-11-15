@@ -22,6 +22,7 @@ class FlosContainer(
         mapOf(
             "eetCertificate" to eet.hasCertificate(), "eetCertPassword" to s.eetCertPassword.isNotEmpty(),
             "imapPassword" to s.imapPassword.isNotEmpty(), "fioToken" to s.fioToken.isNotEmpty(),
+            "csobCertificate" to (settings.csobCert() != null && settings.csobKey() != null),
         )
     }
 

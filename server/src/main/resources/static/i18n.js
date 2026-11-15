@@ -209,6 +209,8 @@ const EN = {
   'Heslo certifikátu EET': 'EET certificate password',
   'Heslo e-mailu': 'E-mail password',
   'Token Fio banky': 'Fio bank token',
+  'Číslo smlouvy ČSOB CEB (Business Connector)': 'ČSOB CEB contract number (Business Connector)',
+  'Certifikát ČSOB Business Connector': 'ČSOB Business Connector certificate',
   '– zatím nepřišlo z pokladny': '– not received from a till yet',
   'Hesla a tokeny': 'Passwords and tokens',
   'Zůstávají jen v pokladně, tady vidíte jen, jestli jsou nastavené.': 'They stay on the till only; here you only see whether they are set.',
