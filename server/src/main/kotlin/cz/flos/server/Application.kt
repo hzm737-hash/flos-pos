@@ -7,6 +7,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.http.content.staticResources
+import io.ktor.server.plugins.autohead.AutoHeadResponse
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
@@ -37,6 +38,8 @@ val FlosJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitN
 fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List<String> = webOriginsFromEnv()) {
     installHardening()
     val throttle = Throttle()
+    // HEAD requests get the same answer as GET without a body (Google Play checks the privacy page with HEAD).
+    install(AutoHeadResponse)
     install(ContentNegotiation) { json(FlosJson) }
     install(StatusPages) {
         exception<ApiError> { call, e -> call.respond(e.status, ErrorBody(e.message)) }
