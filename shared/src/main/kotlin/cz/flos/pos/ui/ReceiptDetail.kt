@@ -246,7 +246,7 @@ internal fun ReceiptDetailDialog(
     }
 
     if (confirmTransfer) {
-        val due = s.payAmount?.takeIf { s.isForeign } ?: s.received
+        val due = s.payAmount?.takeIf { s.isForeign } ?: s.transferDue
         val cur = if (s.isForeign) "EUR" else "Kč"
         AmountDialog(
             title = tr("Platba za účtenku %s", s.number),

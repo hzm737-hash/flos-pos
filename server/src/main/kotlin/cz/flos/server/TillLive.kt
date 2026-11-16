@@ -3,6 +3,9 @@ package cz.flos.server
 import cz.flos.core.GuestOrder
 import cz.flos.core.MenuData
 import cz.flos.core.ProductOptions
+import cz.flos.core.WebCustomer
+import cz.flos.core.WebOrder
+import cz.flos.core.WebOrders
 import cz.flos.core.backoffice.BoTillSnapshot
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receiveText
@@ -18,6 +21,16 @@ import kotlinx.serialization.Serializable
 /** An order a guest sent from a table's QR code, with the dish names from the published menu. */
 @Serializable data class TableOrderView(val id: Long, val table: String, val status: String, val createdAt: Long, val note: String = "", val lines: List<TableOrderLineView>)
 @Serializable data class TableOrderLineView(val name: String, val qty: Int, val choices: String = "", val note: String = "")
+
+/**
+ * An order from the restaurant's website (delivery, pick-up or a table) and the till's answer: the confirmed
+ * time ([readyAt]) or the refusal, with the staff's message to the customer ([reply]). The customer's name
+ * is gone once the contact details were erased (after 30 days).
+ */
+@Serializable data class WebOrderView(
+    val id: Long, val type: String, val status: String, val createdAt: Long, val readyAt: Long? = null, val reply: String? = null,
+    val customer: String = "", val wish: String = "", val total: Long = 0, val lines: List<String> = emptyList(), val note: String = "", val table: String = "",
+)
 
 /** The till sends what is going on there; nothing in it can be changed from the back office. */
 internal fun Route.deviceSnapshotRoutes(db: Db) {
@@ -55,6 +68,24 @@ internal fun Route.tillLiveRoutes(db: Db) {
             ) {
                 val snap = it.getString(5)?.let { t -> runCatching { FlosJson.decodeFromString(BoTillSnapshot.serializer(), t) }.getOrNull() }
                 TillLiveDevice(it.getLong(1), it.getString(2), it.longOrNull("last_seen_at"), it.longOrNull("received_at"), snap)
+            }
+        })
+    }
+    get("/web-orders") {
+        val c = call.reader(db)
+        val days = (call.request.queryParameters["days"]?.toIntOrNull() ?: 2).coerceIn(1, 31)
+        val from = System.currentTimeMillis() - days * 86_400_000L
+        call.respond(db.tx {
+            query("SELECT id, status, created_at, ready_at, reply, data, customer FROM web_orders WHERE org_id = ? AND created_at > ? ORDER BY id DESC LIMIT 500", c.orgId, from) { r ->
+                val o = runCatching { FlosJson.decodeFromString(WebOrder.serializer(), r.getString(6)) }.getOrNull()
+                val who = r.getString(7)?.let { t -> runCatching { FlosJson.decodeFromString(WebCustomer.serializer(), t) }.getOrNull() }
+                WebOrderView(
+                    r.getLong(1), o?.type.orEmpty(), r.getString(2), r.getLong(3), r.longOrNull("ready_at"), r.getString(5),
+                    who?.let { listOf(it.name, it.phone).filter(String::isNotBlank).joinToString(", ") }.orEmpty(),
+                    o?.let { WebOrders.wishText(it) }.orEmpty(), o?.total ?: 0,
+                    o?.lines.orEmpty().map { l -> "${l.qty}× ${l.number} ${l.name}" + (if (l.half != null) " / ${l.half} ${l.halfName}" else "") },
+                    o?.note.orEmpty(), o?.table.orEmpty(),
+                )
             }
         })
     }

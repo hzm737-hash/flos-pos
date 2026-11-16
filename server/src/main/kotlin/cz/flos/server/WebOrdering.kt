@@ -114,12 +114,13 @@ internal fun Route.webOrderRoutes(db: Db, origins: List<String>) {
         val key = call.request.queryParameters["k"].orEmpty()
         val row = db.tx { webMenu(call.parameters["slug"].orEmpty()) } ?: throw ApiError(HttpStatusCode.NotFound, "Nenalezeno")
         val found = db.tx {
-            queryOne("SELECT token, status, ready_at FROM web_orders WHERE id = ? AND org_id = ?", id, row.orgId) {
-                Triple(it.getString(1), it.getString(2), it.longOrNull("ready_at"))
+            queryOne("SELECT token, status, ready_at, reply FROM web_orders WHERE id = ? AND org_id = ?", id, row.orgId) {
+                Triple(it.getString(1), it.getString(2), it.longOrNull("ready_at")) to it.getString(4)
             }
         }
-        if (found == null || !MessageDigest.isEqual(found.first.toByteArray(), key.toByteArray())) throw ApiError(HttpStatusCode.NotFound, "Nenalezeno")
-        call.respond(WebOrderStatus(if (found.second == "FETCHED") "NEW" else found.second, found.third))
+        if (found == null || !MessageDigest.isEqual(found.first.first.toByteArray(), key.toByteArray())) throw ApiError(HttpStatusCode.NotFound, "Nenalezeno")
+        val (state, reply) = found
+        call.respond(WebOrderStatus(if (state.second == "FETCHED") "NEW" else state.second, state.third, reply?.takeIf { it.isNotBlank() }))
     }
 }
 
@@ -153,9 +154,11 @@ internal fun Route.webOrderDeviceRoutes(db: Db) {
         val at = ack.readyAt?.takeIf { it in nowMs..nowMs + (WebOrders.MAX_DAYS_AHEAD + 1) * 24 * 3_600_000L }
         if (ack.accepted && at == null && ack.readyMinutes !in 1..240) throw ApiError(HttpStatusCode.BadRequest, "Neplatný čas přípravy")
         val readyAt = if (ack.accepted) at ?: (nowMs + ack.readyMinutes * 60_000L) else null
+        // The staff's message for the customer (reason of a refusal, or a note with the accepted order).
+        val reply = WebOrders.cleanReply(ack.message).ifEmpty { null }
         val changed = db.tx {
-            update("UPDATE web_orders SET status = ?, ready_at = ? WHERE id = ? AND org_id = ? AND status IN ('NEW','FETCHED')",
-                if (ack.accepted) "ACCEPTED" else "REJECTED", readyAt, id, d.orgId)
+            update("UPDATE web_orders SET status = ?, ready_at = ?, reply = ? WHERE id = ? AND org_id = ? AND status IN ('NEW','FETCHED')",
+                if (ack.accepted) "ACCEPTED" else "REJECTED", readyAt, reply, id, d.orgId)
         }
         call.respond(Ok(changed > 0))
     }

@@ -926,14 +926,18 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val vs = order?.note?.let { cz.flos.core.WebOrders.variableSymbol(it) } ?: variableSymbolOf(number)
         val epc = if (foreign && rate != null) s.eurIban?.let { epcFor(s, it, cart.total, rate, vs, number) } else null
         if (foreign && epc == null) _messages.tryEmit(tr("Kurz EUR není k dispozici, tisknu českou QR platbu"))
-        val qr = if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
+        // A mixed payment with a QR part: the QR code is for that part only, and the bank waits for that part.
+        val qrPart = if (mixed) parts.filter { it.method == PaymentMethod.QR_TRANSFER }.sumOf { it.amount } else 0L
+        val qr = if (mixed) { if (qrPart > 0) qrFor(qrPart, vs, "${s.businessName} uctenka $number") else null }
+            else if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
+        val transfer = if (mixed) qrPart > 0 else payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER
         val received = if (payment == PaymentMethod.CASH && !mixed) Money.roundToCrowns(cart.total) else cart.total
         val sale = (order ?: SaleEntity(number = number, createdAt = millis, total = cart.total, payment = payment.name)).copy(
             number = number, createdAt = millis, total = cart.total, payment = payment.name, cashGiven = cashGiven,
             cashier = s.cashier, discountPercent = cart.discountPercent,
-            variableSymbol = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) vs else null,
+            variableSymbol = if (transfer) vs else null,
             received = received, status = SaleStatus.PAID.name,
-            bankStatus = if (payment == PaymentMethod.QR_TRANSFER || payment == PaymentMethod.BANK_TRANSFER) TransferStatus.WAITING.name else null,
+            bankStatus = if (transfer) TransferStatus.WAITING.name else null,
             payCurrency = epc?.let { "EUR" }, payAmount = epc?.amount, eurRate = epc?.let { rate },
             tableName = table, customerId = customer?.id ?: order?.customerId,
             paymentParts = if (mixed) cz.flos.core.PaymentPart.format(parts) else null,
@@ -1266,12 +1270,13 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Whether accepting a web order also opens WhatsApp with the confirmation for the customer (kept while the app runs). */
     val webWhatsApp = MutableStateFlow(true)
 
-    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false, readyAt: Long? = null) = viewModelScope.launch {
+    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false, readyAt: Long? = null, reply: String = "") = viewModelScope.launch {
         if (!webTaking.add(w.id)) return@launch
         if (w.order.type == cz.flos.core.WebOrders.TABLE) { try { acceptWebTableOrder(w, readyMinutes) } finally { webTaking.remove(w.id) }; return@launch }
         try {
             val (lines, unmatched) = webOrderCart(w)
-            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes, readyAt) } }
+            val message = cz.flos.core.WebOrders.cleanReply(reply)
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes, readyAt, message) } }
             if (taken.isFailure) {
                 _messages.tryEmit(tr("Objednávku z webu se nepodařilo potvrdit: %s", taken.exceptionOrNull()?.message ?: ""))
                 return@launch
@@ -1279,12 +1284,14 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             _webInbox.update { list -> list.filterNot { it.id == w.id } }
             if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku z webu už vyřídila jiná pokladna.")); return@launch }
             val o = w.order
-            // A pre-order: its day and time; otherwise the clock time in the chosen minutes.
+            // A pre-order: its day and time; a clock time typed for today: that time; otherwise the clock time in the chosen minutes.
             val at = readyAt?.let { java.time.Instant.ofEpochMilli(it).atZone(cz.flos.core.OrderHours.ZONE).toLocalDateTime() }
-            val ready = if (at != null) cz.flos.core.WebOrders.dayText(at.toLocalDate(), o.lang == "en") + " " + at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+            val laterDay = at != null && at.toLocalDate().isAfter(java.time.LocalDate.now(cz.flos.core.OrderHours.ZONE))
+            val ready = if (at != null && laterDay) cz.flos.core.WebOrders.dayText(at.toLocalDate(), o.lang == "en") + " " + at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+                else if (at != null) at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
                 else LocalDateTime.now().plusMinutes(readyMinutes.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
             val kind = if (o.type == cz.flos.core.WebOrders.DELIVERY) tr("Rozvoz") else tr("Osobní odběr")
-            val note = "WEB ${w.id} · $kind · " + (if (at != null) tr("PŘEDOBJEDNÁVKA") + " " else "") + tr("hotovo %s", ready) + " · " + tr(cz.flos.core.WebOrders.paymentText(o.payment))
+            val note = "WEB ${w.id} · $kind · " + (if (laterDay) tr("PŘEDOBJEDNÁVKA") + " " else "") + tr("hotovo %s", ready) + " · " + tr(cz.flos.core.WebOrders.paymentText(o.payment))
             val millis = System.currentTimeMillis()
             // The customer's name, phone and address stay on the open order, so every print shows them.
             val ticket = cz.flos.core.WebOrders.ticketNote(note, o)
@@ -1297,7 +1304,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             val phone = o.customer?.phone.orEmpty()
             if (whatsapp && cz.flos.core.Notify.phoneDigits(phone) != null) {
                 val s = settings.value
-                sendMessage("whatsapp", phone, cz.flos.core.WebOrders.confirmation(w.id, o, ready, s.businessName, s.phone))
+                sendMessage("whatsapp", phone, cz.flos.core.WebOrders.confirmation(w.id, o, ready, s.businessName, s.phone, message))
             }
             _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
                 (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
@@ -1353,9 +1360,18 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     }
 
     /** Declines a web order; the customer's page asks them to call. */
-    fun rejectWebOrder(w: cz.flos.core.WebOrderInbox) = viewModelScope.launch {
-        runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, false) } }
-            .onSuccess { _webInbox.update { list -> list.filterNot { it.id == w.id } } }
+    /** Declines a web order; [reason] is shown to the customer on their order page (and sent on WhatsApp when [whatsapp]). */
+    fun rejectWebOrder(w: cz.flos.core.WebOrderInbox, reason: String = "", whatsapp: Boolean = false) = viewModelScope.launch {
+        val message = cz.flos.core.WebOrders.cleanReply(reason)
+        runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, false, message = message) } }
+            .onSuccess {
+                _webInbox.update { list -> list.filterNot { it.id == w.id } }
+                val phone = w.order.customer?.phone.orEmpty()
+                if (whatsapp && cz.flos.core.Notify.phoneDigits(phone) != null) {
+                    val s = settings.value
+                    sendMessage("whatsapp", phone, cz.flos.core.WebOrders.rejection(w.id, w.order, message, s.businessName, s.phone))
+                }
+            }
             .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
     }
 
@@ -1436,7 +1452,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val created = LocalDateTime.ofInstant(Instant.ofEpochMilli(sw.sale.createdAt), ZoneId.systemDefault())
         val payment = sw.sale.paymentMethod ?: PaymentMethod.CASH
         val foreign = sw.sale.isForeign && payment == PaymentMethod.QR_TRANSFER
-        val qr = if (payment == PaymentMethod.QR_TRANSFER && !foreign) {
+        val qr = if (sw.sale.isMixed) {
+            // A mixed payment's QR code is for its QR part only.
+            sw.sale.qrPart.takeIf { it > 0 }?.let { qrFor(it, sw.sale.variableSymbol, "${s.businessName} uctenka ${sw.sale.number}") }
+        } else if (payment == PaymentMethod.QR_TRANSFER && !foreign) {
             qrFor(sw.sale.total, sw.sale.variableSymbol, "${s.businessName} uctenka ${sw.sale.number}")
         } else null
         val epc = if (foreign) s.eurIban?.let { iban ->

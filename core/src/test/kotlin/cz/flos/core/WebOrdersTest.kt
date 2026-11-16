@@ -155,4 +155,34 @@ class WebOrdersTest {
         assertNull(WebOrders.variableSymbol("QR objednávka (web)"))
         assertNull(WebOrders.variableSymbol("Novákova 5"))
     }
+
+    @Test fun staffTypesAClockTime() {
+        assertEquals(java.time.LocalTime.of(19, 30), WebOrders.parseClock("19:30"))
+        assertEquals(java.time.LocalTime.of(19, 30), WebOrders.parseClock("19.30"))
+        assertEquals(java.time.LocalTime.of(19, 30), WebOrders.parseClock("1930"))
+        assertEquals(java.time.LocalTime.of(9, 5), WebOrders.parseClock(" 9:05 "))
+        assertEquals(java.time.LocalTime.of(18, 0), WebOrders.parseClock("18"))
+        assertNull(WebOrders.parseClock("25:00"))
+        assertNull(WebOrders.parseClock("19:75"))
+        assertNull(WebOrders.parseClock("večer"))
+        assertNull(WebOrders.parseClock(""))
+        val day = java.time.LocalDate.of(2026, 11, 16)
+        val now = day.atTime(18, 0).atZone(OrderHours.ZONE).toInstant().toEpochMilli()
+        assertEquals(now + 90 * 60_000L, WebOrders.readyAtFor("19:30", day, now))
+        assertNull(WebOrders.readyAtFor("17:30", day, now))
+        assertNull(WebOrders.readyAtFor("19:30", day.plusDays(30), now))
+        assertEquals(now + 24 * 3_600_000L + 30 * 60_000L, WebOrders.readyAtFor("18:30", day.plusDays(1), now))
+    }
+
+    @Test fun messageForTheCustomer() {
+        assertEquals("Tento čas nevyhovuje.", WebOrders.cleanReply("  Tento čas\n\tnevyhovuje.  "))
+        assertEquals(WebOrders.MAX_REPLY, WebOrders.cleanReply("x".repeat(500)).length)
+        val no = WebOrders.rejection(12, order, "Na tuto adresu bohužel nerozvážíme.", "Pizza Fresca", "722 272 252")
+        assert(no.contains("WEB 12") && no.contains("nemůžeme přijmout") && no.contains("nerozvážíme") && no.contains("722 272 252")) { no }
+        assert(WebOrders.rejection(12, order.copy(lang = "en"), "", "PF", "").contains("cannot accept"))
+        val yes = WebOrders.confirmation(12, order, "19:45", "Pizza Fresca", "", "Přijedeme o chvíli později.")
+        assert(yes.contains("Přijedeme o chvíli později. Děkujeme!")) { yes }
+        assertEquals(WebOrders.confirmation(12, order, "19:45", "PF", ""), WebOrders.confirmation(12, order, "19:45", "PF", "", ""))
+        WebOrders.REJECT_REASONS.forEach { (cs, en) -> assert(cs.length <= WebOrders.MAX_REPLY && en.length <= WebOrders.MAX_REPLY) }
+    }
 }
