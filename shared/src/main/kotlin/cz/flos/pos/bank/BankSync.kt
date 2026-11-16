@@ -206,7 +206,7 @@ class BankSync(
 
     private fun SaleEntity.expected() =
         if (isForeign) ExpectedPayment(id, variableSymbol, payAmount!!, bankPaid, payCurrency!!, eurRate)
-        else ExpectedPayment(id, variableSymbol, received, bankPaid)
+        else ExpectedPayment(id, variableSymbol, transferDue, bankPaid)
 
     private fun IncomingPayment.toEntity() = BankPaymentEntity(
         sourceId = sourceId, readAt = System.currentTimeMillis(), bookedAt = at, amount = amount, variableSymbol = variableSymbol,

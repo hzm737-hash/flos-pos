@@ -121,6 +121,10 @@ data class SaleEntity(
 ) {
     val parts: List<cz.flos.core.PaymentPart> get() = cz.flos.core.PaymentPart.parse(paymentParts)
     val isMixed: Boolean get() = parts.size > 1
+    /** QR payment share of a mixed payment (0 when there is none). */
+    val qrPart: Long get() = if (isMixed) parts.filter { it.method == PaymentMethod.QR_TRANSFER }.sumOf { it.amount } else 0
+    /** What should arrive on the bank account for this receipt: the QR part of a mixed payment, else the whole amount. */
+    val transferDue: Long get() = if (isMixed) qrPart else received
     val isRefund: Boolean get() = refundOf != null
     val isForeign: Boolean get() = payCurrency != null && payCurrency != "CZK" && payAmount != null && eurRate != null
     /** Converts an amount in [payCurrency] to haléře. */
@@ -132,7 +136,7 @@ data class SaleEntity(
     val transferMissing: Long get() = when {
         !awaitsTransfer -> 0
         isForeign -> toCzk((payAmount!! - bankPaid).coerceAtLeast(0))
-        else -> (received - bankPaid).coerceAtLeast(0)
+        else -> (transferDue - bankPaid).coerceAtLeast(0)
     }
     val paymentMethod: PaymentMethod? get() = PaymentMethod.entries.firstOrNull { it.name == payment }
     val saleStatus: SaleStatus get() = SaleStatus.entries.firstOrNull { it.name == status } ?: SaleStatus.PAID

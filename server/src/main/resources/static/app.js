@@ -629,7 +629,8 @@ const BOOKING = { BOOKED: 'rezervováno', SEATED: 'usazeni', NO_SHOW: 'nepřišl
 const TABLE_ORDER = { NEW: 'čeká', FETCHED: 'na pokladně', ACCEPTED: 'přijato', REJECTED: 'odmítnuto' };
 const day = (d) => (d == null ? '–' : new Date(d * 86400000).toLocaleDateString(LOCALE));
 const LIVE_TABS = [['orders', 'Otevřené stoly'], ['cash', 'Hotovost a směny'], ['customers', 'Zákazníci'], ['reservations', 'Rezervace'],
-  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů']];
+  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů'], ['web', 'Objednávky z webu']];
+const WEB_KIND = { DELIVERY: 'Rozvoz', PICKUP: 'Osobní odběr', TABLE: 'Stůl' };
 
 function liveTab(tab, s) {
   const none = '<p class="muted">Nic tu není.</p>';
@@ -672,6 +673,23 @@ async function tableOrdersHtml() {
       <td>${esc(o.note)}</td><td>${TABLE_ORDER[o.status] || esc(o.status)}</td></tr>`).join('')}</table>`;
 }
 
+// Orders from the restaurant's website and the till's answer: the confirmed time, or the reason of a refusal.
+async function webOrdersHtml() {
+  const list = await api('/web-orders?days=2');
+  if (!list.length) return '<p class="muted">Za poslední dva dny žádné objednávky z webu.</p>';
+  const tm = (ms) => new Date(ms).toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+  const answer = (o) => {
+    if (o.status === 'ACCEPTED') return `<span class="badge ok">přijato</span>${o.readyAt ? ` <b>${new Date(o.readyAt).toDateString() === new Date().toDateString() ? tm(o.readyAt) : dt(o.readyAt)}</b>` : ''}`;
+    if (o.status === 'REJECTED') return '<span class="badge warn">odmítnuto</span>';
+    return TABLE_ORDER[o.status] || esc(o.status);
+  };
+  return `<table><tr><th>Číslo</th><th>Čas</th><th>Druh</th><th>Zákazník</th><th>Přání</th><th>Položky</th><th class="num">Celkem</th><th>Odpověď</th><th>Zpráva zákazníkovi</th></tr>
+    ${list.map((o) => `<tr><td>WEB ${o.id}</td><td>${dt(o.createdAt)}</td><td>${WEB_KIND[o.type] || esc(o.type)}${o.table ? ' ' + esc(o.table) : ''}</td>
+      <td>${esc(o.customer)}</td><td>${o.type === 'TABLE' ? '' : esc(o.wish)}</td>
+      <td>${o.lines.map(esc).join('<br>')}${o.note ? `<br><i>${esc(o.note)}</i>` : ''}</td><td class="num">${o.total ? o.total + ' Kč' : ''}</td>
+      <td>${answer(o)}</td><td>${esc(o.reply || '')}</td></tr>`).join('')}</table>`;
+}
+
 pages.live = async (main) => {
   const devices = await api('/till-live');
   const withData = devices.filter((d) => d.snapshot);
@@ -686,6 +704,7 @@ pages.live = async (main) => {
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('primary', b.dataset.tab === tab));
     const box = $('#live');
     if (tab === 'qr') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await tableOrdersHtml(); return; }
+    if (tab === 'web') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await webOrdersHtml(); return; }
     const d = devices.find((x) => String(x.id) === dev);
     if (!d || !d.snapshot) { box.innerHTML = '<p class="muted">Tato pokladna zatím nic neposlala. Zapněte na ní Pokročilé nastavení → Přehled pokladny v back office.</p>'; return; }
     box.innerHTML = `<p class="muted">Stav z ${dt(d.snapshot.takenAt)}</p>` + liveTab(tab, d.snapshot);

@@ -64,11 +64,18 @@ import kotlinx.serialization.Serializable
 /** A waiting web order as the back office hands it to a till. */
 @Serializable data class WebOrderInbox(val id: Long, val order: WebOrder, val createdAt: Long = 0)
 @Serializable data class WebOrderList(val orders: List<WebOrderInbox> = emptyList())
-/** The till's answer; a pre-order for a later day is confirmed with [readyAt] (epoch millis) instead of minutes. */
-@Serializable data class WebOrderAck(val accepted: Boolean, val readyMinutes: Int = 0, val readyAt: Long? = null)
+/**
+ * The till's answer; a pre-order for a later day, or any clock time the staff typed in, is confirmed with
+ * [readyAt] (epoch millis) instead of minutes. [message] is the staff's text for the customer: a note with
+ * the accepted order, or the reason for a refusal ("" = none).
+ */
+@Serializable data class WebOrderAck(val accepted: Boolean, val readyMinutes: Int = 0, val readyAt: Long? = null, val message: String = "")
 @Serializable data class WebOrderAccepted(val id: Long, val token: String)
-/** For the customer's page: NEW, ACCEPTED or REJECTED, and when it will be ready (epoch ms). */
-@Serializable data class WebOrderStatus(val status: String, val readyAt: Long? = null)
+/**
+ * For the customer's page: NEW, ACCEPTED or REJECTED, when it will be ready (epoch ms) and the restaurant's
+ * message to the customer (the reason of a refusal, or a note with the accepted order), or null.
+ */
+@Serializable data class WebOrderStatus(val status: String, val readyAt: Long? = null, val message: String? = null)
 
 object WebOrders {
     const val DELIVERY = "DELIVERY"
@@ -237,11 +244,45 @@ object WebOrders {
         return (h * 60 + m - nowMinute).takeIf { it in 1..240 }
     }
 
+    /** Longest message the staff can send the customer with the answer. */
+    const val MAX_REPLY = 300
+
+    /** The staff's message for the customer: one paragraph of plain text, at most [MAX_REPLY] characters. */
+    fun cleanReply(text: String): String =
+        text.replace(Regex("""[\u0000-\u001F\u007F]+"""), " ").replace(Regex(" {2,}"), " ").trim().take(MAX_REPLY).trim()
+
+    /** Ready-made reasons for refusing an order, in Czech and English (picked by the order's language). */
+    val REJECT_REASONS: List<Pair<String, String>> = listOf(
+        "Tento čas nám bohužel nevyhovuje. Zvolte prosím jiný čas." to "Sorry, this time does not suit us. Please choose another time.",
+        "Teď máme bohužel plno a objednávku nestihneme." to "Sorry, we are fully booked right now and cannot make your order in time.",
+        "Na tuto adresu bohužel nerozvážíme." to "Sorry, we do not deliver to this address.",
+        "Některé položky už dnes nemáme. Zavolejte nám prosím." to "Some items are sold out today. Please give us a call.",
+    )
+
+    /** Reads a clock time the staff typed: "19:30", "19.30", "1930", "9:05" or "19" (= 19:00); null when it is not a time. */
+    fun parseClock(text: String): java.time.LocalTime? {
+        val t = text.trim().replace('.', ':').replace(',', ':').replace(' ', ':')
+        val m = Regex("""^(\d{1,2})(?::?(\d{2}))?$""").matchEntire(t) ?: return null
+        val h = m.groupValues[1].toInt()
+        val min = m.groupValues[2].ifEmpty { "0" }.toInt()
+        return if (h in 0..23 && min in 0..59) java.time.LocalTime.of(h, min) else null
+    }
+
+    /**
+     * The moment for a clock time the staff typed, on [day] (Prague time), or null when it cannot be read,
+     * is not after [now], or is further away than [MAX_DAYS_AHEAD] days.
+     */
+    fun readyAtFor(text: String, day: java.time.LocalDate, now: Long = System.currentTimeMillis()): Long? {
+        val t = parseClock(text) ?: return null
+        val at = day.atTime(t).atZone(OrderHours.ZONE).toInstant().toEpochMilli()
+        return at.takeIf { it > now && it <= now + (MAX_DAYS_AHEAD + 1) * 24 * 3_600_000L }
+    }
+
     /**
      * The confirmation the restaurant sends to the customer (WhatsApp), in the customer's language:
-     * order number, delivery or pick-up, the confirmed time and the payment.
+     * order number, delivery or pick-up, the confirmed time and the payment, and the staff's [reply] when set.
      */
-    fun confirmation(id: Long, o: WebOrder, readyAt: String, shop: String, shopPhone: String): String {
+    fun confirmation(id: Long, o: WebOrder, readyAt: String, shop: String, shopPhone: String, reply: String = ""): String {
         val name = o.customer?.name?.trim().orEmpty()
         val delivery = o.type == DELIVERY
         val en = o.lang == "en"
@@ -249,12 +290,28 @@ object WebOrders {
             append(if (name.isEmpty()) "Hello" else "Hello $name").append(", we confirm your order no. WEB ").append(id).append(". ")
             append(if (delivery) "We will deliver it at about $readyAt" else "It will be ready for pick-up at $readyAt").append(". ")
             append("Payment ").append(paymentText(o.payment, true)).append(" on receipt. ")
+            if (reply.isNotBlank()) append(reply.trim()).append(' ')
             append("Thank you! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
         }.trim() else buildString {
             append(if (name.isEmpty()) "Dobrý den" else "Dobrý den $name").append(", potvrzujeme Vaši objednávku č. WEB ").append(id).append(". ")
             append(if (delivery) "Doručíme ji přibližně v $readyAt" else "Bude připravena k vyzvednutí v $readyAt").append(". ")
             append("Platba ").append(paymentText(o.payment)).append(" při převzetí. ")
+            if (reply.isNotBlank()) append(reply.trim()).append(' ')
             append("Děkujeme! ").append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
+        }.trim()
+    }
+
+    /** The message the restaurant sends when it cannot take the order (WhatsApp), with the [reason], in the customer's language. */
+    fun rejection(id: Long, o: WebOrder, reason: String, shop: String, shopPhone: String): String {
+        val name = o.customer?.name?.trim().orEmpty()
+        return if (o.lang == "en") buildString {
+            append(if (name.isEmpty()) "Hello" else "Hello $name").append(", unfortunately we cannot accept your order no. WEB ").append(id).append(". ")
+            if (reason.isNotBlank()) append(reason.trim()).append(' ')
+            append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
+        }.trim() else buildString {
+            append(if (name.isEmpty()) "Dobrý den" else "Dobrý den $name").append(", Vaši objednávku č. WEB ").append(id).append(" bohužel nemůžeme přijmout. ")
+            if (reason.isNotBlank()) append(reason.trim()).append(' ')
+            append(shop).append(if (shopPhone.isNotBlank()) ", tel. $shopPhone" else "")
         }.trim()
     }
 

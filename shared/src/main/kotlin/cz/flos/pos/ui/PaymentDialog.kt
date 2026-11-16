@@ -64,12 +64,19 @@ fun PaymentDialog(
     var voucherPart by remember { mutableStateOf("") }
     val cardHaler = Money.parse(cardPart) ?: 0L
     val voucherHaler = Money.parse(voucherPart) ?: 0L
-    val cashPart = total - cardHaler - voucherHaler
+    // The rest of a mixed payment is paid in cash (as before) or, when chosen, by QR payment; then the cash is typed in.
+    var restByQr by remember { mutableStateOf(false) }
+    var cashFixedText by remember { mutableStateOf("") }
+    val cashFixed = Money.parse(cashFixedText) ?: 0L
+    val qrPart = if (restByQr) total - cardHaler - voucherHaler - cashFixed else 0L
+    val cashPart = if (restByQr) cashFixed else total - cardHaler - voucherHaler
     val mixedParts = listOf(
         cz.flos.core.PaymentPart(PaymentMethod.MEAL_VOUCHER, voucherHaler),
         cz.flos.core.PaymentPart(PaymentMethod.CARD, cardHaler),
+        cz.flos.core.PaymentPart(PaymentMethod.QR_TRANSFER, qrPart),
         cz.flos.core.PaymentPart(PaymentMethod.CASH, cashPart),
     ).filter { it.amount > 0 }
+    val mixedQr = remember(qrPart, orderNote) { if (restByQr && qrPart > 0) vm.preparePaymentQr(qrPart, orderNote) else null }
     var given by remember { mutableStateOf("") }
     val qr = remember(total, orderNote) { vm.preparePaymentQr(total, orderNote) }
     LaunchedEffect(Unit) { vm.setForeignTransfer(false) }
@@ -90,14 +97,39 @@ fun PaymentDialog(
                     if (onMixed != null && "MIXED" !in s.hiddenPaymentSet) FilterChip(selected = mixed, onClick = { mixed = true }, label = { Text(tr("Kombinovaná")) })
                 }
                 if (mixed) {
-                    Hint(tr("Zadejte, kolik zákazník platí stravenkami a kartou. Zbytek zaplatí hotově."))
+                    // QR payment needs the account number (Settings); without it the rest is cash as before.
+                    if (s.iban != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(tr("Zbytek doplatí:"))
+                        FilterChip(selected = !restByQr, onClick = { restByQr = false }, label = { Text(tr("Hotově")) })
+                        FilterChip(selected = restByQr, onClick = { restByQr = true }, label = { Text(tr("QR platbou")) },
+                            leadingIcon = { Icon(PaymentMethod.QR_TRANSFER.icon, null) })
+                    }
+                    if (restByQr) Hint(tr("Zadejte, kolik zákazník platí stravenkami, kartou a hotově. Zbytek zaplatí QR platbou."))
+                    else Hint(tr("Zadejte, kolik zákazník platí stravenkami a kartou. Zbytek zaplatí hotově."))
                     OutlinedTextField(voucherPart, { voucherPart = it }, label = { Text(tr("Stravenky (Kč)")) }, singleLine = true,
                         isError = voucherPart.isNotBlank() && Money.parse(voucherPart) == null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(cardPart, { cardPart = it }, label = { Text(tr("Kartou (Kč)")) }, singleLine = true,
                         isError = cardPart.isNotBlank() && Money.parse(cardPart) == null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                    Text(if (cashPart >= 0) tr("Hotově: %s", Money.format(cashPart)) else tr("Zadáno víc, než je k úhradě: %s", Money.format(-cashPart)),
+                    if (restByQr) {
+                        OutlinedTextField(cashFixedText, { cashFixedText = it }, label = { Text(tr("Hotově (Kč)")) }, singleLine = true,
+                            isError = cashFixedText.isNotBlank() && Money.parse(cashFixedText) == null,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                        Text(if (qrPart >= 0) tr("QR platbou: %s", Money.format(qrPart)) else tr("Zadáno víc, než je k úhradě: %s", Money.format(-qrPart)),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                            color = if (qrPart >= 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
+                        mixedQr?.let { q ->
+                            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                DisposableEffect(q) { vm.showOnDisplay(q); onDispose { vm.showOnDisplay(null) } }
+                                QrImage(q)
+                                Spacer(Modifier.height(8.dp))
+                                Text(Money.format(qrPart), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                Text(tr("Zákazník naskenuje kód v bankovní aplikaci."), style = MaterialTheme.typography.bodySmall)
+                                q.variableSymbol?.let { Text("VS: $it", style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
+                    } else Text(if (cashPart >= 0) tr("Hotově: %s", Money.format(cashPart)) else tr("Zadáno víc, než je k úhradě: %s", Money.format(-cashPart)),
                         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                         color = if (cashPart >= 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
                     if (cashPart > 0) {
@@ -211,7 +243,8 @@ fun PaymentDialog(
         },
         confirmButton = {
             if (mixed) {
-                val ok = cashPart >= 0 && mixedParts.size >= 2 && (givenHaler == null || cashPart <= 0 || givenHaler >= cashPart)
+                val ok = cashPart >= 0 && qrPart >= 0 && (!restByQr || s.iban != null) && mixedParts.size >= 2 &&
+                    (givenHaler == null || cashPart <= 0 || givenHaler >= cashPart)
                 Button(enabled = ok, onClick = { onMixed?.invoke(mixedParts, givenHaler.takeIf { cashPart > 0 }) }, modifier = Modifier.padding(start = 8.dp)) {
                     Text(tr("Dokončit"))
                 }
