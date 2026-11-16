@@ -83,6 +83,20 @@ fun WebOrderDialog(vm: PosViewModel) {
     val whatsapp by vm.webWhatsApp.collectAsState()
     val settingsNow by vm.settings.collectAsState()
     fun clock(m: Int) = now.plusMinutes(m.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+    // Another time typed by the staff ("Jiný čas"), on the order's day; and an optional message for the customer.
+    var custom by remember(w.id) { mutableStateOf(false) }
+    var customText by remember(w.id) { mutableStateOf("") }
+    var reply by remember(w.id) { mutableStateOf("") }
+    val orderDay = preDay ?: java.time.LocalDate.now(cz.flos.core.OrderHours.ZONE)
+    val customAt = if (custom) cz.flos.core.WebOrders.readyAtFor(customText, orderDay) else null
+    // Declining: a second step where the staff writes the reason the customer sees.
+    var rejecting by remember(w.id) { mutableStateOf(false) }
+    if (rejecting) {
+        WebOrderRejectDialog(w, canWhatsApp, whatsapp, onWhatsApp = { vm.webWhatsApp.value = it }, onBack = { rejecting = false }) { reason, wa ->
+            vm.rejectWebOrder(w, reason, wa)
+        }
+        return
+    }
     AlertDialog(
         onDismissRequest = {},
         title = { Text(if (atTable) tr("Nová objednávka ze stolu %s", o.table) + " (web)" else tr("Objednávka z webu: %s", if (delivery) tr("Rozvoz") else tr("Osobní odběr"))) },
@@ -106,10 +120,31 @@ fun WebOrderDialog(vm: PosViewModel) {
                 if (preAt == null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     choices.forEach { m ->
                         val label = if (m == wish) tr("%s (přání zákazníka)", clock(m)) else tr("%d min · %s", m, clock(m))
-                        FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text(label) })
+                        FilterChip(selected = !custom && minutes == m, onClick = { minutes = m; custom = false }, label = { Text(label) })
                     }
+                    if (!atTable) FilterChip(selected = custom, onClick = { custom = true }, label = { Text(tr("Jiný čas")) })
                 }
-                if (preAt == null && wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
+                // A pre-order is confirmed for the customer's time, or for another time on that day.
+                if (preAt != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = !custom, onClick = { custom = false }, label = { Text(tr("%s (přání zákazníka)", o.time)) })
+                    FilterChip(selected = custom, onClick = { custom = true }, label = { Text(tr("Jiný čas")) })
+                }
+                if (custom) {
+                    OutlinedTextField(customText, { customText = it.take(5) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        label = { Text(tr("Čas, kdy bude hotovo (např. 19:30 nebo 1930)")) },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        isError = customText.isNotBlank() && customAt == null)
+                    if (customText.isNotBlank() && customAt == null) Text(tr("Zadejte čas, který ještě nebyl, např. 19:30."), color = MaterialTheme.colorScheme.error)
+                    val t = cz.flos.core.WebOrders.parseClock(customText)
+                    if (customAt != null && t != null) Text(
+                        if (o.time.isNotBlank()) tr("Zákazník uvidí nový čas %s místo %s.", t.format(java.time.format.DateTimeFormatter.ofPattern("H:mm")), o.time)
+                        else tr("Zákazník uvidí čas %s.", t.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))),
+                        color = MaterialTheme.colorScheme.error)
+                }
+                if (preAt == null && !custom && wish != null && minutes != wish) Text(tr("Zákazník uvidí nový čas %s místo %s.", clock(minutes), o.time), color = MaterialTheme.colorScheme.error)
+                if (!atTable) OutlinedTextField(reply, { reply = it.take(cz.flos.core.WebOrders.MAX_REPLY) }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text(tr("Zpráva pro zákazníka (nepovinné)")) }, maxLines = 3,
+                    placeholder = { Text(tr("Např. Rozvoz bude o 15 minut později, děkujeme za pochopení.")) })
                 if (!atTable) Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = settingsNow.webOrderPrint, onCheckedChange = { v -> vm.updateSettings { it.copy(webOrderPrint = v) } })
                     Text(tr("Vytisknout objednávku hned"))
@@ -121,13 +156,64 @@ fun WebOrderDialog(vm: PosViewModel) {
                 if (inbox.size > 1) Text(tr("Čeká dalších objednávek: %d", inbox.size - 1), style = MaterialTheme.typography.labelMedium)
             }
         },
-        confirmButton = { Button(onClick = { run {
-            if (preAt != null) { vm.acceptWebOrder(w, 0, canWhatsApp && whatsapp, preAt); return@run }
+        confirmButton = { Button(enabled = !custom || customAt != null, onClick = { run {
+            if (custom) {
+                // The typed time, checked again at the moment of the tap.
+                val at = cz.flos.core.WebOrders.readyAtFor(customText, orderDay) ?: return@run
+                vm.acceptWebOrder(w, 0, canWhatsApp && whatsapp, at, reply); return@run
+            }
+            if (preAt != null) { vm.acceptWebOrder(w, 0, canWhatsApp && whatsapp, preAt, reply); return@run }
             // Minutes counted again from the moment of the tap, so the chosen clock time stays exact.
             val secs = java.time.Duration.between(java.time.LocalTime.now(), now.plusMinutes(minutes.toLong())).seconds
-            vm.acceptWebOrder(w, ((secs + 59) / 60).toInt().coerceIn(1, 240), canWhatsApp && whatsapp)
-        } }) { Text(if (preDay != null) tr("Přijmout na %s %s", cz.flos.core.WebOrders.dayText(preDay), o.time) else tr("Přijmout")) } },
-        dismissButton = { TextButton(onClick = { vm.rejectWebOrder(w) }) { Text(tr("Odmítnout")) } },
+            vm.acceptWebOrder(w, ((secs + 59) / 60).toInt().coerceIn(1, 240), canWhatsApp && whatsapp, reply = reply)
+        } }) {
+            val t = cz.flos.core.WebOrders.parseClock(customText)?.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+            Text(when {
+                custom && customAt != null && preDay != null -> tr("Přijmout na %s %s", cz.flos.core.WebOrders.dayText(preDay), t ?: "")
+                custom && customAt != null -> tr("Přijmout na %s", t ?: "")
+                preDay != null && !custom -> tr("Přijmout na %s %s", cz.flos.core.WebOrders.dayText(preDay), o.time)
+                else -> tr("Přijmout")
+            })
+        } },
+        dismissButton = { TextButton(onClick = { rejecting = true }) { Text(tr("Odmítnout")) } },
+    )
+}
+
+/**
+ * Declining a web order: the reason the customer sees on their order page (and on WhatsApp when ticked).
+ * Ready-made reasons fill the text in the customer's language; the staff can change it or write their own.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun WebOrderRejectDialog(
+    w: cz.flos.core.WebOrderInbox, canWhatsApp: Boolean, whatsapp: Boolean, onWhatsApp: (Boolean) -> Unit,
+    onBack: () -> Unit, onReject: (String, Boolean) -> Unit,
+) {
+    val en = w.order.lang == "en"
+    var reason by remember(w.id) { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(tr("Odmítnout objednávku WEB %d", w.id)) },
+        text = {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(tr("Důvod pro zákazníka (uvidí ho na webu u objednávky):"), style = MaterialTheme.typography.labelLarge)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    cz.flos.core.WebOrders.REJECT_REASONS.forEach { (cs, english) ->
+                        val text = if (en) english else cs
+                        FilterChip(selected = reason == text, onClick = { reason = text }, label = { Text(text) })
+                    }
+                }
+                if (en) Text(tr("Zákazník objednával v angličtině, nabídnuté důvody jsou anglicky."), style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(reason, { reason = it.take(cz.flos.core.WebOrders.MAX_REPLY) }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 4,
+                    label = { Text(tr("Důvod odmítnutí")) })
+                if (canWhatsApp) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = whatsapp, onCheckedChange = onWhatsApp)
+                    Text(tr("Poslat zákazníkovi zprávu i přes WhatsApp"))
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onReject(reason, canWhatsApp && whatsapp) }) { Text(tr("Odmítnout objednávku")) } },
+        dismissButton = { TextButton(onClick = onBack) { Text(tr("Zpět")) } },
     )
 }
 

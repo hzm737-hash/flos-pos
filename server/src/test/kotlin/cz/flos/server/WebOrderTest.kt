@@ -37,6 +37,8 @@ import org.junit.Test
 class WebOrderTest {
     private val site = "https://pizzafresca.cz"
     private lateinit var db: Db
+    /** The owner's token from the last [setUp], for the web admin. */
+    private var owner = ""
 
     private fun run(block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
         GuestThrottle.clear()
@@ -55,6 +57,7 @@ class WebOrderTest {
     /** Owner, a paired till and a published menu; returns the till's token and the menu slug. */
     private suspend fun HttpClient.setUp(webOrdering: Boolean = true, ordering: Boolean = false): Pair<String, String> {
         val token = postJson("/api/v1/auth/register", RegisterRequest("Pizza Fresca", "Hazem", "majitel@flos.cz", "tajneheslo1")).body<TokenResponse>().token
+        owner = token
         val branch = get("/api/v1/branches") { bearerAuth(token) }.body<List<BranchDto>>().single()
         val device = postJson("/api/v1/devices", DeviceDto(branchId = branch.id, name = "P1"), token).body<DeviceDto>()
         val dt = postJson("/api/v1/device/pair", PairRequest(device.pairingCode!!)).body<PairResponse>().token
@@ -105,6 +108,42 @@ class WebOrderTest {
         assertEquals("ACCEPTED", status.status)
         assertNotNull(status.readyAt)
         assertTrue(status.readyAt!! > System.currentTimeMillis() + 29 * 60_000)
+    }
+
+    @Test fun tillAnswersWithAReasonOrAnotherTime() = run { client ->
+        val (dt, slug) = client.setUp()
+        // Declined with a reason: the customer's page shows it.
+        val a = client.postJson("/menu/$slug/web-order", order, origin = site).body<WebOrderAccepted>()
+        assertTrue(client.postJson("/api/v1/device/web-orders/${a.id}/ack", WebOrderAck(false, message = "  Tento čas nám\nnevyhovuje.  "), dt).body<Ok>().ok)
+        val no = client.get("/menu/$slug/web-order/${a.id}?k=${a.token}").body<WebOrderStatus>()
+        assertEquals("REJECTED", no.status)
+        assertEquals("Tento čas nám nevyhovuje.", no.message)
+        assertNull(no.readyAt)
+
+        // Accepted for a clock time the staff typed (more than 4 hours away is fine), with a note.
+        val b = client.postJson("/menu/$slug/web-order", order.copy(customer = order.customer!!.copy(phone = "777 000 111")), origin = site).body<WebOrderAccepted>()
+        val at = System.currentTimeMillis() + 5 * 3_600_000L
+        assertTrue(client.postJson("/api/v1/device/web-orders/${b.id}/ack", WebOrderAck(true, readyAt = at, message = "Dříve to nestihneme."), dt).body<Ok>().ok)
+        val yes = client.get("/menu/$slug/web-order/${b.id}?k=${b.token}").body<WebOrderStatus>()
+        assertEquals("ACCEPTED", yes.status)
+        assertEquals(at, yes.readyAt)
+        assertEquals("Dříve to nestihneme.", yes.message)
+
+        // Without a message (older tills): no message at all.
+        val c = client.postJson("/menu/$slug/web-order", order.copy(customer = order.customer!!.copy(phone = "777 000 222")), origin = site).body<WebOrderAccepted>()
+        assertTrue(client.postJson("/api/v1/device/web-orders/${c.id}/ack", WebOrderAck(true, 20), dt).body<Ok>().ok)
+        assertNull(client.get("/menu/$slug/web-order/${c.id}?k=${c.token}").body<WebOrderStatus>().message)
+
+        // The web admin lists the orders with the answer.
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/web-orders").status)
+        val list = client.get("/api/v1/web-orders") { bearerAuth(owner) }.body<List<WebOrderView>>()
+        assertEquals(listOf(c.id, b.id, a.id), list.map { it.id })
+        assertEquals("REJECTED", list[2].status)
+        assertEquals("Tento čas nám nevyhovuje.", list[2].reply)
+        assertEquals(at, list[1].readyAt)
+        assertEquals("Jan Novák, 777 123 456", list[2].customer)
+        assertEquals("19:30", list[2].wish)
+        assertEquals(listOf("2× 10 Diavola / 1 Margherita"), list[2].lines)
     }
 
     /** Exactly what the Pizza Fresca website's order.js sends. */
