@@ -27,6 +27,7 @@ import cz.flos.pos.data.SaleEntity
 import cz.flos.pos.data.SaleItemEntity
 import cz.flos.pos.data.SaleStatus
 import cz.flos.pos.data.SaleWithItems
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -184,6 +185,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { if (catalog.productCount() == 0) seedDemoData() }
+
         // Checks the bank every minute and syncs with the back office every five minutes (settings every minute) while the till is open.
         viewModelScope.launch {
             var minute = 0
@@ -197,11 +199,21 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 delay(60_000)
             }
         }
-        // Orders from the tables: every 10 seconds while QR ordering is switched on.
+        // Orders from the tables and from the website: every 10 seconds while switched on.
         viewModelScope.launch {
+            var round = 0
             while (true) {
                 val s = settings.value
+                // From the second round on (the first one runs while the till is still being set up).
+                if (round > 0 && s.paired && (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))) {
+                    syncOrderControl(pull = round % 6 == 1)
+                    sendOpenTables(force = round % 30 == 1)
+                }
+                round++
                 if (s.paired && s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING)) pollTableOrders()
+                // Orders from the tables on the restaurant's own website come the same way as web orders.
+                if (s.paired && (s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING) ||
+                        (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) && s.tableMenuUrl.isNotBlank()))) pollWebOrders()
                 delay(10_000)
             }
         }
@@ -321,6 +333,67 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         _messages.tryEmit(text)
     }
 
+    // ---- ČSOB Business Connector certificate (kept only on this till) ----
+
+    /** What the settings screen shows about the ČSOB certificate. */
+    data class CsobCertInfo(val name: String?, val validUntil: java.util.Date?, val pending: Boolean)
+
+    private fun readCsobInfo(): CsobCertInfo {
+        val cert = flos.settings.csobCert()?.let { pem ->
+            runCatching { cz.flos.core.bank.CsobCertificate.certificates(pem.toByteArray(Charsets.ISO_8859_1)).firstOrNull() }.getOrNull()
+        }
+        val name = cert?.subjectX500Principal?.name?.split(',')?.firstOrNull { it.trim().startsWith("CN=") }?.substringAfter("CN=")
+        return CsobCertInfo(name ?: cert?.let { "?" }, cert?.notAfter, flos.settings.csobPendingKey() != null)
+    }
+
+    private val _csob = MutableStateFlow(readCsobInfo())
+    val csobCert: StateFlow<CsobCertInfo> = _csob.asStateFlow()
+
+    /** Creates a new key on this till and a certificate request for CEB; [onReady] gets the .csr file text. */
+    fun csobNewRequest(onReady: (String) -> Unit) = viewModelScope.launch {
+        _busy.value = tr("Vytvářím žádost o certifikát…")
+        try {
+            val name = "Flos " + java.text.Normalizer.normalize(settings.value.boDeviceName.ifBlank { settings.value.businessName }, java.text.Normalizer.Form.NFD)
+                .replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().take(40)
+            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cz.flos.core.bank.CsobCertificate.newRequest(name) }
+            flos.settings.saveCsobPendingKey(r.privateKeyPkcs8)
+            _csob.value = readCsobInfo()
+            onReady(r.csrPem)
+        } catch (e: Exception) {
+            _messages.tryEmit(tr("Žádost se nepodařilo vytvořit: %s", e.message ?: e.javaClass.simpleName))
+        } finally { _busy.value = null }
+    }
+
+    /** The certificate downloaded from CEB (.crt/.cer), or a .p12/.pfx with its key when [password] is given. */
+    fun csobImportCertificate(bytes: ByteArray, password: String? = null) = viewModelScope.launch {
+        val store = flos.settings
+        runCatching {
+            if (password != null) {
+                val (key, pem) = cz.flos.core.bank.CsobCertificate.fromPkcs12(bytes, password)
+                store.saveCsobCertificate(key, pem)
+            } else {
+                // The certificate belongs to the waiting request, or (downloaded again) to the key in use.
+                val keys = listOfNotNull(store.csobPendingKey(), store.csobKey())
+                if (keys.isEmpty()) throw IllegalArgumentException(tr("Nejdřív vytvořte žádost o certifikát"))
+                var lastError: Exception? = null
+                val found = keys.firstNotNullOfOrNull { k ->
+                    try {
+                        k to cz.flos.core.bank.CsobCertificate.matching(cz.flos.core.bank.CsobCertificate.privateKey(k), bytes)
+                    } catch (e: Exception) { lastError = e; null }
+                } ?: throw lastError ?: IllegalArgumentException()
+                store.saveCsobCertificate(found.first, cz.flos.core.bank.CsobCertificate.certPem(found.second))
+            }
+        }.onSuccess {
+            _csob.value = readCsobInfo()
+            _messages.tryEmit(tr("Certifikát ČSOB nahrán"))
+        }.onFailure { _messages.tryEmit(it.message ?: tr("Certifikát se nepodařilo nahrát")) }
+    }
+
+    fun csobRemoveCertificate() {
+        flos.settings.clearCsobCertificate()
+        _csob.value = readCsobInfo()
+    }
+
     /** Tips and revenue of the current month, for the tax-free tips limit (7 % of monthly catering revenue). */
     suspend fun monthTips(month: java.time.YearMonth = java.time.YearMonth.now()): Pair<Long, Long> {
         val zone = ZoneId.systemDefault()
@@ -385,6 +458,37 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         // one consistent file even if a sale is saved meanwhile (the -wal file is still copied too).
         runCatching { flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } } }
         cz.flos.pos.backup.FlosBackup.create(platform.dataDir, flos.settings.exportAll())
+    }
+
+    // ---- Clearing test data (Pokročilé nastavení) ----
+    /** How much was sold and recorded on this till, shown before clearing it. */
+    suspend fun testDataCounts(): cz.flos.pos.data.TestDataCounts = withContext(Dispatchers.IO) { flos.database.testReset().counts() }
+
+    /**
+     * Deletes the receipts, orders, shifts and payments made while trying the till out, here and in the back office,
+     * keeping products, customers and all settings. Refused while a receipt is recorded for real in EET.
+     * Returns null when done, or why nothing was deleted.
+     */
+    suspend fun resetTestData(documents: Boolean, reservations: Boolean, points: Boolean, restartNumbers: Boolean): String? = withContext(Dispatchers.IO) {
+        if (!can(cz.flos.core.Permission.SETTINGS)) return@withContext tr("Nemáte oprávnění: %s.", tr(cz.flos.core.Permission.SETTINGS.label))
+        val dao = flos.database.testReset()
+        val real = dao.realEetCount()
+        if (real > 0) return@withContext tr("Nelze smazat: %d účtenek je skutečně evidováno v EET. Evidované tržby musí zůstat.", real)
+        // A copy of the database as it was, next to it, just in case (not part of later backups).
+        runCatching {
+            flos.database.useWriterConnection { c -> c.usePrepared("PRAGMA wal_checkpoint(FULL)") { it.step() } }
+            val file = cz.flos.pos.backup.FlosBackup.databaseFile(platform.dataDir)
+            if (file.isFile) file.copyTo(java.io.File(file.path + ".before-test-reset"), overwrite = true)
+        }
+        val done = runCatching {
+            flos.backOffice.resetTestData {
+                dao.clear(documents, reservations, points)
+                if (restartNumbers) flos.settings.restartNumbering()
+            }
+        }
+        done.exceptionOrNull()?.let { return@withContext tr("Back office neodpověděl, nic nebylo smazáno: %s", it.message ?: "") }
+        clearCart()
+        null
     }
 
     /** Checks a backup and leaves it to be restored at the next start; returns why not, or null when ready. */
@@ -703,10 +807,10 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
      * QR code to show on screen before the customer pays. It uses the number the receipt is
      * about to get, so the variable symbol matches the printed receipt.
      */
-    fun preparePaymentQr(amount: Long = _cart.value.total): QrPlatba? {
+    fun preparePaymentQr(amount: Long = _cart.value.total, orderNote: String? = null): QrPlatba? {
         val s = settings.value
         val number = flos.settings.peekReceiptNumber(LocalDate.now().year)
-        return qrFor(amount, variableSymbolOf(number), "${s.businessName} uctenka $number")
+        return qrFor(amount, orderNote?.let { cz.flos.core.WebOrders.variableSymbol(it) } ?: variableSymbolOf(number), "${s.businessName} uctenka $number")
     }
 
     private fun nowMillis(now: LocalDateTime) = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -818,7 +922,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val now = LocalDateTime.now()
         val millis = nowMillis(now)
         val number = flos.settings.nextReceiptNumber(now.year)
-        val vs = variableSymbolOf(number)
+        // A web order keeps the variable symbol of the QR payment printed on its ticket (its WEB number).
+        val vs = order?.note?.let { cz.flos.core.WebOrders.variableSymbol(it) } ?: variableSymbolOf(number)
         val epc = if (foreign && rate != null) s.eurIban?.let { epcFor(s, it, cart.total, rate, vs, number) } else null
         if (foreign && epc == null) _messages.tryEmit(tr("Kurz EUR není k dispozici, tisknu českou QR platbu"))
         val qr = if (payment == PaymentMethod.QR_TRANSFER && epc == null) qrFor(cart.total, vs, "${s.businessName} uctenka $number") else null
@@ -834,6 +939,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             paymentParts = if (mixed) cz.flos.core.PaymentPart.format(parts) else null,
             cashPart = if (mixed) parts.filter { it.method == PaymentMethod.CASH }.sumOf { it.amount } else 0,
             serviceType = service,
+            // A paid web order keeps no customer's name, phone or address on the till; the receipt still prints them.
+            note = cz.flos.core.WebOrders.withoutCustomer(order?.note.orEmpty()),
         )
         // The sale and its EET record are stored before anything is sent or printed.
         val saleId = if (order == null) salesDao.insert(sale, itemsOf(cart)) else { salesDao.replace(sale, itemsOf(cart)); sale.id }
@@ -848,7 +955,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             service,
             table?.let { tr("Stůl %s", it) },
             buyer?.let { "Zákazník: ${it.name}" + if (earned > 0) ", body +$earned (celkem ${it.points + earned})" else "" },
-            sale.note.takeIf { it.isNotBlank() },
+            (order?.note ?: sale.note).takeIf { it.isNotBlank() },
         ).joinToString(" · ")
         val receipt = Receipt(number, now, s.cashier, cart, payment, cashGiven, qr, eet = sent?.let(::eetInfo), note = note,
             epc = epc, eurRate = epc?.let { rate }, parts = if (mixed) parts else emptyList())
@@ -913,12 +1020,81 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private fun printOrder(sale: SaleEntity, cart: Cart) {
         val s = settings.value
         val opened = LocalDateTime.ofInstant(Instant.ofEpochMilli(sale.openedAt ?: sale.createdAt), ZoneId.systemDefault())
-        val doc = Receipt((sale.orderNumber ?: 0).toString(), opened, sale.cashier, cart, PaymentMethod.CARD, note = sale.note,
+        // A delivery / pick-up web order: a QR payment for the amount, so the customer can pay on receipt.
+        val webVs = if (s.webOrderQr && cart.total > 0) cz.flos.core.WebOrders.variableSymbol(sale.note) else null
+        val qr = webVs?.let { runCatching { qrFor(cart.total, it, "${s.businessName} objednavka WEB $it") }.getOrNull() }
+        val doc = Receipt((sale.orderNumber ?: 0).toString(), opened, sale.cashier, cart, PaymentMethod.CARD, qr = qr, note = sale.note,
             kind = DocumentKind.ORDER)
         printBlocks(ReceiptLayout(s.paperWidth.chars).layout(s.business, doc), tr("Objednávka vytištěna"))
     }
 
     fun reprintOrder(sw: SaleWithItems) = printOrder(sw.sale, sw.toCart())
+
+    // ---- Ringing for new orders and when orders are taken (ordering hours, "stop orders") ----
+    private val _ringing = MutableStateFlow(false)
+    /** True while the loud ring for a new order sounds; the screens show a button to stop it. */
+    val ringing: StateFlow<Boolean> = _ringing.asStateFlow()
+
+    /** A new order arrived: the loud ring until someone stops it, or one short beep (as before). */
+    private fun newOrderRing() {
+        val s = settings.value
+        if (!s.orderAlarm) { platform.beep(); return }
+        _ringing.value = true
+        platform.startAlarm(s.orderAlarmSound, s.orderAlarmVolume) { _ringing.value = false }
+    }
+
+    fun stopRinging() {
+        _ringing.value = false
+        platform.stopAlarm()
+    }
+
+    fun testRing() = settings.value.let { platform.testAlarm(it.orderAlarmSound, it.orderAlarmVolume) }
+
+    /** Ordering hours or "stop orders" changed here and not yet saved in the back office. */
+    @Volatile private var orderControlDirty = false
+    private val orderControlMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Changes the ordering hours or "stop orders" and saves them in the back office right away, which then
+     * turns away orders accordingly. Unreadable hours are not saved (the message says which day).
+     */
+    fun setOrderControl(transform: (cz.flos.core.OrderControl) -> cz.flos.core.OrderControl) {
+        val next = transform(settings.value.orderControl)
+        val week = listOf(next.qrHours, next.webHours).firstNotNullOfOrNull { cz.flos.core.OrderHours.problem(it) }
+        updateSettings { it.withOrderControl(next) }
+        if (week != null) { _messages.tryEmit(tr(week)); return }
+        orderControlDirty = true
+        viewModelScope.launch { syncOrderControl(pull = false, report = true) }
+    }
+
+    /** Sends a change made here, or (with [pull]) takes the one made on another till. */
+    private suspend fun syncOrderControl(pull: Boolean, report: Boolean = false) {
+        if (!settings.value.paired) return
+        orderControlMutex.lock()
+        try {
+            if (orderControlDirty) {
+                val c = settings.value.orderControl
+                if (listOf(c.qrHours, c.webHours).any { cz.flos.core.OrderHours.problem(it) != null }) return
+                runCatching { withContext(Dispatchers.IO) { boClient().setOrderControl(c) } }
+                    .onSuccess { if (settings.value.orderControl == c) orderControlDirty = false }
+                    .onFailure { if (report) _messages.tryEmit(tr("Nepodařilo se uložit do back office, zkusím to znovu: %s", it.message ?: "")) }
+            } else if (pull) {
+                val remote = runCatching { withContext(Dispatchers.IO) { boClient().orderControl() } }.getOrNull() ?: return
+                if (!orderControlDirty && remote != settings.value.orderControl) updateSettings { it.withOrderControl(remote) }
+            }
+        } finally { orderControlMutex.unlock() }
+    }
+
+    private var sentOpenTables: List<String>? = null
+
+    /** Tables with an open bill here, so their guests may still order after hours (only when that is used). */
+    private suspend fun sendOpenTables(force: Boolean) {
+        val s = settings.value
+        if (!s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || !s.qrHoursOn || !s.openTablesAfterHours) return
+        val tables = openOrders.value.mapNotNull { it.sale.tableName?.trim()?.takeIf { t -> t.isNotEmpty() } }.distinct().sorted()
+        if (!force && tables == sentOpenTables) return
+        runCatching { withContext(Dispatchers.IO) { boClient().sendOpenTables(tables) } }.onSuccess { sentOpenTables = tables }
+    }
 
     // ---- Orders from the tables (QR code on the table, Pokročilé nastavení → Objednávky z QR) ----
     private val _qrInbox = MutableStateFlow<List<cz.flos.core.TableOrder>>(emptyList())
@@ -941,7 +1117,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val orders = runCatching { withContext(Dispatchers.IO) { boClient(s).tableOrders() } }.getOrNull() ?: return
         val fresh = orders.filter { qrSeen.add(it.id) }
         if (fresh.isEmpty()) return
-        platform.beep()
+        newOrderRing()
         if (s.qrOrderApprove) _qrInbox.update { it + fresh }
         else fresh.forEach { acceptTableOrder(it).join() }
     }
@@ -1023,6 +1199,166 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
     }
 
+    // ---- Orders from the website: delivery and pick-up (Pokročilé nastavení → Objednávky z webu) ----
+    private val _webInbox = MutableStateFlow<List<cz.flos.core.WebOrderInbox>>(emptyList())
+    /** Web orders waiting for the staff to accept (with a ready time) or decline. */
+    val webInbox: StateFlow<List<cz.flos.core.WebOrderInbox>> = _webInbox.asStateFlow()
+    private val webSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    init {
+        // The ring stops once every waiting order from the tables and the website is answered.
+        viewModelScope.launch {
+            var before = 0
+            kotlinx.coroutines.flow.combine(_qrInbox, _webInbox) { a, b -> a.size + b.size }.collect { n ->
+                if (before > 0 && n == 0) stopRinging()
+                before = n
+            }
+        }
+    }
+    private val webTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    /** Fetches new web orders; the staff always confirm them, because the customer waits for a time. */
+    private suspend fun pollWebOrders() {
+        val orders = runCatching { withContext(Dispatchers.IO) { boClient().webOrders() } }.getOrNull() ?: return
+        val fresh = orders.filter { webSeen.add(it.id) }
+        if (fresh.isEmpty()) return
+        newOrderRing()
+        _webInbox.update { it + fresh }
+    }
+
+    /**
+     * The web order as cart lines priced by this till: pizzas matched to products by number or name
+     * (see [cz.flos.core.WebOrders.match]), half & half and extras by the restaurant's rule, and the
+     * delivery fee. Lines without a matching product keep the website's price; their names are returned.
+     */
+    fun webOrderCart(w: cz.flos.core.WebOrderInbox): Pair<Cart, List<String>> {
+        val o = w.order
+        val prods = products.value.filter { it.active && !it.openPrice }
+        fun find(n: Int, name: String) = cz.flos.core.WebOrders.match(n, name, prods) { cz.flos.core.WebOrders.Candidate(it.id, it.name, it.barcode) }
+        var cart = Cart()
+        val unmatched = mutableListOf<String>()
+        var vat: VatRate? = null
+        for (l in o.lines) {
+            val a = find(l.number, l.name)
+            val b = l.half?.let { find(it, l.halfName) }
+            val name = cz.flos.core.WebOrders.lineName(l, a?.name ?: l.name, b?.name ?: l.halfName)
+            if (a != null && (l.half == null || b != null)) {
+                val unit = cz.flos.core.WebOrders.unitPrice(a.price, b?.price, l.extras)
+                cart = cart.add(a.id, name, unit, a.vatRate, l.qty.toDouble())
+                if (vat == null) vat = a.vatRate
+            } else {
+                unmatched += if (l.half != null) "${l.name} / ${l.halfName}" else l.name
+                cart = cart.add(MANUAL_ITEM_ID, name, l.unitPrice * 100, a?.vatRate ?: VatRate.fromPercent(12), l.qty.toDouble())
+            }
+        }
+        if (o.type == cz.flos.core.WebOrders.DELIVERY && o.deliveryFee > 0) {
+            cart = cart.add(MANUAL_ITEM_ID, tr("Rozvoz"), o.deliveryFee * 100, vat ?: VatRate.fromPercent(12), 1.0)
+        }
+        return cart to unmatched
+    }
+
+    /**
+     * Accepts a web order: tells the back office first (the customer's page shows the ready time and no
+     * other till takes it), then saves it as an open order and prints the ticket with the customer's
+     * details. The details stay on the open order (every print shows them) and are removed from the
+     * stored sale when it is paid (see the privacy policy).
+     */
+    /** Whether accepting a web order also opens WhatsApp with the confirmation for the customer (kept while the app runs). */
+    val webWhatsApp = MutableStateFlow(true)
+
+    fun acceptWebOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int, whatsapp: Boolean = false, readyAt: Long? = null) = viewModelScope.launch {
+        if (!webTaking.add(w.id)) return@launch
+        if (w.order.type == cz.flos.core.WebOrders.TABLE) { try { acceptWebTableOrder(w, readyMinutes) } finally { webTaking.remove(w.id) }; return@launch }
+        try {
+            val (lines, unmatched) = webOrderCart(w)
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes, readyAt) } }
+            if (taken.isFailure) {
+                _messages.tryEmit(tr("Objednávku z webu se nepodařilo potvrdit: %s", taken.exceptionOrNull()?.message ?: ""))
+                return@launch
+            }
+            _webInbox.update { list -> list.filterNot { it.id == w.id } }
+            if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku z webu už vyřídila jiná pokladna.")); return@launch }
+            val o = w.order
+            // A pre-order: its day and time; otherwise the clock time in the chosen minutes.
+            val at = readyAt?.let { java.time.Instant.ofEpochMilli(it).atZone(cz.flos.core.OrderHours.ZONE).toLocalDateTime() }
+            val ready = if (at != null) cz.flos.core.WebOrders.dayText(at.toLocalDate(), o.lang == "en") + " " + at.format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+                else LocalDateTime.now().plusMinutes(readyMinutes.toLong()).format(java.time.format.DateTimeFormatter.ofPattern("H:mm"))
+            val kind = if (o.type == cz.flos.core.WebOrders.DELIVERY) tr("Rozvoz") else tr("Osobní odběr")
+            val note = "WEB ${w.id} · $kind · " + (if (at != null) tr("PŘEDOBJEDNÁVKA") + " " else "") + tr("hotovo %s", ready) + " · " + tr(cz.flos.core.WebOrders.paymentText(o.payment))
+            val millis = System.currentTimeMillis()
+            // The customer's name, phone and address stay on the open order, so every print shows them.
+            val ticket = cz.flos.core.WebOrders.ticketNote(note, o)
+            val sale = SaleEntity(
+                number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                orderNumber = flos.settings.nextOrderNumber(), note = ticket,
+            ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            // The confirmation goes from the shop's own WhatsApp; the cashier only presses Send.
+            val phone = o.customer?.phone.orEmpty()
+            if (whatsapp && cz.flos.core.Notify.phoneDigits(phone) != null) {
+                val s = settings.value
+                sendMessage("whatsapp", phone, cz.flos.core.WebOrders.confirmation(w.id, o, ready, s.businessName, s.phone))
+            }
+            _messages.tryEmit(tr("Objednávka z webu přijata, hotovo v %s", ready) +
+                (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
+            // The ticket carries the name, phone and address for the kitchen and the driver; it can be
+            // printed later from Objednávky when printing at once is switched off.
+            if (settings.value.webOrderPrint) printOrder(sale, lines)
+        } finally { webTaking.remove(w.id) }
+    }
+
+    /**
+     * A guest's order from a table on the restaurant's website: tells the back office first, then adds the
+     * dishes to the table's open bill (or opens one), like an order from the Flos QR menu, and prints the
+     * kitchen ticket when that is switched on.
+     */
+    private suspend fun acceptWebTableOrder(w: cz.flos.core.WebOrderInbox, readyMinutes: Int) = qrMutex.withLock {
+        val o = w.order
+        val table = o.table
+        val existing = openOrders.value.firstOrNull { it.sale.tableName == table }
+        val (lines, unmatched) = webOrderCart(w)
+        val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, true, readyMinutes) } }
+        if (taken.isFailure) {
+            _messages.tryEmit(tr("Objednávku ze stolu %s se nepodařilo potvrdit: %s", table, taken.exceptionOrNull()?.message ?: ""))
+            return@withLock
+        }
+        _webInbox.update { list -> list.filterNot { it.id == w.id } }
+        if (taken.getOrNull() != true) { _messages.tryEmit(tr("Objednávku ze stolu %s už vyřídila jiná pokladna.", table)); return@withLock }
+        val note = listOf(tr("QR objednávka") + " (web)", o.note.trim()).filter { it.isNotEmpty() }.joinToString(": ")
+        val sale = withContext(Dispatchers.IO) {
+            if (existing != null) {
+                var cart = existing.toCart()
+                lines.items.forEach { cart = cart.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) }
+                val joinedNote = listOf(existing.sale.note, o.note.trim()).filter { it.isNotBlank() }.joinToString(" · ")
+                val updated = existing.sale.copy(total = cart.total, received = cart.total, kitchenReadyAt = null, note = joinedNote)
+                salesDao.replace(updated, itemsOf(cart))
+                updated
+            } else {
+                val millis = System.currentTimeMillis()
+                SaleEntity(
+                    number = "O-$millis", createdAt = millis, openedAt = millis, total = lines.total, received = lines.total,
+                    payment = "", cashier = settings.value.cashier, status = SaleStatus.OPEN.name,
+                    orderNumber = flos.settings.nextOrderNumber(), note = note, tableName = table,
+                ).let { it.copy(id = salesDao.insert(it, itemsOf(lines))) }
+            }
+        }
+        // The same bill is open in the cart: show the new dishes there too, so saving it keeps them.
+        if (existing != null && _editingOrder.value?.id == existing.sale.id) {
+            _cart.update { c -> lines.items.fold(c) { acc, it -> acc.add(it.productId, it.name, it.unitPrice, it.vatRate, it.quantity, it.discountPercent) } }
+            _editingOrder.value = sale
+        }
+        _messages.tryEmit(tr("Objednávka ze stolu %s přijata", table) +
+            (if (unmatched.isNotEmpty()) " " + tr("(cena z webu: %s)", unmatched.joinToString(", ")) else ""))
+        if (settings.value.qrOrderPrint) printOrder(sale.copy(note = "WEB ${w.id} · " + tr("Stůl %s", table) + (if (o.note.isNotBlank()) "\n" + o.note.trim() else "")), lines)
+    }
+
+    /** Declines a web order; the customer's page asks them to call. */
+    fun rejectWebOrder(w: cz.flos.core.WebOrderInbox) = viewModelScope.launch {
+        runCatching { withContext(Dispatchers.IO) { boClient().ackWebOrder(w.id, false) } }
+            .onSuccess { _webInbox.update { list -> list.filterNot { it.id == w.id } } }
+            .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
+    }
+
     /** Loads the QR code link of every table from the back office (the menu must be published). */
     fun loadTableLinks() = viewModelScope.launch {
         val s = settings.value
@@ -1033,12 +1369,27 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
     }
 
+    /** The address in a table's QR code: the Flos menu, or the restaurant's own website when it is set (tableMenuUrl). */
+    fun tableQrLink(l: cz.flos.core.TableLink): String = cz.flos.core.TableOrders.websiteLink(settings.value.tableMenuUrl, l.path)
+
     /** Prints a QR code for every table on the receipt printer, to stand on the tables. */
     fun printTableQrs() {
         val links = _tableLinks.value
         if (links.isEmpty()) return
         val name = settings.value.businessName
-        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, it.path, tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+        printBlocks(links.flatMap { cz.flos.core.MenuPage.poster(name, tableQrLink(it), tr("Objednejte zde"), it.table) }, tr("QR kódy stolů vytištěny"))
+    }
+
+    /** Prints the QR code of one table (long press on the table): loads its signed link from the back office first. */
+    fun printTableQr(table: String) = viewModelScope.launch {
+        val s = settings.value
+        if (!s.paired) { _messages.tryEmit(tr("Nejdřív spárujte pokladnu s back office.")); return@launch }
+        runCatching { withContext(Dispatchers.IO) { boClient(s).tableLinks(listOf(table)) } }
+            .onSuccess { links ->
+                val l = links.firstOrNull() ?: return@onSuccess
+                printBlocks(cz.flos.core.MenuPage.poster(s.businessName, tableQrLink(l), tr("Objednejte zde"), l.table), tr("QR kód stolu %s vytištěn", l.table))
+            }
+            .onFailure { _messages.tryEmit(tr("Odkazy stolů se nepodařilo načíst: %s", it.message ?: "")) }
     }
 
     /** Loads an open order into the cart so items can be added or removed. */
@@ -1306,7 +1657,7 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     private fun printBlocks(blocks: List<ReceiptBlock>, okMessage: String, drawer: Boolean = false) {
         val s = settings.value
         viewModelScope.launch {
-            val bytes = EscPosEncoder(s.paperWidth, s.charset).encode(blocks, openDrawer = drawer)
+            val bytes = EscPosEncoder(s.paperWidth, s.charset, nativeQr = s.printerNativeQr).encode(blocks, openDrawer = drawer)
             runCatching { printer.print(s, bytes) }
                 .onSuccess { _messages.tryEmit(okMessage) }
                 .onFailure { _messages.tryEmit(tr("Tisk se nezdařil: %s", it.message)) }
@@ -1717,7 +2068,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
         val cats = categories.value.map { c -> cz.flos.core.MenuCategory(c.name, byCat[c.id].orEmpty().map { it.menuItem() }) } +
             listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
         return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
-            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING))
+            s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING),
+            webOrdering = s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))
     }
 
     private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {

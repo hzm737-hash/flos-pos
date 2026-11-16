@@ -2,9 +2,6 @@ package cz.flos.pos
 
 import androidx.compose.ui.graphics.asImageBitmap
 import android.Manifest
-import android.app.Activity
-import cz.flos.pos.billing.PlayDonations
-import java.lang.ref.WeakReference
 import android.content.Context
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,14 +17,6 @@ import java.io.File
 
 class AndroidPlatform(private val context: Context) : Platform {
     private val bluetooth = BluetoothPrinter(context)
-    private val donations = PlayDonations(context)
-
-    /** The visible screen, needed to show Google Play's payment sheet. Set by [MainActivity]. */
-    var activity: WeakReference<Activity>? = null
-
-    override suspend fun donationOptions(): List<DonationOption> = donations.options()
-
-    override fun donate(option: DonationOption, onDone: (Boolean) -> Unit) = donations.donate(activity?.get(), option, onDone)
 
     override val dataDir: File get() = context.filesDir
     override val printerTypes = listOf(PrinterType.BLUETOOTH, PrinterType.NETWORK)
@@ -46,7 +35,7 @@ class AndroidPlatform(private val context: Context) : Platform {
     override fun localPrinters(type: PrinterType): List<PrinterDevice> =
         bluetooth.pairedDevices().map { PrinterDevice(it.name, it.address) }
 
-    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray) = bluetooth.print(address, data)
+    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int) = bluetooth.print(address, data, speed)
 
     override fun scheduleEetRetry() = EetRetryWorker.scheduleSoon(context)
 
@@ -93,6 +82,27 @@ class AndroidPlatform(private val context: Context) : Platform {
         }
     }
 
+    override fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) {
+        cz.flos.pos.orders.OrderAlarm.onStoppedOutside = onStoppedOutside
+        cz.flos.pos.orders.OrderAlarm.start(context, sound, volume)
+    }
+
+    override val canWatchInBackground: Boolean get() = true
+
+    override fun stopAlarm() { cz.flos.pos.orders.OrderAlarm.stop(context) }
+
+    override fun testAlarm(sound: String, volume: Int) = cz.flos.pos.orders.OrderAlarm.test(context, sound, volume)
+
+    @Composable
+    override fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit {
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { onDone() }
+        return {
+            if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) runCatching { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }.onFailure { onDone() }
+            else onDone()
+        }
+    }
+
     private val packageInfo by lazy { runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull() }
 
     override val appVersionCode: Int get() = packageInfo?.let {
@@ -117,25 +127,14 @@ class AndroidPlatform(private val context: Context) : Platform {
 
     @Composable
     override fun rememberPrinterPermission(onGranted: () -> Unit): () -> Unit {
-        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) onGranted() else openBluetoothPermissionSettings()
+        // Both "Nearby devices" permissions in one prompt; the printer is usable as soon as "connect" is allowed.
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            if (result[Manifest.permission.BLUETOOTH_CONNECT] == true || bluetooth.hasPermission()) onGranted()
         }
         return {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) launcher.launch(Manifest.permission.BLUETOOTH_CONNECT) else onGranted()
-        }
-    }
-
-    /**
-     * Once "Nearby devices" (Bluetooth) was refused, Android stops asking, so printing would silently do
-     * nothing. Explain it and open Flos's own settings page, where the permission can be allowed.
-     */
-    private fun openBluetoothPermissionSettings() {
-        android.widget.Toast.makeText(context, tr("Pro tisk přes Bluetooth povolte oprávnění „Zařízení v okolí“ v nastavení aplikace."), android.widget.Toast.LENGTH_LONG).show()
-        runCatching {
-            context.startActivity(
-                android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.fromParts("package", context.packageName, null))
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !bluetooth.hasPermission()) {
+                launcher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
+            } else onGranted()
         }
     }
 }

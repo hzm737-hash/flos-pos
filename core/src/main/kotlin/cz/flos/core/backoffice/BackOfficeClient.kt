@@ -114,6 +114,9 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
         request("POST", "/device/sales", json.encodeToString(SalesUpload.serializer(), SalesUpload(sales)), BoUploadResult.serializer())
 
     /** Clocks a staff member in or out with their PIN (attendance). */
+    /** Deletes this till's receipts, clock-ins and live picture in the back office, and the company's web and table orders. */
+    fun resetTestData(): BoTestDataReset = request("POST", "/device/test-data/reset", "{}", BoTestDataReset.serializer())
+
     fun clock(pin: String): BoClock = request("POST", "/device/clock", json.encodeToString(ClockRequest.serializer(), ClockRequest(pin)), BoClock.serializer())
 
     /** Publishes the digital menu; returns its public address (e.g. https://flos.gnocco.cz/menu/ab12cd34ef). */
@@ -135,6 +138,30 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
      */
     fun ackTableOrder(id: Long, accepted: Boolean): Boolean =
         request("POST", "/device/table-orders/$id/ack", json.encodeToString(cz.flos.core.TableOrderAck.serializer(), cz.flos.core.TableOrderAck(accepted)), BoOk.serializer()).ok
+
+    /** Delivery and pick-up orders from the restaurant's website that no till has answered yet. */
+    fun webOrders(): List<cz.flos.core.WebOrderInbox> =
+        request("GET", "/device/web-orders", null, cz.flos.core.WebOrderList.serializer()).orders
+
+    /**
+     * Accepts a web order with the minutes until it is ready, or declines it. False when another till
+     * already answered it, so it must not be taken twice.
+     */
+    fun ackWebOrder(id: Long, accepted: Boolean, readyMinutes: Int = 0, readyAt: Long? = null): Boolean =
+        request("POST", "/device/web-orders/$id/ack", json.encodeToString(cz.flos.core.WebOrderAck.serializer(), cz.flos.core.WebOrderAck(accepted, readyMinutes, readyAt)), BoOk.serializer()).ok
+
+    /** The company's ordering hours and "stop orders" switch, as the back office keeps them. */
+    fun orderControl(): cz.flos.core.OrderControl =
+        request("GET", "/device/order-control", null, cz.flos.core.OrderControl.serializer())
+
+    /** Saves the ordering hours and "stop orders"; the back office turns away orders accordingly. */
+    fun setOrderControl(c: cz.flos.core.OrderControl): cz.flos.core.OrderControl =
+        request("PUT", "/device/order-control", json.encodeToString(cz.flos.core.OrderControl.serializer(), c), cz.flos.core.OrderControl.serializer())
+
+    /** Tables with an open bill on this till, so their guests may still order after hours. */
+    fun sendOpenTables(tables: List<String>) {
+        request("PUT", "/device/open-tables", json.encodeToString(cz.flos.core.OpenTables.serializer(), cz.flos.core.OpenTables(tables)), BoOk.serializer())
+    }
 
     private fun <T> request(method: String, path: String, body: String?, serializer: KSerializer<T>, auth: Boolean = true): T {
         val conn = URI(api + path).toURL().openConnection() as HttpURLConnection

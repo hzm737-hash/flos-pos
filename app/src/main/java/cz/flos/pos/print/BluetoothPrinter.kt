@@ -27,25 +27,31 @@ class BluetoothPrinter(private val context: Context) {
     private val mutex = Mutex()
     private val adapter get() = context.getSystemService(BluetoothManager::class.java)?.adapter
 
+    private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    /** Connecting to a paired printer; enough to list and use it. */
+    private fun canConnect(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || granted(Manifest.permission.BLUETOOTH_CONNECT)
+
+    /** Both "Nearby devices" permissions (Android 12+), so nothing in the Bluetooth stack is refused while printing. */
     fun hasPermission(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S || (canConnect() && granted(Manifest.permission.BLUETOOTH_SCAN))
 
     fun isBluetoothOn(): Boolean = adapter?.isEnabled == true
 
     @SuppressLint("MissingPermission")
     fun pairedDevices(): List<PairedPrinter> {
-        if (!hasPermission()) return emptyList()
+        if (!canConnect()) return emptyList()
         return adapter?.bondedDevices.orEmpty()
             .map { PairedPrinter(it.name ?: it.address, it.address) }
             .sortedBy { it.name }
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun print(address: String, data: ByteArray) = mutex.withLock {
+    /** [speed] 1–3 multiplies the sending rate (shorter pauses between chunks). */
+    suspend fun print(address: String, data: ByteArray, speed: Int = 1) = mutex.withLock {
         withContext(Dispatchers.IO) {
             if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
-            if (!hasPermission()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
+            if (!canConnect()) throw IOException(tr("Aplikace nemá oprávnění k Bluetooth."))
             val bt = adapter ?: throw IOException(tr("Zařízení nemá Bluetooth."))
             if (!bt.isEnabled) throw IOException(tr("Bluetooth je vypnutý."))
             val device = bt.getRemoteDevice(address)
@@ -57,16 +63,24 @@ class BluetoothPrinter(private val context: Context) {
             if (mayCancelDiscovery) runCatching { if (bt.isDiscovering) bt.cancelDiscovery() }
             val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
             try {
-                socket.connect()
+                try {
+                    socket.connect()
+                } catch (e: SecurityException) {
+                    // Some Android versions stop discovery inside connect(), which needs the scan permission.
+                    throw IOException(tr("Povolte aplikaci Flos „Zařízení v okolí“: Nastavení → Zkušební tisk, nebo v Androidu Aplikace → Flos → Oprávnění."), e)
+                }
                 val out = socket.outputStream
-                // Small chunks with short pauses keep cheap printers from dropping data.
+                // Some printers lose the first bytes sent right after the link opens.
+                delay(200)
+                // Small chunks with pauses: the printer prints slower than Bluetooth sends, and a cheap printer
+                // whose buffer overflows drops bytes, so a QR code turns into rows of random characters.
                 var offset = 0
                 while (offset < data.size) {
                     val len = minOf(CHUNK, data.size - offset)
                     out.write(data, offset, len)
                     out.flush()
                     offset += len
-                    delay(15)
+                    delay(PAUSE_MS / speed.coerceIn(1, 3))
                 }
                 // Give the printer time to empty its buffer before the link closes.
                 delay(400)
@@ -78,6 +92,8 @@ class BluetoothPrinter(private val context: Context) {
 
     companion object {
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-        private const val CHUNK = 512
+        private const val CHUNK = 192
+        /** About 6 KB a second at normal speed, below what a 58 or 80 mm thermal printer prints; ×2 and ×3 shorten the pause. */
+        private const val PAUSE_MS = 30L
     }
 }

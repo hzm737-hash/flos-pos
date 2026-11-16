@@ -8,9 +8,6 @@ import java.io.File
 /** A printer the operating system knows about: a paired Bluetooth printer, a COM port or a Windows printer. */
 data class PrinterDevice(val name: String, val address: String)
 
-/** A voluntary donation amount offered under "Podpořit Flos" (a Google Play in-app product on Android). */
-data class DonationOption(val id: String, val title: String, val price: String)
-
 /**
  * Everything that differs between Android and Windows. The shared till code only talks to
  * this interface; app/ (Android) and desktop/ (Windows) each provide one implementation.
@@ -34,7 +31,8 @@ interface Platform {
     fun localPrinters(type: PrinterType): List<PrinterDevice>
 
     /** Sends raw ESC/POS bytes to a local printer chosen from [localPrinters]. */
-    suspend fun printLocal(type: PrinterType, address: String, data: ByteArray)
+    /** [speed] multiplies the safe sending rate of Bluetooth / COM printers (1 = normal). */
+    suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int = 1)
 
     /** Asks for an early retry of EET sending after a failure. */
     fun scheduleEetRetry()
@@ -60,6 +58,26 @@ interface Platform {
     /** A short sound when something new arrives (an order from a table); silent where not supported. */
     fun beep() {}
 
+    /**
+     * A loud ring for a new order that repeats until [stopAlarm] is called. [sound] is ALARM, RINGTONE or
+     * BEEP; [volume] is 10–100 % of the alarm volume,
+     * whatever the device's volume is. [onStoppedOutside] is called when someone stops it outside
+     * the app (the button on the notification). Where not supported: one [beep].
+     */
+    fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) { beep() }
+
+    fun stopAlarm() {}
+
+    /** Android: the till can keep fetching orders and ringing with the screen off (a foreground service). */
+    val canWatchInBackground: Boolean get() = false
+
+    /** Sounds the chosen ring for a few seconds, so it can be tried in the settings. */
+    fun testAlarm(sound: String, volume: Int) { beep() }
+
+    /** Returns a function that asks to show notifications (Android 13+), then calls [onDone] either way. */
+    @Composable
+    fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit
+
     /** A product photo (JPEG, PNG or WebP) as an image for the screen; null where it cannot be read. */
     fun decodeImage(bytes: ByteArray): androidx.compose.ui.graphics.ImageBitmap? = null
 
@@ -69,11 +87,6 @@ interface Platform {
 
     /** Which app builds from the back office fit this till ("android"); null when updates come another way (Google Play, Windows). */
     val updatePlatform: String? get() = null
-    /** Donation amounts the user can choose; empty when donations are not available here. */
-    suspend fun donationOptions(): List<DonationOption> = emptyList()
-
-    /** Starts paying a donation; [onDone] gets true once the payment went through. */
-    fun donate(option: DonationOption, onDone: (Boolean) -> Unit) = onDone(false)
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("No platform") }

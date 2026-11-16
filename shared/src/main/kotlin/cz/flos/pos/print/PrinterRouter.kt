@@ -16,7 +16,7 @@ enum class PrinterType {
 class PrinterRouter(val platform: Platform, val network: NetworkPrinter) {
     suspend fun print(s: AppSettings, data: ByteArray) = when (s.printerType) {
         PrinterType.NETWORK -> network.print(s.printerHost, s.printerPort, data)
-        else -> platform.printLocal(s.printerType, s.printerAddress, data)
+        else -> platform.printLocal(s.printerType, s.printerAddress, data, s.printerSpeed.factor)
     }
 
     fun isConfigured(s: AppSettings): Boolean = when (s.printerType) {

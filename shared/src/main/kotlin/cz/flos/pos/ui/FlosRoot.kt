@@ -28,7 +28,6 @@ import androidx.compose.material.icons.rounded.PointOfSale
 import androidx.compose.material.icons.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -77,7 +76,6 @@ enum class Screen(val label: String, val icon: ImageVector, val onPhoneBar: Bool
     PRODUCT_TOOLS("Excel a štítky", Icons.Rounded.TableView, false),
     SETTINGS("Nastavení", Icons.Rounded.Settings, false),
     ADVANCED("Pokročilé nastavení", Icons.Rounded.Tune, false),
-    SUPPORT("Podpořit Flos", Icons.Rounded.Favorite, false),
 }
 
 /** Navigation icon with the number of unpaid orders on the Orders tab. */
@@ -161,6 +159,8 @@ private fun FlosRoot(vm: PosViewModel) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Text(text, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
         }
+        // Orders from the tables and the website: ringing, taken now or not, and "stop orders".
+        OrderControlBar(vm)
         Row(Modifier.fillMaxSize()) {
             // Ten screens do not fit the height of a landscape tablet, so the rail scrolls.
             if (wide) NavigationRail(Modifier.verticalScroll(rememberScrollState())) {
@@ -199,13 +199,13 @@ private fun FlosRoot(vm: PosViewModel) {
                 Screen.WAITERS -> WaitersScreen(vm)
                 Screen.PRODUCT_TOOLS -> ProductToolsScreen(vm)
                 Screen.ADVANCED -> AdvancedScreen(vm)
-                Screen.SUPPORT -> SupportScreen(vm)
             }
         }
         }
     }
     // An order from a table waiting for the staff (Pokročilé nastavení → Objednávky z QR).
     TableOrderDialog(vm)
+    WebOrderDialog(vm)
 }
 }
 

@@ -33,6 +33,6 @@ BUSINESS
 • Several companies and branches, web back office (optional)
 • Bank transfer checking through the Fio API
 
-Flos is and will stay free. If it helps you, you can support its development with a voluntary contribution inside the app. A contribution unlocks nothing.
+Flos is free, with no ads and no sign-up.
 
 The app is in Czech; English can be switched on in Settings.

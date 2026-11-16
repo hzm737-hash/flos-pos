@@ -20,39 +20,40 @@ Everything needed for the Play Console listing.
 * `versionCode` is the CI run number, so each upload is higher than the one before.
 * The app targets Android 16 (API 36), which Play requires for new apps since 31 August 2026.
 
-## Donations
+## Selling and donations
 
-Play policy does not allow links to outside payment pages (PayPal and similar) unless the developer is
-a registered charity. Flos therefore uses Google Play Billing: **More → Podpořit Flos** lists one-time
-in-app products, consumed right away so they can be given again. Create them in Play Console under
-**Monetize → Products → In-app products**:
+The first release is free, with no in-app purchases. Selling the app or in-app products later needs a
+Google payments (merchant) profile; on a personal developer account Google then shows the developer's
+address on the store page, so that waits for the company account (the app can be moved there with
+Play Console **App transfer**).
 
-| Product ID | Name (cs) | Suggested price |
-| --- | --- | --- |
-| `donate_small` | Malý příspěvek | 49 Kč |
-| `donate_medium` | Příspěvek | 99 Kč |
-| `donate_large` | Velký příspěvek | 249 Kč |
+## Foreground service declaration
 
-Until those products exist (or outside Google Play) the screen just says contributions are available in
-the Google Play version. In-app products need a Google payments (merchant) profile; for a personal
-developer account Google then shows the developer's address on the store page.
+Flos declares `FOREGROUND_SERVICE_SPECIAL_USE` for `OrderWatchService` (keeps receiving orders and rings
+while the screen is off, only when switched on in Pokročilé nastavení). Play Console asks about it under
+**App content → Foreground service permissions**: choose *Other / special use*, describe it as
+"Point-of-sale till keeps receiving restaurant orders from tables and the website and rings for them while
+the screen is off; the user switches it on in the settings", and add a short screen video if asked.
+
+## Testing before production
+
+A personal developer account created after 13 November 2023 must run a **closed test with at least 12
+testers for 14 days in a row** before it can apply for production. Organization accounts skip this.
 
 ## Data safety form
 
 * **Does the app collect or share user data?** Yes (only when the optional back office sync is on).
 * **Encrypted in transit:** Yes (HTTPS). **Users can ask for deletion:** Yes (e-mail in the privacy policy).
 * **Data types collected** (all *optional*, purpose *App functionality*, not shared, not used for ads):
-  * Personal info: Name, Email address, Phone number (customers and staff the business enters)
+  * Personal info: Name, Email address, Phone number, Address (customers and staff the business enters, and web orders from the restaurant's own ordering page)
   * Financial info: Purchase history (sales)
 * **Shared with third parties:** No. Sending sales to the Czech tax office (EET), reading the bank API
   and sending messages are user-initiated transfers, which Play does not count as sharing.
-* Payments for donations are handled by Google Play; the app never sees card details.
 
 ## Content rating (IARC questionnaire)
 
 Category **Utility, Productivity, Communication or other**. Answer **No** to every question
-(violence, sexuality, language, drugs, gambling, user interaction/sharing, location, digital purchases
-other than the optional donation). Expected result: PEGI 3 / Everyone.
+(violence, sexuality, language, drugs, gambling, user interaction/sharing, location, digital purchases). Expected result: PEGI 3 / Everyone.
 
 ## Other App content answers
 

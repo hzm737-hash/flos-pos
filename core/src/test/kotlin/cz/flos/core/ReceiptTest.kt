@@ -51,6 +51,17 @@ class ReceiptTest {
         assertTrue(text.contains("Novákova 5, Brno"))
     }
 
+    @Test fun orderTicketCarriesQrPaymentOnlyWhenGiven() {
+        val qr = QrPlatba(iban = "CZ6508000000192000145399", amount = cart.total, variableSymbol = "57")
+        val withQr = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, receipt.copy(number = "12", kind = DocumentKind.ORDER, qr = qr)), 32)
+        assertTrue(withQr.contains("NEZAPLACENO"))
+        assertTrue(withQr.contains("QR Platba"))
+        assertTrue(withQr.contains("*X-VS:57"))
+        assertTrue(withQr.contains("VS: 57"))
+        val without = ReceiptLayout.toPlainText(ReceiptLayout(32).layout(business, receipt.copy(number = "12", kind = DocumentKind.ORDER, qr = null)), 32)
+        assertTrue(!without.contains("QR Platba"))
+    }
+
     @Test fun invoicePaymentIsNotRecordedInEet() {
         assertTrue(PaymentMethod.entries.filter { !it.eet } == listOf(PaymentMethod.INVOICE))
     }
@@ -78,9 +89,10 @@ class ReceiptTest {
         val blocks = ReceiptLayout(32).layout(business, receipt)
         val bytes = EscPosEncoder(PaperWidth.MM58).encode(blocks)
         val s = bytes.toList()
-        // GS v 0 raster command followed by width 48 bytes (384 dots)
-        val idx = s.windowed(5).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 0, 48) }
+        // GS v 0 raster command in 2×2 mode; half the paper and the blank right margin is cropped, so at most 24 bytes wide
+        val idx = s.windowed(4).indexOfFirst { it == listOf<Byte>(0x1D, 0x76, 0x30, 3) }
         assertTrue(idx > 0)
+        assertTrue(bytes[idx + 4] in 10..24)
         // ASCII mode never sends bytes above 0x7F as text
         assertEquals(0x1B.toByte(), bytes[0])
     }
@@ -90,6 +102,36 @@ class ReceiptTest {
         val img = enc.qrImage(QrPlatba.qrMatrix("SPD*1.0*ACC:CZ6508000000192000145399*CC:CZK"))
         assertEquals(384, img[0].size)
         assertTrue(img.size in 200..384)
+    }
+
+    @Test fun nativeQrIsShortAndPictureIsCropped() {
+        val content = "SPD*1.0*ACC:CZ6508000000192000145399*AM:100.00*CC:CZK"
+        val blocks = listOf(ReceiptBlock.Qr(content))
+        val picture = EscPosEncoder(PaperWidth.MM80).encode(blocks)
+        val native = EscPosEncoder(PaperWidth.MM80, nativeQr = true).encode(blocks)
+        assertTrue("native QR is small: ${native.size}", native.size < 200)
+        assertTrue(String(native, Charsets.US_ASCII).contains(content))
+        // The picture no longer carries the blank right margin: under 576 dots wide.
+        val gs = picture.indices.first { picture[it] == 0x1D.toByte() && picture[it + 1] == 'v'.code.toByte() }
+        val widthBytes = (picture[gs + 4].toInt() and 0xFF) + (picture[gs + 5].toInt() and 0xFF) * 256
+        assertTrue("width $widthBytes", widthBytes < 72)
+    }
+
+    @Test fun qrPictureIsHalfSizeAndDoubledByPrinter() {
+        val content = "SPD*1.0*ACC:CZ6508000000192000145399*AM:100.00*CC:CZK"
+        val m = QrPlatba.qrMatrix(content)
+        for (paper in PaperWidth.entries) {
+            val enc = EscPosEncoder(paper)
+            val full = enc.qrImage(m)
+            val half = enc.qrImage(m, half = true)
+            // Printed at 2×, the code keeps about the same size and never exceeds the paper.
+            assertTrue("${paper.mm}: ${half.size * 2} vs ${full.size}", half.size * 2 in (full.size * 8 / 10)..paper.dots)
+            val bytes = enc.encode(listOf(ReceiptBlock.Qr(content)))
+            val gs = bytes.indices.first { bytes[it] == 0x1D.toByte() && bytes[it + 1] == 'v'.code.toByte() }
+            assertEquals("mode 3 = double width and height", 3, bytes[gs + 3].toInt())
+            // A quarter of the data the full-size picture needed.
+            assertTrue("${paper.mm}: ${bytes.size} bytes", bytes.size < full.size * paper.dots / 8 / 3)
+        }
     }
 
     @Test fun dailyReport() {

@@ -33,6 +33,6 @@ PODNIK
 • Více firem a provozoven, back office na webu (volitelné)
 • Ověření plateb převodem přes Fio API
 
-Flos je a zůstane zdarma. Pokud vám pomáhá, můžete jeho vývoj podpořit dobrovolným příspěvkem přímo v aplikaci. Příspěvek nic neodemyká.
+Flos je zdarma, bez reklam a bez registrace.
 
 Aplikace je v češtině, angličtinu lze zapnout v nastavení.

@@ -11,12 +11,15 @@ object TillSettingKeys {
     val SECRET = setOf("eetCertPassword", "imapPassword", "fioToken")
     val LOCAL = setOf("boUrl", "boToken", "boDeviceName", "boCatalogSince", "boDeletedCategories", "boStaff", "boLastSync",
         // Who is serving right now changes all day; it is not a setting.
-        "cashier")
+        "cashier",
+        // Ordering hours and "stop orders" travel on their own (GET/PUT /device/order-control), see OrderControl.
+        "qrHoursOn", "qrHours", "webHoursOn", "webHours", "qrPaused", "webPaused", "pauseMessage", "openTablesAfterHours")
 
     /** Kept per till (printer, screen language, address of the branch); everything else is the same for the whole company. */
     val DEVICE = setOf(
         "language", "paperWidth", "charset", "printerAddress", "printerName", "autoPrint", "printerType",
-        "printerHost", "printerPort", "openDrawer", "customerDisplay", "eetIdPokl", "eetIdJednotky", "address1", "address2",
+        "printerHost", "printerPort", "openDrawer", "printerNativeQr", "printerSpeed", "customerDisplay", "eetIdPokl", "eetIdJednotky", "address1", "address2",
+        "orderAlarm", "orderAlarmSound", "orderAlarmVolume", "orderBackground",
     )
 
     private val NAME = Regex("^[A-Za-z][A-Za-z0-9_]{0,39}$")

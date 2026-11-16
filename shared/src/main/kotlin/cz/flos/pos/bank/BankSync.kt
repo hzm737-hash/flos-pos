@@ -1,6 +1,8 @@
 package cz.flos.pos.bank
 
 import cz.flos.core.bank.BankEmailParser
+import cz.flos.core.bank.CsobBc
+import cz.flos.core.bank.CsobCertificate
 import cz.flos.core.bank.ExpectedPayment
 import cz.flos.core.bank.FioApi
 import cz.flos.core.bank.ImapAccount
@@ -48,6 +50,9 @@ class BankSync(
 ) {
     private val lock = Mutex()
     private var lastFioCall = 0L
+    private var lastCsobCall = 0L
+    /** ČSOB blocks the contract for a while after too many calls (error 1101); no calls until then. */
+    private var csobBlockedUntil = 0L
 
     suspend fun check(): BankCheck = lock.withLock {
         val s = settings.state.value
@@ -61,9 +66,54 @@ class BankSync(
                     if (wait > 0) emptyList()
                     else fioTokens(s).flatMap { FioApi.fetchNew(it) }.also { lastFioCall = System.currentTimeMillis() }
                 }
+                BankSource.CSOB -> readCsob(s)
             }
         }
         process(incoming)
+    }
+
+    /**
+     * New avíza (and statements) from ČSOB Business Connector since the last complete check. The
+     * position moves on only when every file was read, so nothing is lost after an error or while the
+     * bank is still preparing a file; a payment read twice is skipped by its id.
+     */
+    private fun readCsob(s: AppSettings): List<IncomingPayment> {
+        val now = System.currentTimeMillis()
+        if (now < csobBlockedUntil || now - lastCsobCall < CsobBc.MIN_INTERVAL_MS) return emptyList()
+        val contract = csobContract(s)
+        val client = csobClient()
+        lastCsobCall = now
+        val since = settings.csobPosition(contract) ?: CsobBc.startTimestamp()
+        val list = try {
+            client.list(contract, since, appGuid = settings.csobAppGuid())
+        } catch (e: CsobBc.BcException) {
+            if (e.code == "1101") csobBlockedUntil = now + CsobBc.BLOCKED_PAUSE_MS
+            throw e
+        }
+        var complete = true
+        val payments = mutableListOf<IncomingPayment>()
+        for (f in list.files) {
+            when {
+                f.status == "D" && f.url != null -> runCatching { payments += CsobBc.paymentsIn(f, client.download(f.url!!)) }.onFailure { complete = false }
+                f.status == "R" -> complete = false
+                else -> {} // F: the bank could not prepare the file; it will not come.
+            }
+        }
+        if (complete && list.queryTimestamp.isNotBlank()) settings.saveCsobPosition(contract, list.queryTimestamp)
+        return payments
+    }
+
+    private fun csobContract(s: AppSettings) = s.csobContract.filter(Char::isDigit)
+        .ifEmpty { throw IllegalStateException("Vyplňte číslo smlouvy ČSOB CEB") }
+
+    private fun csobClient(): CsobBc.Client {
+        val key = settings.csobKey()
+        val cert = settings.csobCert()
+        if (key == null || cert == null) throw IllegalStateException(
+            if (settings.csobPendingKey() != null) "Nahrajte certifikát stažený z CEB (Nastavení → Business Connector)"
+            else "Chybí certifikát pro ČSOB Business Connector – vytvořte žádost v nastavení",
+        )
+        return CsobBc.Client(CsobCertificate.keyStore(key, cert), CsobCertificate.STORE_PASSWORD)
     }
 
     /**
@@ -206,6 +256,27 @@ class BankSync(
                 if (wait > 0) kotlinx.coroutines.delay(wait)
                 val list = fioTokens(s).flatMap { FioApi.fetchPeriod(it) }.also { lastFioCall = System.currentTimeMillis() }
                 "OK: ${list.size} příchozích plateb za 7 dní"
+            }
+            BankSource.CSOB -> {
+                val now = System.currentTimeMillis()
+                if (now < csobBlockedUntil) throw IllegalStateException(CsobBc.faultMessage("1101", null))
+                val wait = CsobBc.MIN_INTERVAL_MS - (now - lastCsobCall)
+                if (wait > 0) kotlinx.coroutines.delay(wait)
+                val client = csobClient()
+                lastCsobCall = System.currentTimeMillis()
+                // A look back without moving the position, so the regular check still gets everything.
+                val list = try {
+                    client.list(csobContract(s), CsobBc.startTimestamp(7), appGuid = settings.csobAppGuid())
+                } catch (e: CsobBc.BcException) {
+                    if (e.code == "1101") csobBlockedUntil = System.currentTimeMillis() + CsobBc.BLOCKED_PAUSE_MS
+                    throw e
+                }
+                val advices = list.files.count { it.type == "AVIZO" }
+                val statements = list.files.count { it.type == "VYPIS" }
+                val payments = list.files.filter { it.status == "D" && it.url != null }.take(10)
+                    .sumOf { f -> runCatching { CsobBc.paymentsIn(f, client.download(f.url!!)).size }.getOrDefault(0) }
+                if (list.files.isEmpty()) "OK: spojení funguje, ale za 7 dní banka nepřipravila žádné avízo ani výpis. Zapněte v CEB → Nastavení → Business Connector stahování avíz pro váš účet."
+                else "OK: za 7 dní $advices avíz a $statements výpisů, v nich $payments příchozích plateb"
             }
         }
     }

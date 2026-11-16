@@ -56,12 +56,12 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         PrinterType.NETWORK -> emptyList()
     }.sortedBy { it.name }
 
-    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray) = mutex.withLock {
+    override suspend fun printLocal(type: PrinterType, address: String, data: ByteArray, speed: Int) = mutex.withLock {
         withContext(Dispatchers.IO) {
             if (address.isBlank()) throw IOException(tr("Není vybrána tiskárna. Vyberte ji v Nastavení."))
             when (type) {
                 PrinterType.SYSTEM -> printRaw(address, data)
-                PrinterType.BLUETOOTH -> printSerial(address, data)
+                PrinterType.BLUETOOTH -> printSerial(address, data, speed)
                 PrinterType.NETWORK -> error("network printers are handled by NetworkPrinter")
             }
         }
@@ -73,7 +73,7 @@ class DesktopPlatform(override val dataDir: File) : Platform {
         service.createPrintJob().print(SimpleDoc(data, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), HashPrintRequestAttributeSet())
     }
 
-    private fun printSerial(portName: String, data: ByteArray) {
+    private fun printSerial(portName: String, data: ByteArray, speed: Int) {
         val port = SerialPort.getCommPort(portName)
         port.baudRate = 9600
         port.setComPortTimeouts(SerialPort.TIMEOUT_WRITE_BLOCKING, 0, 10_000)
@@ -85,7 +85,7 @@ class DesktopPlatform(override val dataDir: File) : Platform {
                 val written = port.writeBytes(data, len, offset)
                 if (written <= 0) throw IOException(tr("Tisk na port %s se nezdařil.", portName))
                 offset += written
-                Thread.sleep(15)
+                Thread.sleep(15L / speed.coerceIn(1, 3))
             }
             Thread.sleep(400)
         } finally {
@@ -123,6 +123,25 @@ class DesktopPlatform(override val dataDir: File) : Platform {
     }.getOrNull()
 
     override fun beep() { runCatching { java.awt.Toolkit.getDefaultToolkit().beep() } }
+
+    @Volatile private var ringing: Thread? = null
+
+    /** Windows: beeps every second until stopped (the sound of the computer's speakers). */
+    override fun startAlarm(sound: String, volume: Int, onStoppedOutside: () -> Unit) {
+        if (ringing?.isAlive == true) return
+        ringing = Thread {
+            try { while (!Thread.currentThread().isInterrupted) { beep(); Thread.sleep(1_000) } } catch (e: InterruptedException) { }
+        }.apply { isDaemon = true; name = "flos-order-alarm"; start() }
+    }
+
+    override fun stopAlarm() { ringing?.interrupt(); ringing = null }
+
+    override fun testAlarm(sound: String, volume: Int) {
+        Thread { repeat(3) { beep(); Thread.sleep(1_000) } }.apply { isDaemon = true; start() }
+    }
+
+    @Composable
+    override fun rememberNotificationPermission(onDone: () -> Unit): () -> Unit = onDone
 
     override fun openUrl(url: String): Boolean = runCatching {
         val d = java.awt.Desktop.getDesktop()

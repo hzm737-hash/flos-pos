@@ -74,6 +74,6 @@ class EncryptedStore(
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
 
         /** Settings that hold passwords, tokens or PIN hashes. */
-        val SECRET_KEYS = setOf("eetCertPassword", "imapPassword", "fioToken", "boToken", "boStaff")
+        val SECRET_KEYS = setOf("eetCertPassword", "imapPassword", "fioToken", "boToken", "boStaff", "csobKey", "csobPendingKey")
     }
 }

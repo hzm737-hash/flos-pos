@@ -4,6 +4,7 @@ import cz.flos.core.BusinessInfo
 import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
+import cz.flos.core.PrintSpeed
 import cz.flos.core.eet.EetEnvironment
 import cz.flos.pos.KeyValueStore
 import cz.flos.pos.print.NetworkPrinter
@@ -37,6 +38,10 @@ data class AppSettings(
     val printerPort: Int = NetworkPrinter.DEFAULT_PORT,
     /** Send the drawer-kick pulse through the receipt printer for cash payments. */
     val openDrawer: Boolean = false,
+    /** The printer draws the QR code itself (faster); off = Flos sends it as a picture. */
+    val printerNativeQr: Boolean = false,
+    /** How fast data goes to a Bluetooth / COM printer; faster only if the printer keeps up. */
+    val printerSpeed: PrintSpeed = PrintSpeed.NORMAL,
 
     // ---- EET 2.0 ----
     val eetEnabled: Boolean = false,
@@ -59,6 +64,8 @@ data class AppSettings(
     val imapPassword: String = "",
     val imapFolder: String = "INBOX",
     val fioToken: String = "",
+    /** ČSOB CEB contract number for Business Connector; its key and certificate stay on this till (see SettingsStore.csobKey). */
+    val csobContract: String = "",
     /** Who keeps the tips: staff (outside EET, tax-free up to 7 % of monthly catering revenue) or the business (recorded in EET). */
     val tipsOwner: TipsOwner = TipsOwner.STAFF,
     /** Account for SEPA payments from abroad (a Fio EUR account is best); empty = the main account. */
@@ -163,7 +170,59 @@ data class AppSettings(
     val qrOrderApprove: Boolean = true,
     /** QR ordering: print a kitchen ticket for each accepted order. */
     val qrOrderPrint: Boolean = true,
+    /** Web orders (delivery / pick-up): print the order ticket at once when it is accepted. */
+    val webOrderPrint: Boolean = true,
+    /** Web orders (delivery / pick-up): the order ticket carries a QR payment for the amount (needs the bank account). */
+    val webOrderQr: Boolean = true,
+    /**
+     * QR ordering: the restaurant's own website menu for the tables (e.g. https://pizzafresca.cz/menu).
+     * When set, the tables' QR codes open this page with the table and its key (?t=…&k=…), and the
+     * website sends the order to the back office. Empty = the Flos menu page, as before.
+     */
+    val tableMenuUrl: String = "",
+
+    // ---- When orders from the tables and the website are taken (kept by the back office too) ----
+    /** Orders from the tables only at [qrHours]; off = any time. */
+    val qrHoursOn: Boolean = false,
+    /** Seven lines, Monday first, e.g. "11:00-20:30"; an empty line = no orders that day. */
+    val qrHours: String = cz.flos.core.OrderHours.DEFAULT_WEEK.joinToString("\n"),
+    /** Delivery and pick-up orders from the website only at [webHours]; off = any time. */
+    val webHoursOn: Boolean = false,
+    val webHours: String = cz.flos.core.OrderHours.DEFAULT_WEEK.joinToString("\n"),
+    /** "Stop orders": no new orders from the tables until switched back. */
+    val qrPaused: Boolean = false,
+    /** "Stop orders": no new orders from the website until switched back. */
+    val webPaused: Boolean = false,
+    /** What customers see while orders are stopped; empty = the default text. */
+    val pauseMessage: String = "",
+    /** A table with an open bill may keep ordering after hours. */
+    val openTablesAfterHours: Boolean = true,
+
+    // ---- Ringing for a new order ----
+    /** A loud ring that repeats until someone stops it; off = one short beep (as before). */
+    val orderAlarm: Boolean = false,
+    /** ALARM (the phone's alarm sound), RINGTONE (the ringtone) or BEEP (repeated beeps). */
+    val orderAlarmSound: String = "ALARM",
+    /** How loud the ring is, 10–100 % of the alarm volume, whatever the phone's volume is (put back afterwards). */
+    val orderAlarmVolume: Int = 100,
+    /** Android: keep checking for orders and ring also with the screen off (a notification stays shown). */
+    val orderBackground: Boolean = false,
 ) {
+    /** The ordering hours and "stop orders" as the back office keeps them. */
+    val orderControl: cz.flos.core.OrderControl get() = cz.flos.core.OrderControl(
+        qrHoursOn = qrHoursOn, qrHours = weekOf(qrHours), webHoursOn = webHoursOn, webHours = weekOf(webHours),
+        qrPaused = qrPaused, webPaused = webPaused, pauseMessage = pauseMessage, openTablesAfterHours = openTablesAfterHours,
+    )
+
+    /** These settings with the ordering hours and "stop orders" from [c]. */
+    fun withOrderControl(c: cz.flos.core.OrderControl) = copy(
+        qrHoursOn = c.qrHoursOn, qrHours = weekOf(c.qrHours.joinToString("\n")).joinToString("\n"),
+        webHoursOn = c.webHoursOn, webHours = weekOf(c.webHours.joinToString("\n")).joinToString("\n"),
+        qrPaused = c.qrPaused, webPaused = c.webPaused, pauseMessage = c.pauseMessage, openTablesAfterHours = c.openTablesAfterHours,
+    )
+
+    private fun weekOf(text: String): List<String> = text.split('\n').map { it.trim() }.let { l -> List(7) { l.getOrElse(it) { "" } } }
+
     /** True when the optional feature [f] is switched on in Pokročilé nastavení. */
     fun on(f: AdvFeature): Boolean = f.name in advancedSet
     val advancedSet: Set<String> get() = advanced.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -220,6 +279,7 @@ enum class BankSource(val label: String) {
     OFF("Vypnuto"),
     EMAIL("E-mail od banky (jakákoli banka)"),
     FIO("Fio banka API"),
+    CSOB("ČSOB Business Connector"),
 }
 
 enum class TipsOwner(val label: String) {
@@ -260,6 +320,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
             printerHost = str("printerHost", d.printerHost),
             printerPort = int("printerPort", d.printerPort),
             openDrawer = bool("openDrawer", d.openDrawer),
+            printerNativeQr = bool("printerNativeQr", d.printerNativeQr),
+            printerSpeed = enum("printerSpeed", d.printerSpeed),
             eetEnabled = bool("eetEnabled", d.eetEnabled),
             eetEnvironment = enum("eetEnvironment", d.eetEnvironment),
             eetVerification = bool("eetVerification", d.eetVerification),
@@ -275,6 +337,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
             imapPassword = str("imapPassword", d.imapPassword),
             imapFolder = str("imapFolder", d.imapFolder),
             fioToken = str("fioToken", d.fioToken),
+            csobContract = str("csobContract", d.csobContract),
             tipsOwner = enum("tipsOwner", d.tipsOwner),
             eurAccount = str("eurAccount", d.eurAccount),
             eurRateManual = str("eurRateManual", d.eurRateManual),
@@ -326,6 +389,21 @@ class SettingsStore(private val prefs: KeyValueStore) {
             tablePlan = str("tablePlan", d.tablePlan),
             qrOrderApprove = bool("qrOrderApprove", d.qrOrderApprove),
             qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
+            webOrderPrint = bool("webOrderPrint", d.webOrderPrint),
+            webOrderQr = bool("webOrderQr", d.webOrderQr),
+            tableMenuUrl = str("tableMenuUrl", d.tableMenuUrl),
+            qrHoursOn = bool("qrHoursOn", d.qrHoursOn),
+            qrHours = str("qrHours", d.qrHours),
+            webHoursOn = bool("webHoursOn", d.webHoursOn),
+            webHours = str("webHours", d.webHours),
+            qrPaused = bool("qrPaused", d.qrPaused),
+            webPaused = bool("webPaused", d.webPaused),
+            pauseMessage = str("pauseMessage", d.pauseMessage),
+            openTablesAfterHours = bool("openTablesAfterHours", d.openTablesAfterHours),
+            orderAlarm = bool("orderAlarm", d.orderAlarm),
+            orderAlarmSound = str("orderAlarmSound", d.orderAlarmSound),
+            orderAlarmVolume = int("orderAlarmVolume", d.orderAlarmVolume).coerceIn(10, 100),
+            orderBackground = bool("orderBackground", d.orderBackground),
             eurCashRate = str("eurCashRate", d.eurCashRate),
         )
     }
@@ -429,6 +507,8 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "printerHost" to s.printerHost,
                 "printerPort" to s.printerPort.toString(),
                 "openDrawer" to s.openDrawer.toString(),
+                "printerNativeQr" to s.printerNativeQr.toString(),
+                "printerSpeed" to s.printerSpeed.name,
                 "eetEnabled" to s.eetEnabled.toString(),
                 "eetEnvironment" to s.eetEnvironment.name,
                 "eetVerification" to s.eetVerification.toString(),
@@ -444,6 +524,7 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "imapPassword" to s.imapPassword,
                 "imapFolder" to s.imapFolder,
                 "fioToken" to s.fioToken,
+                "csobContract" to s.csobContract,
                 "tipsOwner" to s.tipsOwner.name,
                 "eurAccount" to s.eurAccount,
                 "eurRateManual" to s.eurRateManual,
@@ -495,6 +576,21 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "tablePlan" to s.tablePlan,
                 "qrOrderApprove" to s.qrOrderApprove.toString(),
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
+                "webOrderPrint" to s.webOrderPrint.toString(),
+                "webOrderQr" to s.webOrderQr.toString(),
+                "tableMenuUrl" to s.tableMenuUrl,
+                "qrHoursOn" to s.qrHoursOn.toString(),
+                "qrHours" to s.qrHours,
+                "webHoursOn" to s.webHoursOn.toString(),
+                "webHours" to s.webHours,
+                "qrPaused" to s.qrPaused.toString(),
+                "webPaused" to s.webPaused.toString(),
+                "pauseMessage" to s.pauseMessage,
+                "openTablesAfterHours" to s.openTablesAfterHours.toString(),
+                "orderAlarm" to s.orderAlarm.toString(),
+                "orderAlarmSound" to s.orderAlarmSound,
+                "orderAlarmVolume" to s.orderAlarmVolume.toString(),
+                "orderBackground" to s.orderBackground.toString(),
                 "eurCashRate" to s.eurCashRate,
             )
 
@@ -510,6 +606,32 @@ class SettingsStore(private val prefs: KeyValueStore) {
     fun saveImapPosition(account: String, validity: Long, uid: Long) =
         prefs.put(mapOf("imapValidity_$account" to validity.toString(), "imapUid_$account" to uid.toString()))
 
+    // ---- ČSOB Business Connector: key and certificate of this till, never sent to the back office ----
+
+    /** Private key (PKCS#8, Base64) that belongs to [csobCert]; saved encrypted. */
+    fun csobKey(): String? = prefs.get("csobKey")?.takeIf { it.isNotBlank() }
+    /** Key of a certificate request that waits for the certificate from CEB. */
+    fun csobPendingKey(): String? = prefs.get("csobPendingKey")?.takeIf { it.isNotBlank() }
+    /** Certificate issued by CEB (PEM). */
+    fun csobCert(): String? = prefs.get("csobCert")?.takeIf { it.isNotBlank() }
+
+    fun saveCsobPendingKey(key: String) = prefs.put(mapOf("csobPendingKey" to key))
+
+    /** The key and certificate that now work; a waiting request is dropped. The position is reset, the new certificate starts afresh. */
+    fun saveCsobCertificate(key: String, certPem: String) =
+        prefs.put(mapOf("csobKey" to key, "csobCert" to certPem, "csobPendingKey" to ""))
+
+    fun clearCsobCertificate() = prefs.put(mapOf("csobKey" to "", "csobCert" to "", "csobPendingKey" to ""))
+
+    /** Id of this till for Business Connector, made once. */
+    fun csobAppGuid(): String = prefs.get("csobAppGuid")?.takeIf { it.length == 36 }
+        ?: java.util.UUID.randomUUID().toString().also { prefs.put(mapOf("csobAppGuid" to it)) }
+
+    /** QueryTimestamp of the last complete check for a contract; null = not asked yet. */
+    fun csobPosition(contract: String): String? = prefs.get("csobTs_$contract")?.takeIf { it.isNotBlank() }
+
+    fun saveCsobPosition(contract: String, timestamp: String) = prefs.put(mapOf("csobTs_$contract" to timestamp))
+
     private fun nextIn(key: String): Int = int(key, 0) + 1
 
     /** The number the next receipt will get, without using it up. */
@@ -522,6 +644,13 @@ class SettingsStore(private val prefs: KeyValueStore) {
         val next = nextIn(key)
         prefs.put(mapOf(key to next.toString()))
         return "$year-" + next.toString().padStart(6, '0')
+    }
+
+    /** Receipt and order numbers start again from 1 (after test data was cleared). */
+    @Synchronized
+    fun restartNumbering() {
+        val year = java.time.LocalDate.now().year
+        prefs.put(((year - 1)..(year + 1)).associate { "receiptSeq_$it" to "0" } + ("orderSeq" to "0"))
     }
 
     /** Next number for an open order (delivery, table); separate from receipt numbers. */

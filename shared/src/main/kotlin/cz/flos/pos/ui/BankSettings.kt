@@ -73,6 +73,7 @@ fun BankSettings(vm: PosViewModel, s: AppSettings) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        BankSource.CSOB -> CsobSettings(vm, s)
     }
     Text(
         tr("Výpis lze také kdykoli nahrát ručně v Historii → Platby z banky (soubor GPC/ABO nebo XML CAMT.053 stažený z internetového bankovnictví)."),

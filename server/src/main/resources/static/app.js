@@ -528,14 +528,16 @@ const TILL_SETTINGS = [
     ['printerAddress', 'Adresa Bluetooth / COM tiskárny', 't'], ['printerName', 'Název tiskárny', 't'],
     ['paperWidth', 'Šířka papíru', [['MM58', '58 mm'], ['MM80', '80 mm']]],
     ['charset', 'Znaková sada', [['ASCII', 'Bez diakritiky'], ['CP852', 'CP852 (Latin 2)'], ['CP1250', 'Windows-1250']]],
-    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'],
+    ['autoPrint', 'Tisknout účtenku automaticky', 'b'], ['openDrawer', 'Otevírat pokladní zásuvku', 'b'], ['printerNativeQr', 'Rychlý QR kód (kreslí ho tiskárna)', 'b'],
+    ['printerSpeed', 'Rychlost tisku (Bluetooth / COM)', [['NORMAL', 'Normální'], ['FAST', 'Rychlá ×2'], ['FASTEST', 'Nejrychlejší ×3']]],
     ['customerDisplay', 'Zákaznický displej', 'b'], ['language', 'Jazyk pokladny', [['cs', 'Čeština'], ['en', 'English']]]]],
   ['EET', [
     ['eetEnabled', 'Evidovat tržby (EET)', 'b'], ['eetEnvironment', 'Prostředí', [['PLAYGROUND', 'Playground (test)'], ['PRODUCTION', 'Produkce']]],
     ['eetVerification', 'Ověřovací režim', 'b'], ['eetEic', 'EIČ (prázdné = DIČ)', 't'], ['eetTimeoutMs', 'Čekat na odpověď (ms)', 'i'],
     ['eetIdJednotky', 'Označení evidenční jednotky', 't'], ['eetIdPokl', 'Označení pokladny', 't']]],
   ['Platby a banka', [
-    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API']]],
+    ['bankSource', 'Potvrzení plateb z banky', [['OFF', 'Vypnuto'], ['EMAIL', 'E-mail od banky'], ['FIO', 'Fio banka API'], ['CSOB', 'ČSOB Business Connector']]],
+    ['csobContract', 'Číslo smlouvy ČSOB CEB (Business Connector)', 't'],
     ['imapHost', 'Server e-mailu (IMAP)', 't'], ['imapPort', 'Port IMAP', 'i'], ['imapUser', 'Uživatel e-mailu', 't'], ['imapFolder', 'Složka', 't'],
     ['transferDueDays', 'Převod po splatnosti po (dnech)', 'i'], ['tipsOwner', 'Spropitné patří', [['STAFF', 'Zaměstnancům'], ['BUSINESS', 'Provozovně']]],
     ['eurAccount', 'Účet pro platby v EUR', 't'], ['eurRateManual', 'Vlastní kurz EUR pro převody', 't'], ['eurCashRate', 'Vlastní kurz EUR pro hotovost', 't'],
@@ -550,14 +552,15 @@ const TILL_SETTINGS = [
     ['tables', 'Stoly (oddělené čárkou)', 'a'], ['tablePlan', 'Plán stolů', 'a'], ['waiters', 'Obsluha (oddělená čárkou)', 't'],
     ['waitersAway', 'Obsluha mimo směnu', 'a'], ['waiterTables', 'Stoly podle obsluhy', 'a'], ['staffRoles', 'Role obsluhy', 'a'],
     ['permissions', 'Co role nesmějí', 'a'], ['qrOrderApprove', 'Objednávky ze stolu musí potvrdit obsluha', 'b'],
-    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b']]],
+    ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b'], ['tableMenuUrl', 'Web s menu pro QR kódy stolů', 't'],
+    ['webOrderPrint', 'Objednávky z webu: vytisknout hned po přijetí', 'b'], ['webOrderQr', 'Objednávky z webu: QR platba na objednávce', 'b']]],
   ['Kuchyň', [['addons', 'Přídavky pro kategorie', 'a'], ['quickNotes', 'Rychlé poznámky', 'a']]],
   ['Zprávy a menu', [
     ['msgReservation', 'Zpráva k rezervaci', 'a'], ['msgReminder', 'Připomínka rezervace', 'a'], ['msgOrderReady', 'Objednávka je hotová', 'a'],
     ['msgDocument', 'Zpráva k dokladu', 'a'], ['menuUrl', 'Adresa menu', 't'], ['menuNote', 'Poznámka pod menu', 'a']]],
   ['Pokročilé funkce', [['advanced', 'Zapnuté funkce', 'f']]],
 ];
-const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky' };
+const SECRETS = { eetCertificate: 'Certifikát EET', eetCertPassword: 'Heslo certifikátu EET', imapPassword: 'Heslo e-mailu', fioToken: 'Token Fio banky', csobCertificate: 'Certifikát ČSOB Business Connector' };
 
 function settingField(key, label, type, value) {
   const has = value !== undefined; const v = has ? value : '';

@@ -205,7 +205,17 @@ class ReceiptLayout(private val width: Int) {
                     }
                 }
                 DocumentKind.SALES_ORDER -> r.validUntil?.let { add(ReceiptBlock.Line("Termín: ${it.format(dayFmt)}", Align.CENTER, bold = true)) }
-                else -> add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+                else -> {
+                    add(ReceiptBlock.Line(if (r.kind == DocumentKind.ORDER) "NEZAPLACENO" else "Účet zatím není zaplacen.", Align.CENTER, bold = true))
+                    // An order paid on delivery: the customer can pay with the QR payment from the ticket.
+                    if (r.kind == DocumentKind.ORDER) r.qr?.let { qr ->
+                        qr.amount?.let { add(ReceiptBlock.Line(twoCol("K úhradě", Money.format(it)), bold = true)) }
+                        add(ReceiptBlock.Line("QR Platba", Align.CENTER, bold = true))
+                        add(ReceiptBlock.Qr(qr.toSpayd()))
+                        add(ReceiptBlock.Line(CzechBankAccount.fromIban(qr.iban)?.toString() ?: CzechBankAccount.formatIban(qr.iban), Align.CENTER))
+                        qr.variableSymbol?.let { add(ReceiptBlock.Line("VS: $it", Align.CENTER)) }
+                    }
+                }
             }
             if (r.kind != DocumentKind.QUOTE) add(ReceiptBlock.Line("Účtenka bude vystavena po zaplacení.", Align.CENTER))
             if ((r.kind == DocumentKind.QUOTE || r.kind == DocumentKind.PROFORMA || r.kind == DocumentKind.SALES_ORDER) && business.style.documentTerms.isNotBlank()) {
@@ -291,7 +301,12 @@ class ReceiptLayout(private val width: Int) {
     }
 
     companion object {
-        fun wrap(text: String, width: Int): List<String> {
+        /** Splits [text] into lines of at most [width] characters; a line break in the text starts a new line. */
+        fun wrap(text: String, width: Int): List<String> =
+            if ('\n' in text) text.split('\n').map { it.trimEnd('\r') }.filter { it.isNotBlank() }.flatMap { wrapLine(it, width) }
+            else wrapLine(text, width)
+
+        private fun wrapLine(text: String, width: Int): List<String> {
             val out = mutableListOf<String>()
             var line = StringBuilder()
             for (word in text.split(' ')) {

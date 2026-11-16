@@ -146,6 +146,16 @@ class BackOfficeSync(
         true
     }
 
+    /**
+     * Clears test data: first in the back office (when paired), then here with [clearLocal]. Both under the sync
+     * lock, so no receipt is uploaded in between. If the back office cannot be reached, nothing is cleared.
+     */
+    suspend fun resetTestData(clearLocal: suspend () -> Unit): cz.flos.core.backoffice.BoTestDataReset? = lock.withLock {
+        val remote = if (settings.state.value.paired) withContext(Dispatchers.IO) { client().resetTestData() } else null
+        clearLocal()
+        remote
+    }
+
     /** Asks the back office whether a newer app build is waiting for this till; also tells it which version runs here. */
     suspend fun checkUpdate(platform: String, versionCode: Int, versionName: String): cz.flos.core.backoffice.BoUpdateInfo {
         val c = client()

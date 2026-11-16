@@ -69,8 +69,6 @@ ksp {
 dependencies {
     implementation(project(":core"))
 
-    // Voluntary donations ("Podpořit Flos") through Google Play's own billing, as Play policy requires.
-    implementation(libs.billing)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)

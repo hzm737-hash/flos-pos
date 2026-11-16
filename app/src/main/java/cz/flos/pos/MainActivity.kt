@@ -43,6 +43,13 @@ class MainActivity : ComponentActivity() {
         vm = ViewModelProvider(this, viewModelFactory { initializer { PosViewModel(container) } })[PosViewModel::class.java]
         setContent { FlosScreen(vm) }
 
+        // Keeps checking for orders with the screen off when switched on (started while the app is on screen).
+        lifecycleScope.launch {
+            vm.settings.map { s ->
+                s.orderBackground && s.paired && (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) || s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))
+            }.distinctUntilChanged().collect { on -> cz.flos.pos.orders.OrderWatchService.update(this@MainActivity, on) }
+        }
+
         // Customer display on a second screen (a till with a customer-facing display, or a monitor over HDMI).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -54,10 +61,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Google Play's donation payment sheet opens on top of this screen.
-        ((application as FlosApp).container.platform as? AndroidPlatform)?.activity = java.lang.ref.WeakReference(this)
+    override fun onDestroy() {
+        // Closed for good (not just turned): nothing fetches orders any more, so the watching stops too.
+        if (isFinishing) {
+            cz.flos.pos.orders.OrderWatchService.update(this, false)
+            cz.flos.pos.orders.OrderAlarm.stop(this)
+        }
+        super.onDestroy()
     }
 
     override fun onStart() {

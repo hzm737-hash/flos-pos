@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import cz.flos.core.CzechBankAccount
 import cz.flos.core.PaperWidth
 import cz.flos.core.PrinterCharset
+import cz.flos.core.PrintSpeed
 import cz.flos.pos.LocalPlatform
 import cz.flos.pos.PrinterDevice
 import cz.flos.pos.print.PrinterType
@@ -46,6 +47,8 @@ fun SettingsScreen(vm: PosViewModel) {
     val platform = LocalPlatform.current
     var devices by remember(s.printerType) { mutableStateOf<List<PrinterDevice>?>(null) }
     val askPermission = platform.rememberPrinterPermission { devices = platform.localPrinters(s.printerType) }
+    // A Bluetooth test print first asks for any missing permission, then prints.
+    val askThenTest = platform.rememberPrinterPermission { vm.testPrint() }
     fun loadDevices() {
         if (platform.canUsePrinters()) devices = platform.localPrinters(s.printerType) else askPermission()
     }
@@ -156,8 +159,21 @@ fun SettingsScreen(vm: PosViewModel) {
             }
             SwitchRow(tr("Tisknout účtenku automaticky po platbě"), s.autoPrint) { v -> vm.updateSettings { it.copy(autoPrint = v) } }
             SwitchRow(tr("Otevírat pokladní zásuvku při platbě hotově"), s.openDrawer) { v -> vm.updateSettings { it.copy(openDrawer = v) } }
+            SwitchRow(tr("Rychlý QR kód (kreslí ho tiskárna)"), s.printerNativeQr) { v -> vm.updateSettings { it.copy(printerNativeQr = v) } }
+            Text(tr("QR kód se tiskne mnohem rychleji. Zkuste zkušební tisk: když QR kód chybí, tiskárna to neumí a nechte vypnuté."),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (s.printerType != PrinterType.NETWORK) {
+                Text(tr("Rychlost tisku"), style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrintSpeed.entries.forEach { p ->
+                        FilterChip(selected = s.printerSpeed == p, onClick = { vm.updateSettings { it.copy(printerSpeed = p) } }, label = { Text(tr(p.label)) })
+                    }
+                }
+                Text(tr("Vyzkoušejte zkušební tisk. Když se místo QR kódu vytisknou náhodné znaky, vraťte rychlost o stupeň níž."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
+                Button(onClick = { if (s.printerType == PrinterType.BLUETOOTH && !platform.canUsePrinters()) askThenTest() else vm.testPrint() }, enabled = vm.printer.isConfigured(s)) {
                     Icon(Icons.Filled.Print, null); Text(tr("  Zkušební tisk"))
                 }
                 OutlinedButton(onClick = { vm.openDrawer() }, enabled = vm.printer.isConfigured(s)) { Text(tr("Otevřít zásuvku")) }
