@@ -7,12 +7,13 @@ plugins {
 
 android {
     namespace = "cz.flos.pos"
-    compileSdk = 35
+    // Google Play accepts new apps and updates only when they target Android 16 (API 36).
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "cz.flos.pos"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // Every CI build gets a higher version code (its run number), so a phone installs it as an update.
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         versionCode = build ?: 1
@@ -52,7 +53,11 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
+    // The Google Play bundle is built with -PflosPlay=true. That build never offers app updates from the
+    // back office (Play policy: an app from Play is updated only through Play).
+    defaultConfig.buildConfigField("boolean", "PLAY_STORE", (findProperty("flosPlay") == "true").toString())
     // The till screens, database and logic are shared with the Windows app (desktop/).
     sourceSets["main"].java.srcDir("../shared/src/main/kotlin")
 }

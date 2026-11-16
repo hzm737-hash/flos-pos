@@ -1,0 +1,38 @@
+=== App name (max 30 characters) ===
+Flos – POS till
+
+=== Short description (max 80 characters) ===
+Free POS for cafés, restaurants and shops. Czech EET, QR payments, printers.
+
+=== Full description (max 4000 characters) ===
+Flos is a point-of-sale till for cafés, bistros, restaurants, bars and small shops. It is free, has no ads and needs no account. It runs on phones, tablets and Windows, and your data stays on your device.
+
+SELLING
+• Fast selling with tiles and categories, search and barcodes
+• Half portions and decimal quantities, variants and extras
+• Cash, bank transfer, meal vouchers, invoice and mixed payments
+• QR payment (QR Platba) on the receipt, tips from overpayment
+• Split bills, pre-bills, refunds and voids
+• Tables and a table map, take-away and delivery orders
+
+RECEIPTS AND PRINTING
+• Bluetooth and Wi-Fi receipt printers (ESC/POS), cash drawer
+• Receipt history with search, calendar and reprint
+• Send receipts by e-mail, SMS or WhatsApp
+
+EET AND ACCOUNTING
+• Czech EET with automatic retries and an offline queue
+• End-of-day report, cash shifts, statistics and unpaid overview
+• Export to Excel and POHODA
+
+BUSINESS
+• Staff with PIN, roles and permissions, attendance
+• Customers and loyalty points, reservations
+• Kitchen screen and customer display
+• Price lists, happy hour, quotes and orders
+• Several companies and branches, web back office (optional)
+• Bank transfer checking through the Fio API
+
+Flos is free, with no ads and no sign-up.
+
+The app is in Czech; English can be switched on in Settings.

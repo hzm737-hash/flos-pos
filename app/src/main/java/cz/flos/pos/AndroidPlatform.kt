@@ -113,6 +113,7 @@ class AndroidPlatform(private val context: Context) : Platform {
 
     /** An app installed from Google Play gets its updates from Play only. */
     override val updatePlatform: String? get() {
+        if (BuildConfig.PLAY_STORE) return null
         val installer = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
             else @Suppress("DEPRECATION") context.packageManager.getInstallerPackageName(context.packageName)
