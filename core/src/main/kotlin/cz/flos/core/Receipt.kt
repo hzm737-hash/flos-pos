@@ -126,7 +126,14 @@ data class EetReceiptInfo(
 enum class Align { LEFT, CENTER, RIGHT }
 
 sealed interface ReceiptBlock {
-    data class Line(val text: String, val align: Align = Align.LEFT, val bold: Boolean = false, val large: Boolean = false) : ReceiptBlock
+    /**
+     * [large] prints double width and height (half as many characters per line); [tall] prints double
+     * height only, so a line keeps its full width but is easier to read (customer details on web orders).
+     */
+    data class Line(
+        val text: String, val align: Align = Align.LEFT, val bold: Boolean = false, val large: Boolean = false,
+        val tall: Boolean = false,
+    ) : ReceiptBlock
     data object Separator : ReceiptBlock
     data class Qr(val content: String, val caption: String? = null) : ReceiptBlock
     data class Feed(val lines: Int) : ReceiptBlock
@@ -166,7 +173,7 @@ class ReceiptLayout(private val width: Int) {
         if (fiscal) add(ReceiptBlock.Line(twoCol("Číslo: ${r.number}", r.createdAt.format(dateFmt))))
         else add(ReceiptBlock.Line(r.createdAt.format(dateFmt), Align.CENTER))
         if (r.cashier.isNotBlank() && business.style.showCashier) add(ReceiptBlock.Line("Obsluha: ${r.cashier}"))
-        if (r.note.isNotBlank()) wrap(r.note, width).forEach { add(ReceiptBlock.Line(it, bold = !fiscal)) }
+        if (r.note.isNotBlank()) addAll(noteLines(r.note, bold = !fiscal))
         add(ReceiptBlock.Separator)
 
         for (item in r.cart.items) {
@@ -288,6 +295,25 @@ class ReceiptLayout(private val width: Int) {
     }
 
     /** Left text and right text on one line, padded to the paper width. */
+    /**
+     * The order note. On a delivery / pick-up web order ([WebOrders.ticketNote]) the customer's name,
+     * address and wished time print double height and the phone number double size, so they are easy
+     * to read; everything else stays normal size.
+     */
+    internal fun noteLines(note: String, bold: Boolean): List<ReceiptBlock.Line> {
+        if (!note.startsWith("WEB ") || '\n' !in note) return wrap(note, width).map { ReceiptBlock.Line(it, bold = bold) }
+        return note.split('\n').map { it.trimEnd('\r') }.filter { it.isNotBlank() }.flatMap { l ->
+            val number = l.removePrefix(PHONE).trim()
+            when {
+                l.startsWith(PHONE) && number.length <= width / 2 ->
+                    listOf(ReceiptBlock.Line(PHONE.trim(), bold = bold), ReceiptBlock.Line(number, bold = true, large = true))
+                l.startsWith(PHONE) || BIG_NOTE_LINES.any { l.startsWith(it) } ->
+                    wrap(l, width).map { ReceiptBlock.Line(it, bold = true, tall = true) }
+                else -> wrap(l, width).map { ReceiptBlock.Line(it, bold = bold) }
+            }
+        }
+    }
+
     fun twoCol(left: String, right: String): String {
         val space = width - right.length
         val l = if (left.length > space - 1) left.take(maxOf(0, space - 1)) else left
@@ -302,6 +328,10 @@ class ReceiptLayout(private val width: Int) {
 
     companion object {
         /** Splits [text] into lines of at most [width] characters; a line break in the text starts a new line. */
+        /** Starts of the web order lines printed bigger: name, address and wished time tall, the phone number large. */
+        private val BIG_NOTE_LINES = listOf("Zákazník: ", "Adresa: ", "Přeje si: ")
+        private const val PHONE = "Tel.: "
+
         fun wrap(text: String, width: Int): List<String> =
             if ('\n' in text) text.split('\n').map { it.trimEnd('\r') }.filter { it.isNotBlank() }.flatMap { wrapLine(it, width) }
             else wrapLine(text, width)
