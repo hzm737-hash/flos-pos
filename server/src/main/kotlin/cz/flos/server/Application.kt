@@ -58,6 +58,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
         menuRoutes(db)
         /** Delivery and pick-up orders from the restaurant's own website. */
         webOrderRoutes(db, webOrigins)
+        /** Table reservations from the restaurant's own website. */
+        webReservationRoutes(db, webOrigins)
         /** Whether orders are taken now (ordering hours, "stop orders" on the till), for the website. */
         orderStatusRoutes(db, webOrigins)
         publicImageRoutes(db)
@@ -71,6 +73,8 @@ fun Application.flosModule(db: Db, openSignup: Boolean = false, webOrigins: List
             deviceRoutes(db, throttle)
             tableOrderDeviceRoutes(db)
             webOrderDeviceRoutes(db)
+            webReservationDeviceRoutes(db)
+            webReservationAdminRoutes(db)
             orderControlDeviceRoutes(db)
             imageRoutes(db)
             deviceCatalogRoutes(db)

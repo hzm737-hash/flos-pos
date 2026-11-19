@@ -214,6 +214,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 // Orders from the tables on the restaurant's own website come the same way as web orders.
                 if (s.paired && (s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING) ||
                         (s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING) && s.tableMenuUrl.isNotBlank()))) pollWebOrders()
+                // Table reservations from the website (Pokročilé nastavení → Rezervace z webu).
+                if (s.paired && s.on(cz.flos.pos.data.AdvFeature.WEB_RESERVATIONS)) pollWebReservations()
                 delay(10_000)
             }
         }
@@ -1208,12 +1210,16 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
     /** Web orders waiting for the staff to accept (with a ready time) or decline. */
     val webInbox: StateFlow<List<cz.flos.core.WebOrderInbox>> = _webInbox.asStateFlow()
     private val webSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+    // Table reservations from the website; declared here because the ring watcher below needs it.
+    private val _resInbox = MutableStateFlow<List<cz.flos.core.WebReservationInbox>>(emptyList())
+    /** Web reservations waiting for the staff to confirm or decline. */
+    val webResInbox: StateFlow<List<cz.flos.core.WebReservationInbox>> = _resInbox.asStateFlow()
 
     init {
         // The ring stops once every waiting order from the tables and the website is answered.
         viewModelScope.launch {
             var before = 0
-            kotlinx.coroutines.flow.combine(_qrInbox, _webInbox) { a, b -> a.size + b.size }.collect { n ->
+            kotlinx.coroutines.flow.combine(_qrInbox, _webInbox, _resInbox) { a, b, c -> a.size + b.size + c.size }.collect { n ->
                 if (before > 0 && n == 0) stopRinging()
                 before = n
             }
@@ -1370,6 +1376,74 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
                 if (whatsapp && cz.flos.core.Notify.phoneDigits(phone) != null) {
                     val s = settings.value
                     sendMessage("whatsapp", phone, cz.flos.core.WebOrders.rejection(w.id, w.order, message, s.businessName, s.phone))
+                }
+            }
+            .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
+    }
+
+    // ---- Table reservations from the website (Pokročilé nastavení → Rezervace z webu) ----
+    private val resSeen = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+    private val resTaking = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    /** The rules the website's form follows, from this till's settings (published with the menu). */
+    fun reservationRules(s: cz.flos.pos.data.AppSettings = settings.value): cz.flos.core.ReservationRules =
+        cz.flos.core.WebReservations.cleanRules(cz.flos.core.ReservationRules(
+            s.webResMaxGuests, s.webResDaysAhead, s.webResFrom, s.webResTo, s.webResNotice,
+            s.webResClosedDays.split(',', ' ', ';').mapNotNull { it.trim().toIntOrNull() },
+        ))
+
+    private suspend fun pollWebReservations() {
+        val list = runCatching { withContext(Dispatchers.IO) { boClient().webReservations() } }.getOrNull() ?: return
+        val fresh = list.filter { resSeen.add(it.id) }
+        if (fresh.isEmpty()) return
+        newOrderRing()
+        _resInbox.update { it + fresh }
+    }
+
+    /** The reservation as it is saved in Rezervace when confirmed. */
+    fun webReservationEntity(w: cz.flos.core.WebReservationInbox, table: String): cz.flos.pos.data.ReservationEntity {
+        val r = w.reservation
+        return cz.flos.pos.data.ReservationEntity(
+            name = r.name, phone = r.phone, guests = r.guests, at = cz.flos.core.WebReservations.startMillis(r) ?: System.currentTimeMillis(),
+            tableName = table.trim().ifEmpty { null }, note = cz.flos.core.WebReservations.tillNote(w.id, r),
+        )
+    }
+
+    /**
+     * Confirms a web reservation: tells the back office first (another till may have answered it), then saves
+     * it in Rezervace with the chosen [table], and opens WhatsApp with the confirmation when [whatsapp].
+     */
+    fun acceptWebReservation(w: cz.flos.core.WebReservationInbox, table: String, reply: String = "", whatsapp: Boolean = false) = viewModelScope.launch {
+        if (!resTaking.add(w.id)) return@launch
+        try {
+            val message = cz.flos.core.WebOrders.cleanReply(reply)
+            val taken = runCatching { withContext(Dispatchers.IO) { boClient().ackWebReservation(w.id, true, table.trim(), message) } }
+            if (taken.isFailure) {
+                _messages.tryEmit(tr("Rezervaci z webu se nepodařilo potvrdit: %s", taken.exceptionOrNull()?.message ?: ""))
+                return@launch
+            }
+            _resInbox.update { list -> list.filterNot { it.id == w.id } }
+            if (taken.getOrNull() != true) { _messages.tryEmit(tr("Rezervaci z webu už vyřídila jiná pokladna.")); return@launch }
+            reservationDao.upsert(webReservationEntity(w, table).copy(createdAt = System.currentTimeMillis()))
+            val r = w.reservation
+            if (whatsapp && cz.flos.core.Notify.phoneDigits(r.phone) != null) {
+                val s = settings.value
+                sendMessage("whatsapp", r.phone, cz.flos.core.WebReservations.confirmation(w.id, r, table.trim(), s.businessName, s.phone, message))
+            }
+            _messages.tryEmit(tr("Rezervace z webu potvrzena: %s", r.name + ", " + cz.flos.core.WebReservations.whenText(r, false)))
+        } finally { resTaking.remove(w.id) }
+    }
+
+    /** Declines a web reservation; [reason] is shown to the customer on the website (and sent on WhatsApp when [whatsapp]). */
+    fun rejectWebReservation(w: cz.flos.core.WebReservationInbox, reason: String = "", whatsapp: Boolean = false) = viewModelScope.launch {
+        val message = cz.flos.core.WebOrders.cleanReply(reason)
+        runCatching { withContext(Dispatchers.IO) { boClient().ackWebReservation(w.id, false, message = message) } }
+            .onSuccess {
+                _resInbox.update { list -> list.filterNot { it.id == w.id } }
+                val r = w.reservation
+                if (whatsapp && cz.flos.core.Notify.phoneDigits(r.phone) != null) {
+                    val s = settings.value
+                    sendMessage("whatsapp", r.phone, cz.flos.core.WebReservations.rejection(w.id, r, message, s.businessName, s.phone))
                 }
             }
             .onFailure { _messages.tryEmit(tr("Odmítnutí se nepodařilo odeslat: %s", it.message ?: "")) }
@@ -2088,7 +2162,8 @@ class PosViewModel(private val flos: FlosContainer) : ViewModel() {
             listOfNotNull(byCat[null]?.let { cz.flos.core.MenuCategory("Ostatní", it.map { p -> p.menuItem() }) })
         return cz.flos.core.MenuData(s.businessName, listOf(s.address1, s.address2).filter { it.isNotBlank() }.joinToString(", "),
             s.business.contacts, s.openingHours, cats, s.menuNote, ordering = s.on(cz.flos.pos.data.AdvFeature.QR_ORDERING),
-            webOrdering = s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING))
+            webOrdering = s.on(cz.flos.pos.data.AdvFeature.WEB_ORDERING),
+            reservations = if (s.on(cz.flos.pos.data.AdvFeature.WEB_RESERVATIONS)) reservationRules(s) else null)
     }
 
     private fun ProductEntity.menuItem(): cz.flos.core.MenuItem {

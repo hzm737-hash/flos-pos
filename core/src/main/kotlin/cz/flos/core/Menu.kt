@@ -26,6 +26,8 @@ import kotlinx.serialization.Serializable
     val ordering: Boolean = false,
     /** The restaurant's website may send delivery and pick-up orders (Pokročilé nastavení → Objednávky z webu). */
     val webOrdering: Boolean = false,
+    /** The restaurant's website may send table reservations under these rules; null = switched off (Pokročilé nastavení → Rezervace z webu). */
+    val reservations: ReservationRules? = null,
 )
 
 /** The digital menu as one mobile-friendly HTML page (no scripts), for the QR code on the tables. */

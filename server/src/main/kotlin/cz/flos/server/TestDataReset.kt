@@ -32,7 +32,7 @@ internal fun Connection.resetTestData(d: Caller.Device): BoTestDataReset {
     val attendance = update("DELETE FROM attendance WHERE device_id = ?", d.deviceId)
     update("DELETE FROM till_snapshots WHERE device_id = ?", d.deviceId)
     update("DELETE FROM open_tables WHERE device_id = ?", d.deviceId)
-    val web = update("DELETE FROM web_orders WHERE org_id = ?", d.orgId)
+    val web = update("DELETE FROM web_orders WHERE org_id = ?", d.orgId) + update("DELETE FROM web_reservations WHERE org_id = ?", d.orgId)
     val table = update("DELETE FROM table_orders WHERE org_id = ?", d.orgId)
     return BoTestDataReset(salesDeleted, web, table, attendance)
 }
