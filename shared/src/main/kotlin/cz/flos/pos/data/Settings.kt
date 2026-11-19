@@ -174,6 +174,13 @@ data class AppSettings(
     val webOrderPrint: Boolean = true,
     /** Web orders (delivery / pick-up): the order ticket carries a QR payment for the amount (needs the bank account). */
     val webOrderQr: Boolean = true,
+    /** Reservations from the website: most guests per booking, days ahead, first and last time, minutes of notice, closed weekdays ("1,7"). */
+    val webResMaxGuests: Int = 8,
+    val webResDaysAhead: Int = 30,
+    val webResFrom: String = "11:00",
+    val webResTo: String = "21:00",
+    val webResNotice: Int = 60,
+    val webResClosedDays: String = "",
     /**
      * QR ordering: the restaurant's own website menu for the tables (e.g. https://pizzafresca.cz/menu).
      * When set, the tables' QR codes open this page with the table and its key (?t=…&k=…), and the
@@ -391,6 +398,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
             qrOrderPrint = bool("qrOrderPrint", d.qrOrderPrint),
             webOrderPrint = bool("webOrderPrint", d.webOrderPrint),
             webOrderQr = bool("webOrderQr", d.webOrderQr),
+            webResMaxGuests = int("webResMaxGuests", d.webResMaxGuests),
+            webResDaysAhead = int("webResDaysAhead", d.webResDaysAhead),
+            webResFrom = str("webResFrom", d.webResFrom),
+            webResTo = str("webResTo", d.webResTo),
+            webResNotice = int("webResNotice", d.webResNotice),
+            webResClosedDays = str("webResClosedDays", d.webResClosedDays),
             tableMenuUrl = str("tableMenuUrl", d.tableMenuUrl),
             qrHoursOn = bool("qrHoursOn", d.qrHoursOn),
             qrHours = str("qrHours", d.qrHours),
@@ -578,6 +591,12 @@ class SettingsStore(private val prefs: KeyValueStore) {
                 "qrOrderPrint" to s.qrOrderPrint.toString(),
                 "webOrderPrint" to s.webOrderPrint.toString(),
                 "webOrderQr" to s.webOrderQr.toString(),
+                "webResMaxGuests" to s.webResMaxGuests.toString(),
+                "webResDaysAhead" to s.webResDaysAhead.toString(),
+                "webResFrom" to s.webResFrom,
+                "webResTo" to s.webResTo,
+                "webResNotice" to s.webResNotice.toString(),
+                "webResClosedDays" to s.webResClosedDays,
                 "tableMenuUrl" to s.tableMenuUrl,
                 "qrHoursOn" to s.qrHoursOn.toString(),
                 "qrHours" to s.qrHours,

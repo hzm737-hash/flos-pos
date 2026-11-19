@@ -150,6 +150,14 @@ class BackOfficeClient(baseUrl: String, private val token: String? = null, priva
     fun ackWebOrder(id: Long, accepted: Boolean, readyMinutes: Int = 0, readyAt: Long? = null, message: String = ""): Boolean =
         request("POST", "/device/web-orders/$id/ack", json.encodeToString(cz.flos.core.WebOrderAck.serializer(), cz.flos.core.WebOrderAck(accepted, readyMinutes, readyAt, message)), BoOk.serializer()).ok
 
+    /** Table reservations from the website waiting for an answer; each is handed out once (again after a minute if not answered). */
+    fun webReservations(): List<cz.flos.core.WebReservationInbox> =
+        request("GET", "/device/web-reservations", null, cz.flos.core.WebReservationList.serializer()).reservations
+
+    /** Confirms (with an optional table) or declines a web reservation. False when another till already answered it. */
+    fun ackWebReservation(id: Long, accepted: Boolean, table: String = "", message: String = ""): Boolean =
+        request("POST", "/device/web-reservations/$id/ack", json.encodeToString(cz.flos.core.WebReservationAck.serializer(), cz.flos.core.WebReservationAck(accepted, table, message)), BoOk.serializer()).ok
+
     /** The company's ordering hours and "stop orders" switch, as the back office keeps them. */
     fun orderControl(): cz.flos.core.OrderControl =
         request("GET", "/device/order-control", null, cz.flos.core.OrderControl.serializer())

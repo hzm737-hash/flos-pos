@@ -206,6 +206,7 @@ private fun FlosRoot(vm: PosViewModel) {
     // An order from a table waiting for the staff (Pokročilé nastavení → Objednávky z QR).
     TableOrderDialog(vm)
     WebOrderDialog(vm)
+    WebReservationDialog(vm)
 }
 }
 

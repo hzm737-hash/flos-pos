@@ -553,7 +553,10 @@ const TILL_SETTINGS = [
     ['waitersAway', 'Obsluha mimo směnu', 'a'], ['waiterTables', 'Stoly podle obsluhy', 'a'], ['staffRoles', 'Role obsluhy', 'a'],
     ['permissions', 'Co role nesmějí', 'a'], ['qrOrderApprove', 'Objednávky ze stolu musí potvrdit obsluha', 'b'],
     ['qrOrderPrint', 'Tisknout objednávky ze stolu do kuchyně', 'b'], ['tableMenuUrl', 'Web s menu pro QR kódy stolů', 't'],
-    ['webOrderPrint', 'Objednávky z webu: vytisknout hned po přijetí', 'b'], ['webOrderQr', 'Objednávky z webu: QR platba na objednávce', 'b']]],
+    ['webOrderPrint', 'Objednávky z webu: vytisknout hned po přijetí', 'b'], ['webOrderQr', 'Objednávky z webu: QR platba na objednávce', 'b'],
+    ['webResMaxGuests', 'Rezervace z webu: nejvíc osob', 'i'], ['webResDaysAhead', 'Rezervace z webu: dní dopředu', 'i'],
+    ['webResFrom', 'Rezervace z webu: od (HH:mm)', 't'], ['webResTo', 'Rezervace z webu: do (HH:mm)', 't'],
+    ['webResNotice', 'Rezervace z webu: nejméně minut předem', 'i'], ['webResClosedDays', 'Rezervace z webu: zavřené dny (1 = po … 7 = ne, např. 1,7)', 't']]],
   ['Kuchyň', [['addons', 'Přídavky pro kategorie', 'a'], ['quickNotes', 'Rychlé poznámky', 'a']]],
   ['Zprávy a menu', [
     ['msgReservation', 'Zpráva k rezervaci', 'a'], ['msgReminder', 'Připomínka rezervace', 'a'], ['msgOrderReady', 'Objednávka je hotová', 'a'],
@@ -629,7 +632,7 @@ const BOOKING = { BOOKED: 'rezervováno', SEATED: 'usazeni', NO_SHOW: 'nepřišl
 const TABLE_ORDER = { NEW: 'čeká', FETCHED: 'na pokladně', ACCEPTED: 'přijato', REJECTED: 'odmítnuto' };
 const day = (d) => (d == null ? '–' : new Date(d * 86400000).toLocaleDateString(LOCALE));
 const LIVE_TABS = [['orders', 'Otevřené stoly'], ['cash', 'Hotovost a směny'], ['customers', 'Zákazníci'], ['reservations', 'Rezervace'],
-  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů'], ['web', 'Objednávky z webu']];
+  ['documents', 'Doklady'], ['audit', 'Záznam'], ['qr', 'Objednávky ze stolů'], ['web', 'Objednávky z webu'], ['webres', 'Rezervace z webu']];
 const WEB_KIND = { DELIVERY: 'Rozvoz', PICKUP: 'Osobní odběr', TABLE: 'Stůl' };
 
 function liveTab(tab, s) {
@@ -690,6 +693,20 @@ async function webOrdersHtml() {
       <td>${answer(o)}</td><td>${esc(o.reply || '')}</td></tr>`).join('')}</table>`;
 }
 
+// Table reservations from the restaurant's website and the till's answer (table, or the reason of a refusal).
+async function webReservationsHtml() {
+  const list = await api('/web-reservations?days=14');
+  if (!list.length) return '<p class="muted">Za posledních 14 dní žádné rezervace z webu.</p>';
+  const answer = (r) => {
+    if (r.status === 'ACCEPTED') return '<span class="badge ok">potvrzeno</span>';
+    if (r.status === 'REJECTED') return '<span class="badge warn">odmítnuto</span>';
+    return TABLE_ORDER[r.status] || esc(r.status);
+  };
+  return `<table><tr><th>Číslo</th><th>Kdy</th><th class="num">Hosté</th><th>Zákazník</th><th>Poznámka</th><th>Stůl</th><th>Odpověď</th><th>Zpráva zákazníkovi</th><th>Posláno</th></tr>
+    ${list.map((r) => `<tr><td>R ${r.id}</td><td><b>${dt(r.at)}</b></td><td class="num">${r.guests}</td><td>${esc(r.customer)}</td>
+      <td>${esc(r.note)}</td><td>${esc(r.table)}</td><td>${answer(r)}</td><td>${esc(r.reply || '')}</td><td>${dt(r.createdAt)}</td></tr>`).join('')}</table>`;
+}
+
 pages.live = async (main) => {
   const devices = await api('/till-live');
   const withData = devices.filter((d) => d.snapshot);
@@ -705,6 +722,7 @@ pages.live = async (main) => {
     const box = $('#live');
     if (tab === 'qr') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await tableOrdersHtml(); return; }
     if (tab === 'web') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await webOrdersHtml(); return; }
+    if (tab === 'webres') { box.innerHTML = '<p class="muted">Načítám…</p>'; box.innerHTML = await webReservationsHtml(); return; }
     const d = devices.find((x) => String(x.id) === dev);
     if (!d || !d.snapshot) { box.innerHTML = '<p class="muted">Tato pokladna zatím nic neposlala. Zapněte na ní Pokročilé nastavení → Přehled pokladny v back office.</p>'; return; }
     box.innerHTML = `<p class="muted">Stav z ${dt(d.snapshot.takenAt)}</p>` + liveTab(tab, d.snapshot);

@@ -127,6 +127,7 @@ private fun FeatureCard(vm: PosViewModel, s: AppSettings, f: AdvFeature) {
                 AdvFeature.STORNO_REASON -> AuditLog(vm)
                 AdvFeature.QR_ORDERING -> QrOrderingSettings(vm, s)
                 AdvFeature.WEB_ORDERING -> WebOrderingSettings(vm, s)
+                AdvFeature.WEB_RESERVATIONS -> WebReservationSettings(vm, s)
                 else -> {}
             }
         }

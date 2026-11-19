@@ -305,7 +305,7 @@ private fun SwitchRow(title: String, hint: String, checked: Boolean, onChange: (
 
 /** While the new order rings: stops the ring and leaves the order waiting. */
 @Composable
-private fun SilenceButton(vm: PosViewModel) {
+internal fun SilenceButton(vm: PosViewModel) {
     val ringing by vm.ringing.collectAsState()
     if (ringing) OutlinedButton(onClick = { vm.stopRinging() }) { Text(tr("Vypnout zvonění")) }
 }
