@@ -147,6 +147,22 @@ class WebOrdersTest {
         assertEquals(listOf("one two", "three"), ReceiptLayout.wrap("one two three", 8))
     }
 
+    @Test fun customerDetailsPrintBigOnTheTicket() {
+        val note = "WEB 7 · Rozvoz\nZákazník: Jan Novák\nTel.: +420 777 123 456\nAdresa: Ostrožná 12\nPřeje si: 18:30\nPlatba: hotově při převzetí"
+        val lines = ReceiptLayout(32).noteLines(note, bold = true)
+        val by = lines.associateBy { it.text }
+        assertEquals(false, by.getValue("WEB 7 · Rozvoz").tall || by.getValue("WEB 7 · Rozvoz").large)
+        assertEquals(true, by.getValue("Zákazník: Jan Novák").tall)
+        assertEquals(true, by.getValue("+420 777 123 456").large)
+        assertEquals(true, by.getValue("Adresa: Ostrožná 12").tall)
+        assertEquals(true, by.getValue("Přeje si: 18:30").tall)
+        assertEquals(false, by.getValue("Platba: hotově při převzetí").tall)
+        // A phone number too long for double size stays on one tall line.
+        assertEquals(true, ReceiptLayout(32).noteLines("WEB 1\nTel.: +420 777 123 456 789 00", true).last().tall)
+        // Any other note prints as before.
+        assertEquals(listOf(ReceiptBlock.Line("Tel.: 123", bold = true)), ReceiptLayout(32).noteLines("Tel.: 123", true))
+    }
+
     @Test fun variableSymbolIsTheWebNumberOfADeliveryOrPickUp() {
         assertEquals("57", WebOrders.variableSymbol("WEB 57 · Rozvoz · hotovo 18:30 · hotově\nZákazník: Jan"))
         assertEquals("8", WebOrders.variableSymbol("WEB 8 · Osobní odběr · hotovo 19:00"))

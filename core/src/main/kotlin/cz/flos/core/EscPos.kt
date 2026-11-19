@@ -121,7 +121,7 @@ class EscPosEncoder(
     private fun line(l: ReceiptBlock.Line) {
         align(l.align)
         cmd(ESC, 'E'.code, if (l.bold) 1 else 0)
-        cmd(GS, '!'.code, if (l.large) 0x11 else 0x00)
+        cmd(GS, '!'.code, if (l.large) 0x11 else if (l.tall) 0x01 else 0x00)
         val max = if (l.large) paper.chars / 2 else paper.chars
         ReceiptLayout.wrap(PrintText.printable(l.text), max).forEach { text(it); lf() }
         cmd(GS, '!'.code, 0)
